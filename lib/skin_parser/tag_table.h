@@ -191,7 +191,7 @@ enum skin_token_type {
     /* Progressbar */
     SKIN_TOKEN_PROGRESSBAR,
     SKIN_TOKEN_PLAYER_PROGRESSBAR,
-    /* Audio spectrum (Trimpod: drawn over the former peak-meter hook) */
+    /* Audio spectrum (UIPod: drawn over the former peak-meter hook) */
     SKIN_TOKEN_SPECTRUM,
 
     /* Current track */
@@ -247,9 +247,9 @@ enum skin_token_type {
     SKIN_TOKEN_MAIN_HOLD,
     SKIN_TOKEN_REMOTE_HOLD,
 
-    /* Trimpod: the current page's header button-legend string (or NULL), so the
+    /* UIPod: the current page's header button-legend string (or NULL), so the
      * SBS can overlay a per-page button hint on the status row */
-    SKIN_TOKEN_TRIMPOD_LEGEND,
+    SKIN_TOKEN_UIPOD_LEGEND,
 
     /* Quickscreen */
     SKIN_TOKEN_TOP_QUICKSETTING_NAME,

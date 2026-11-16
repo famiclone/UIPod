@@ -388,7 +388,7 @@ bool filetype_supported(int attr)
     return find_attr(attr) >= 0;
 }
 
-/* Trimpod: what the Movies and Television browsers list.  By extension, as .mp4
+/* UIPod: what the Movies and Television browsers list.  By extension, as .mp4
  * is also registered as audio. */
 bool filetype_is_video(const char *name)
 {

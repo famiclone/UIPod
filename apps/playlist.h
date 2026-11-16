@@ -117,7 +117,7 @@ int playlist_resume(void);
 void playlist_shuffle(int random_seed);
 unsigned int playlist_get_filename_crc32(struct playlist_info *playlist,
                                          int index);
-/* Trimpod: resume the saved playlist at the saved track; false, with the resume
+/* UIPod: resume the saved playlist at the saved track; false, with the resume
  * point cleared, if nothing in it can be played any more. */
 bool playlist_resume_saved(void);
 bool playlist_resume_track(int start_index, unsigned int crc,

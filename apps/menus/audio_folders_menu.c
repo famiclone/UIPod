@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Trimpod: the Settings -> Library menu -- the Music / Podcast / Audiobook /
+ * UIPod: the Settings -> Library menu -- the Music / Podcast / Audiobook /
  * Movie / Television source-folder lists plus a Rescan Library action, on a
  * nested do_menu page.
  * Each folder chevron row opens its existing management page unchanged.
@@ -26,44 +26,44 @@
 #include "lang.h"
 #include "settings.h"        /* ID2P */
 #include "menu.h"
-#include "trimpod_folders.h"
-#include "trimpod_library.h"     /* trimpod_library_reconcile (Rescan) */
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
+#include "uipod_folders.h"
+#include "uipod_library.h"     /* uipod_library_reconcile (Rescan) */
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
 #include "exported_menus.h"
 
-MENUITEM_FUNCTION(tp_af_music, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_FOLDERS),
-                  trimpod_music_settings, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_af_podcast, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_PODCAST_FOLDERS),
-                  trimpod_podcast_settings, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_af_audiobook, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_AUDIOBOOK_FOLDERS),
-                  trimpod_audiobook_settings, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_af_movies, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_MOVIE_FOLDERS),
-                  trimpod_movies_settings, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_af_television, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_TELEVISION_FOLDERS),
-                  trimpod_television_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_music, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_FOLDERS),
+                  uipod_music_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_podcast, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_PODCAST_FOLDERS),
+                  uipod_podcast_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_audiobook, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_AUDIOBOOK_FOLDERS),
+                  uipod_audiobook_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_movies, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_MOVIE_FOLDERS),
+                  uipod_movies_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_television, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_TELEVISION_FOLDERS),
+                  uipod_television_settings, NULL, Icon_NOICON);
 
 /* Rescan Library: rebuild the SQLite tag index from the source folders, behind
  * the reconcile's own Scanning screen. */
-static int trimpod_library_rescan(void)
+static int uipod_library_rescan(void)
 {
-    if (trimpod_source_is_navidrome())
-        trimpod_navidrome_sync(true);
-    else if (trimpod_source_is_jellyfin())
-        trimpod_jellyfin_sync(true);
+    if (uipod_source_is_navidrome())
+        uipod_navidrome_sync(true);
+    else if (uipod_source_is_jellyfin())
+        uipod_jellyfin_sync(true);
     else
-        trimpod_library_reconcile(true);
+        uipod_library_reconcile(true);
     return 0;
 }
-MENUITEM_FUNCTION(tp_af_rescan, 0, ID2P(LANG_TRIMPOD_RESCAN),
-                  trimpod_library_rescan, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_rescan, 0, ID2P(LANG_UIPOD_RESCAN),
+                  uipod_library_rescan, NULL, Icon_NOICON);
 
-MAKE_MENU(trimpod_audio_folders_menu, ID2P(LANG_TRIMPOD_LIBRARY), NULL,
+MAKE_MENU(uipod_audio_folders_menu, ID2P(LANG_UIPOD_LIBRARY), NULL,
           Icon_Submenu_Entered, &tp_af_music, &tp_af_podcast, &tp_af_audiobook,
           &tp_af_movies, &tp_af_television, &tp_af_rescan);
 
-int trimpod_audio_folders_page(void)
+int uipod_audio_folders_page(void)
 {
-    do_menu(&trimpod_audio_folders_menu, NULL, NULL, false);
+    do_menu(&uipod_audio_folders_menu, NULL, NULL, false);
     return 0;
 }

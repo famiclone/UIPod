@@ -40,10 +40,10 @@
 #include "settings.h"
 #include "settings_list.h"
 #include "option_select.h"
-#include "trimpod_transition.h"   /* page slide transitions (shared) */
-#include "trimpod_page.h"         /* trimpod_home_pending (hold-BACK -> root) */
-#include "trimpod_ui.h"           /* trimpod_toggle_str for Yes/No boolean switches */
-#include "trimpod_visualizer.h"   /* idle auto-start while music plays */
+#include "uipod_transition.h"   /* page slide transitions (shared) */
+#include "uipod_page.h"         /* uipod_home_pending (hold-BACK -> root) */
+#include "uipod_ui.h"           /* uipod_toggle_str for Yes/No boolean switches */
+#include "uipod_visualizer.h"   /* idle auto-start while music plays */
 #include "screens.h"
 #include "lang.h"
 #include "misc.h"
@@ -150,7 +150,7 @@ static const char* get_menu_item_name(int selected_item,
     if (type == MT_MENU)
         menu = menu->submenus[selected_item];
 
-    /* Trimpod: a value row with an empty label renders its value string AS the
+    /* UIPod: a value row with an empty label renders its value string AS the
      * row name (e.g. the Pause/Play toggle), left-aligned like an action row. */
     if (menu->flags & MENU_VALUE_ITEM)
     {
@@ -177,7 +177,7 @@ static const char* get_menu_item_name(int selected_item,
     return P2STR(menu->callback_and_desc->desc);
 }
 
-/* Trimpod: a row shows the disclosure arrow if it opens another menu/settings
+/* UIPod: a row shows the disclosure arrow if it opens another menu/settings
  * screen -- i.e. it is a submenu (MT_MENU, always navigation) or it carries the
  * explicit MENU_SHOW_CHEVRON flag.  Actions, settings, stringlist and file-list
  * rows (the latter don't use this callback at all) get nothing. */
@@ -196,7 +196,7 @@ static bool menu_get_chevron(int selected_item, void * data)
            (menu->flags & MENU_SHOW_CHEVRON);
 }
 
-/* Trimpod: a setting / value row shows its current value right-aligned (the iPod
+/* UIPod: a setting / value row shows its current value right-aligned (the iPod
  * look), so the inline LEFT/RIGHT value cycling is visible without opening a
  * separate screen.  Other rows return nothing (NULL). */
 static const char *menu_get_indicator(int selected_item, void *data)
@@ -231,7 +231,7 @@ static const char *menu_get_indicator(int selected_item, void *data)
                 s->bool_setting->lang_yes == LANG_SET_BOOL_YES &&
                 s->bool_setting->lang_no == LANG_SET_BOOL_NO)
             {
-                return trimpod_toggle_str(*(bool *)s->setting);
+                return uipod_toggle_str(*(bool *)s->setting);
             }
             int cur = ((s->flags & F_T_MASK) == F_T_BOOL)
                           ? (*(bool *)s->setting ? 1 : 0)
@@ -379,11 +379,11 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
      * launch has no prior frame to slide from, so render it with no slide.  A
      * return from a screen that aborted before rendering (an empty facet that
      * only splashed) is handled inside animate: it presents with no motion. */
-    if (trimpod_transition_first_screen())
+    if (uipod_transition_first_screen())
         gui_synclist_draw(&lists);
     else
-        trimpod_transition_animate(
-            trimpod_transition_take_back() ? TRIMPOD_TRANS_BACK : TRIMPOD_TRANS_FORWARD,
+        uipod_transition_animate(
+            uipod_transition_take_back() ? UIPOD_TRANS_BACK : UIPOD_TRANS_FORWARD,
             menu_transition_render, &lists);
 
 #ifdef HAVE_BACKLIGHT_BRIGHTNESS
@@ -393,7 +393,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
     {
         /* A nested screen (a submenu, or a page launched from a function item)
          * requested home: unwind this menu too so we land on the Main Menu. */
-        if (trimpod_home_pending)
+        if (uipod_home_pending)
         {
             ret = GO_TO_ROOT;
             break;
@@ -423,7 +423,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
 
         /* Idle auto-start of the visualizer while music plays (the WPS runs
          * its own inline hook -- it restores the skin around it). */
-        if (action == ACTION_NONE && trimpod_visualizer_maybe_autostart())
+        if (action == ACTION_NONE && uipod_visualizer_maybe_autostart())
             redraw_lists = true;
 
         int new_action = menu_callback(action, menu, &lists);
@@ -434,7 +434,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
         else
             action = new_action;
 
-        /* Trimpod: A / LEFT / RIGHT cycle an inline row's value in place and
+        /* UIPod: A / LEFT / RIGHT cycle an inline row's value in place and
          * apply it live (the iPod inline adjust): value rows via their cycler,
          * setting rows via option_select_next_val().  A and RIGHT step +1,
          * LEFT -1.  The list is redrawn, never reloaded, so the page keeps its
@@ -478,7 +478,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
         /* Idle return to Now Playing.  Only after do_button: it disarms the
          * list's redraw callback, which list_do_action_timeout armed with a
          * pointer to `lists` on this stack frame. */
-        else if (action == ACTION_NONE && trimpod_idle_to_wps())
+        else if (action == ACTION_NONE && uipod_idle_to_wps())
         {
             ret = GO_TO_ROOT;
             done = true;
@@ -488,7 +488,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
             /* already at the Main Menu -> nothing to jump to, so do nothing */
             if (menu != &root_menu_)
             {
-                trimpod_home_pending = true;
+                uipod_home_pending = true;
                 ret = GO_TO_ROOT;
                 done = true;
             }
@@ -591,7 +591,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                     init_menu_lists(menu, &lists, msel, false, vps, buf, sizeof buf);
                 redraw_lists = true;
                 if (!done)
-                    menu_trans = TRIMPOD_TRANS_BACK;   /* slide back to parent */
+                    menu_trans = UIPOD_TRANS_BACK;   /* slide back to parent */
                 /* new menu, so reload the callback */
                 get_menu_callback(menu, &menu_callback);
             }
@@ -632,7 +632,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                         stack_top++;
                         menu = temp;
                         init_menu_lists(menu, &lists, 0, true, vps, buf, sizeof buf);
-                        menu_trans = TRIMPOD_TRANS_FORWARD;  /* slide into submenu */
+                        menu_trans = UIPOD_TRANS_FORWARD;  /* slide into submenu */
                     }
                     break;
                 case MT_FUNCTION_CALL_W_PARAM:
@@ -657,8 +657,8 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                     }
                     /* if the function ran a page that armed a back slide,
                      * play it on the redraw below */
-                    if (trimpod_transition_take_back())
-                        menu_trans = TRIMPOD_TRANS_BACK;
+                    if (uipod_transition_take_back())
+                        menu_trans = UIPOD_TRANS_BACK;
                     if (temp->flags&MENU_FUNC_CHECK_RETVAL)
                     {
                         if (return_value != 0)
@@ -732,7 +732,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
         /* Home unwind in progress: skip this menu's redraw/back-slide and loop
          * to the top, which exits with GO_TO_ROOT.  Keeps home to a single slide
          * at the Main Menu instead of animating each level as it pops. */
-        if (trimpod_home_pending)
+        if (uipod_home_pending)
             continue;
 
         if (redraw_lists && !done)
@@ -745,7 +745,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
             gui_synclist_set_title(&lists, lists.title, lists.title_icon);
             if (menu_trans >= 0)
             {
-                trimpod_transition_animate(menu_trans, menu_transition_render, &lists);
+                uipod_transition_animate(menu_trans, menu_transition_render, &lists);
                 menu_trans = -1;
             }
             else
@@ -775,6 +775,6 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
     }
     /* leaving by backing out -> tell our caller to slide us away */
     if (ret == GO_TO_PREVIOUS)
-        trimpod_transition_arm_back();
+        uipod_transition_arm_back();
     return ret;
 }

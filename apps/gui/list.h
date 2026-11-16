@@ -56,18 +56,18 @@ enum synclist_cursor
  * Note : we use the ICON type because the real type depends of the plateform
  */
 /*
- * Chevron callback (Trimpod): return true if this row should show a right-aligned
+ * Chevron callback (UIPod): return true if this row should show a right-aligned
  * disclosure arrow (the row navigates into another menu/settings screen).
  */
 typedef bool list_get_chevron(int selected_item, void * data);
 /*
- * Indicator callback (Trimpod): return a short string to draw right-aligned in
+ * Indicator callback (UIPod): return a short string to draw right-aligned in
  * the chevron column (e.g. "[x]"/"[ ]" for a toggle row), or NULL for none.
  * When set, it takes the place of the disclosure chevron on that row.
  */
 typedef const char* list_get_indicator(int selected_item, void * data);
-struct trimpod_svg_icon;
-typedef const struct trimpod_svg_icon *list_get_svg_icon(int selected_item, void * data);
+struct uipod_svg_icon;
+typedef const struct uipod_svg_icon *list_get_svg_icon(int selected_item, void * data);
 /*
  * Text callback
  *  - selected_item : an integer that tells the number of the item to display
@@ -104,13 +104,13 @@ struct list_putlineinfo_t {
     bool is_selected;
     bool is_title;
     bool show_cursor;
-    bool show_chevron;   /* Trimpod: draw a right-aligned disclosure arrow */
-    const char *indicator;  /* Trimpod: right-aligned text in the chevron column
+    bool show_chevron;   /* UIPod: draw a right-aligned disclosure arrow */
+    const char *indicator;  /* UIPod: right-aligned text in the chevron column
                              * (e.g. a "[x]" toggle); NULL = none. Takes
                              * precedence over show_chevron when set. */
-    int indic_gutter;    /* Trimpod: px reserved on the right for the indicator;
+    int indic_gutter;    /* UIPod: px reserved on the right for the indicator;
                           * vp->width is already the name column. */
-    const struct trimpod_svg_icon *svg_icon; /* Trimpod: optional left SVG file-type icon */
+    const struct uipod_svg_icon *svg_icon; /* UIPod: optional left SVG file-type icon */
 };
 
 typedef void list_draw_item(struct list_putlineinfo_t *list_info);
@@ -170,9 +170,9 @@ struct gui_synclist
 
     list_get_name *callback_get_item_name;
     list_draw_item *callback_draw_item;
-    list_get_chevron *callback_get_item_chevron;  /* Trimpod */
-    list_get_indicator *callback_get_item_indicator;  /* Trimpod */
-    list_get_svg_icon *callback_get_item_svg_icon;  /* Trimpod */
+    list_get_chevron *callback_get_item_chevron;  /* UIPod */
+    list_get_indicator *callback_get_item_indicator;  /* UIPod */
+    list_get_svg_icon *callback_get_item_svg_icon;  /* UIPod */
 
     /* The data that will be passed to the callback function YOU implement */
     void * data;

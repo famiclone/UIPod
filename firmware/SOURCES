@@ -256,8 +256,8 @@ target/hosted/sdl/retro-handheld/video-target.c
 target/hosted/sdl/retro-handheld/video-audio.c
 target/hosted/sdl/retro-handheld/button-target.c
 target/hosted/sdl/retro-handheld/powermgmt-target.c
-target/hosted/sdl/retro-handheld/https-target.c
-target/hosted/sdl/retro-handheld/navidrome-http-target.c
+target/hosted/sdl/retro-handheld/uipod-https-target.c
+target/hosted/sdl/retro-handheld/uipod-http-target.c
 
 /* Common */
 #ifndef BOOTLOADER

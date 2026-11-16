@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/trimpod-ui", "crates/trimpod-navidrome", "crates/trimpod-jellyfin", "crates/trimpod-ffi"]
+members = ["crates/uipod-ui", "crates/uipod-navidrome", "crates/uipod-jellyfin", "crates/uipod-ffi"]
 
 [profile.release]
 opt-level = 3

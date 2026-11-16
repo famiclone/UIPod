@@ -1,0 +1,51 @@
+/***************************************************************************
+ * UIPod: page slide transitions.
+ *
+ * A 0.15s ease-out horizontal slide between two full-screen frames.  Forward
+ * navigation (one page opening another) slides right->left; going back slides
+ * left->right.  ONE entry point -- uipod_transition_animate() -- used by both
+ * the page base (uipod_page_run) and the Rockbox menu loop (do_menu); no
+ * caller duplicates the tween logic.
+ ****************************************************************************/
+#ifndef _UIPOD_TRANSITION_H
+#define _UIPOD_TRANSITION_H
+
+#include <stdbool.h>
+
+/* the one reusable duration constant */
+#define UIPOD_TRANSITION_MS  100   /* 0.1 seconds, ease-out */
+
+enum uipod_transition_dir
+{
+    UIPOD_TRANS_FORWARD,   /* destination enters from the right (R->L) */
+    UIPOD_TRANS_BACK,      /* destination enters from the left  (L->R) */
+};
+
+/* Called to paint the destination screen off-screen during a transition. */
+typedef void (*uipod_render_fn)(void *ctx);
+
+/* Animate a screen change: snapshot the current screen, render the destination
+ * off-screen via render(ctx), then slide it in `dir` (ease-out).  This is the
+ * single source of the tween. */
+void uipod_transition_animate(enum uipod_transition_dir dir,
+                                uipod_render_fn render, void *ctx);
+
+/* Cross-call back signal: a page/menu about to return flags that its caller
+ * should play a BACK slide on its next redraw.  take() returns and clears it. */
+void uipod_transition_arm_back(void);
+bool uipod_transition_take_back(void);
+
+/* Suppress the next screen-entry slide entirely (one-shot).  Used when a screen
+ * aborts before it ever renders -- e.g. an empty facet that only shows a splash
+ * over the current menu -- so returning to that menu doesn't slide it back in.
+ * Consumed inside uipod_transition_animate: it presents the destination with
+ * no motion (and still commits the frame, so the splash is cleared). */
+void uipod_transition_suppress_next(void);
+
+/* True exactly once -- for the very FIRST screen shown at app launch, which must
+ * render with no slide (there is no prior frame to slide from).  Whichever
+ * screen comes up first (root menu, or Now Playing via auto-resume) consumes it;
+ * every screen after that slides. */
+bool uipod_transition_first_screen(void);
+
+#endif /* _UIPOD_TRANSITION_H */

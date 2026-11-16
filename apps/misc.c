@@ -50,8 +50,8 @@
 #include "splash.h"
 #include "sound.h"
 #include "playlist.h"
-#include "trimpod_library.h"
-#include "trimpod_ui.h"      /* trimpod_fullscreen_message */
+#include "uipod_library.h"
+#include "uipod_ui.h"      /* uipod_fullscreen_message */
 #include "trimpod_alsa.h"    /* trimpod_alsa_volume_overwritten */
 #include "yesno.h"
 #include "viewport.h"
@@ -302,7 +302,7 @@ bool settings_parseline(char* line, char** name, char** value)
 static void system_flush(void)
 {
     playlist_shutdown();
-    trimpod_library_close();    /* close the SQLite index cleanly on shutdown */
+    uipod_library_close();    /* close the SQLite index cleanly on shutdown */
     tree_flush();
     call_storage_idle_notifys(true); /*doesnt work on usb and shutdown from ata thread */
 }
@@ -335,9 +335,9 @@ static bool clean_shutdown(enum shutdown_type sd_type,
             level = battery_level();
             if (level > 10 || level < 0)
             {
-                /* Trimpod: always show the shutdown message, full screen (no
+                /* UIPod: always show the shutdown message, full screen (no
                  * splash box), held long enough to be seen before exit. */
-                trimpod_fullscreen_message(str(LANG_SHUTTINGDOWN), NULL);
+                uipod_fullscreen_message(str(LANG_SHUTTINGDOWN), NULL);
                 sleep(HZ);
             }
             else
@@ -413,7 +413,7 @@ void audio_prev_or_restart(void)
     }
 }
 
-/* Trimpod: a headset command (SYS_MEDIA_KEY).  True when it tried to resume a
+/* UIPod: a headset command (SYS_MEDIA_KEY).  True when it tried to resume a
  * stopped playlist, whose loading may have splashed over the screen. */
 static bool media_key(int command)
 {
@@ -465,7 +465,7 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             return SYS_USB_CONNECTED;
         }
 
-        /* Trimpod: a private output went away mid-song -- Bluetooth or USB-C,
+        /* UIPod: a private output went away mid-song -- Bluetooth or USB-C,
          * posted by the PCM writer (pcm-alsa.c), or headphones out of the jack
          * (button-sdl.c).  Pause instead of following the route back to the
          * internal speaker -- a private listen must not become a loudspeaker
@@ -476,15 +476,15 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
                 audio_pause();
             break;
 
-        /* Trimpod: NextUI saved its settings, which it does after setting its
+        /* UIPod: NextUI saved its settings, which it does after setting its
          * own volume on the output, as audiomon's output switch does
-         * (button-sdl.c watches the file).  Put Trimpod's volume back. */
+         * (button-sdl.c watches the file).  Put UIPod's volume back. */
         case SYS_NEXTUI_SETTINGS_SAVED:
             trimpod_alsa_volume_overwritten();
             sound_set(SOUND_VOLUME, global_status.volume);
             break;
 
-        /* Trimpod: a headset or Bluetooth media button (button-sdl.c). */
+        /* UIPod: a headset or Bluetooth media button (button-sdl.c). */
         case SYS_MEDIA_KEY:
             if (media_key(button_get_data()))
                 return SYS_MEDIA_KEY;
@@ -509,7 +509,7 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
 
         case SYS_CHARGER_DISCONNECTED:
             reset_runtime();
-            trimpod_library_mark_stale();   /* music may have arrived over MTP */
+            uipod_library_mark_stale();   /* music may have arrived over MTP */
             return SYS_CHARGER_DISCONNECTED;
 #endif
 #if (CONFIG_PLATFORM & PLATFORM_HOSTED) && defined(PLATFORM_HAS_VOLUME_CHANGE)
@@ -617,7 +617,7 @@ static void update_norm_tab(void)
     norm_tab[0] = min;
     norm_tab_size = 1;
 
-    /* Trimpod: bound is lim-1 -- lim-2 drops the next-to-top index and leaves a
+    /* UIPod: bound is lim-1 -- lim-2 drops the next-to-top index and leaves a
      * double-width final step. */
     for (int i = 1; i < lim; ++i)
     {
@@ -772,7 +772,7 @@ char *strip_extension(char* buffer, int buffer_size, const char *filename)
     return buffer;
 }
 
-/* Trimpod: keypress click is fixed off (no Keyclick setting). */
+/* UIPod: keypress click is fixed off (no Keyclick setting). */
 static int keyclick_level = TP_KEYCLICK;
 
 /* Play a standard sound */

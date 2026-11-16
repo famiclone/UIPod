@@ -48,7 +48,7 @@
 #include "pcmbuf.h"
 #include "option_select.h"
 #include "string-extra.h"
-#include "trimpod_autoeq.h"
+#include "uipod_autoeq.h"
 
 static void eq_apply(void);
 
@@ -706,8 +706,8 @@ static void eq_reset_defaults(void)
     eq_apply();
 }
 
-MENUITEM_FUNCTION(eq_autoeq, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_AUTOEQ),
-                  trimpod_autoeq_page, lowlatency_callback, Icon_NOICON);
+MENUITEM_FUNCTION(eq_autoeq, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_AUTOEQ),
+                  uipod_autoeq_page, lowlatency_callback, Icon_NOICON);
 MENUITEM_FUNCTION(eq_graphical, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_GRAPHICAL),
                   eq_menu_graphical, lowlatency_callback, Icon_EQ);
 MENUITEM_FUNCTION(eq_save, 0, ID2P(LANG_EQUALIZER_SAVE),
@@ -715,7 +715,7 @@ MENUITEM_FUNCTION(eq_save, 0, ID2P(LANG_EQUALIZER_SAVE),
 MENUITEM_FUNCTION(eq_reset, 0, ID2P(LANG_RESET_EQUALIZER),
                   eq_reset_defaults, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(eq_browse, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_BROWSE),
-                  trimpod_eq_presets_page, lowlatency_callback, Icon_NOICON);
+                  uipod_eq_presets_page, lowlatency_callback, Icon_NOICON);
 
 MAKE_MENU(equalizer_menu, ID2P(LANG_EQUALIZER), NULL, Icon_EQ,
         &eq_enable, &eq_autoeq, &eq_browse, &eq_graphical, &eq_precut,

@@ -153,7 +153,7 @@ void icons_init(void)
             }
         }
     }
-    /* Trimpod: no list icons -- no user iconsets are loaded. */
+    /* UIPod: no list icons -- no user iconsets are loaded. */
 }
 
 int get_icon_width(enum screen_type screen_type)

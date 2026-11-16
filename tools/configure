@@ -877,12 +877,12 @@ rgnanocc () {
 # Retro-handheld (TrimUI Brick / NextUI tg5040) SDL-app config.
 # Compiler/sysroot come from $CROSS_COMPILE in the build container; SDL via sdl2-config.
 rhhconf () {
-    # Trimpod visualizer: link the vendored projectM (Milkdrop) static libs and
+    # UIPod visualizer: link the vendored projectM (Milkdrop) static libs and
     # the device's GLES/EGL + libstdc++. projectM is C++ and renders via OpenGL ES.
     # Order matters: projectM core -> its eval lib -> GLES -> stdc++ (left-to-right).
     # -lstdc++fs: GCC 8.3's std::filesystem (used by projectM's FileScanner)
     # lives in a separate static library.
-    rsffi="$rootdir/target/aarch64-unknown-linux-gnu/release/libtrimpod_ffi.a"
+    rsffi="$rootdir/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a"
     pmlibs="$rootdir/lib/projectm/lib/libprojectM-4.a $rootdir/lib/projectm/lib/libprojectM_eval.a -lGLESv2 -lEGL -lstdc++ -lstdc++fs"
     LDOPTS="$rsffi -lm -ldl -lrt -L/usr/lib -lSDL2 -lpthread $pmlibs"
 

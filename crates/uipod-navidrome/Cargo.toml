@@ -1,0 +1,11 @@
+[package]
+name = "uipod-navidrome"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust Subsonic/Navidrome client, virtual folder tree, LRU stream cache, and background prefetcher for UIPod"
+
+[lib]
+name = "uipod_navidrome"
+crate-type = ["rlib"]
+
+[dependencies]

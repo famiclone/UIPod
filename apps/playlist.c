@@ -75,9 +75,9 @@
 #include <ctype.h>
 #include "string-extra.h"
 #include "playlist.h"
-#include "trimpod_m4b.h"
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
+#include "uipod_m4b.h"
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
 #include "ata_idle_notify.h"
 #include "file.h"
 #include "fs_attr.h"
@@ -1214,7 +1214,7 @@ static int add_track_to_playlist_unlocked(struct playlist_info* playlist,
 
             playlist->last_insert_pos = position;
             break;
-        /* Trimpod: an append leaves the insert cursor alone, so a later
+        /* UIPod: an append leaves the insert cursor alone, so a later
          * PLAYLIST_INSERT still chains after the last inserted track (or the
          * current one), never after the appended one. */
         case PLAYLIST_INSERT_LAST:
@@ -1643,7 +1643,7 @@ static struct buflib_callbacks ops = {
 /* ************************************************************************** */
 /******************************************************************************/
 /******************************************************************************/
-/* Trimpod: mirror the control journal between the card and its tmpfs working
+/* UIPod: mirror the control journal between the card and its tmpfs working
  * copy (see PLAYLIST_CONTROL_FILE in rbpaths.h).  A missing source deletes the
  * destination, so an emptied queue stays empty across the copy. */
 static void control_copy(const char *src, const char *dst)
@@ -1690,7 +1690,7 @@ void playlist_init(void)
     on_disk_playlist.fd = -1;
     current_playlist.control_fd = -1;
     on_disk_playlist.control_fd = -1;
-    playlist->max_playlist_size = TRIMPOD_MAX_FILES_IN_PLAYLIST;
+    playlist->max_playlist_size = UIPOD_MAX_FILES_IN_PLAYLIST;
 
     handle = core_alloc_ex(playlist->max_playlist_size * sizeof(*playlist->indices), &ops);
     playlist->indices = core_get_data(handle);
@@ -1742,7 +1742,7 @@ int playlist_amount(void)
  */
 size_t playlist_get_index_bufsz(size_t max_sz)
 {
-    size_t index_buffer_size = (TRIMPOD_MAX_FILES_IN_PLAYLIST *
+    size_t index_buffer_size = (UIPOD_MAX_FILES_IN_PLAYLIST *
                                 sizeof(*on_disk_playlist.indices));
 
     return index_buffer_size > max_sz ? max_sz : index_buffer_size;
@@ -1770,8 +1770,8 @@ struct playlist_info* playlist_load(const char* dir, const char* file,
     {
         int num_indices = index_buffer_size / sizeof(*playlist->indices);
 
-        if (num_indices > TRIMPOD_MAX_FILES_IN_PLAYLIST)
-            num_indices = TRIMPOD_MAX_FILES_IN_PLAYLIST;
+        if (num_indices > UIPOD_MAX_FILES_IN_PLAYLIST)
+            num_indices = UIPOD_MAX_FILES_IN_PLAYLIST;
 
         playlist->max_playlist_size = num_indices;
         playlist->indices = index_buffer;
@@ -3228,7 +3228,7 @@ bool playlist_resume_saved(void)
     return false;
 }
 
-/* Trimpod: the first track from 'from' on whose file is still there, or -1.
+/* UIPod: the first track from 'from' on whose file is still there, or -1.
  * Checked at resume, not at launch: files can go mid-session over MTP. */
 static int first_existing_track(struct playlist_info *playlist, int from)
 {
@@ -3242,7 +3242,7 @@ static int first_existing_track(struct playlist_info *playlist, int from)
 }
 
 /* resume a playlist track with the given crc_32 of the track name.
- * Trimpod: a saved track that has gone gives way to the next one there, from
+ * UIPod: a saved track that has gone gives way to the next one there, from
  * its start.  False when none from there on is left. */
 bool playlist_resume_track(int start_index, unsigned int crc,
                            unsigned long elapsed, unsigned long offset)
@@ -3407,7 +3407,7 @@ void playlist_start(int start_index, unsigned long elapsed,
     playlist->index = start_index;
     playlist->started = true;
 
-    /* Trimpod: a start clears the insert cursor, so the next PLAYLIST_INSERT
+    /* UIPod: a start clears the insert cursor, so the next PLAYLIST_INSERT
      * lands after the current track.  Journalled so a resume agrees. */
     if (playlist->last_insert_pos >= 0)
     {
@@ -3424,14 +3424,14 @@ void playlist_start(int start_index, unsigned long elapsed,
     {
         char nav_path[MAX_PATH];
         const char *p = playlist_peek(0, nav_path, sizeof(nav_path));
-        if (p && trimpod_navidrome_is_track_path(p))
+        if (p && uipod_navidrome_is_track_path(p))
         {
-            if (!trimpod_navidrome_prepare_track(p, true))
+            if (!uipod_navidrome_prepare_track(p, true))
                 return;
         }
-        else if (p && trimpod_jellyfin_is_track_path(p))
+        else if (p && uipod_jellyfin_is_track_path(p))
         {
-            if (!trimpod_jellyfin_prepare_track(p, true))
+            if (!uipod_jellyfin_prepare_track(p, true))
                 return;
         }
     }
@@ -3464,7 +3464,7 @@ int playlist_update_resume_info(const struct mp3entry* id3)
                         (playlist->flags & PLAYLIST_FLAG_MODIFIED));
     if (id3)
     {
-        trimpod_m4b_resume_note(id3);  /* m4b audiobooks: per-file position */
+        uipod_m4b_resume_note(id3);  /* m4b audiobooks: per-file position */
         if (global_status.resume_index  != playlist->index ||
             global_status.resume_elapsed != id3->elapsed ||
             global_status.resume_offset != id3->offset ||

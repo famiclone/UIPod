@@ -81,7 +81,7 @@ static const struct button_mapping button_context_wps[]  = {
     LAST_ITEM_IN_LIST
 }; /* button_context_wps */
 
-/* UIPod: video playback (trimpod_video.c). */
+/* UIPod: video playback (uipod_video.c). */
 static const struct button_mapping button_context_video[] = {
     { ACTION_WPS_PLAY,        BUTTON_A|BUTTON_REL,        BUTTON_A },
     { ACTION_WPS_PLAY,        BUTTON_START|BUTTON_REL,    BUTTON_START },

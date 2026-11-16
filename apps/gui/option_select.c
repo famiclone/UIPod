@@ -122,7 +122,7 @@ const char *option_get_valuestring(const struct settings_list *setting,
     }
     return str;
 }
-/* Trimpod: do_menu uses this for the iPod inline LEFT/RIGHT value cycling. */
+/* UIPod: do_menu uses this for the iPod inline LEFT/RIGHT value cycling. */
 void option_select_next_val(const struct settings_list *setting,
                             bool previous, bool apply)
 {

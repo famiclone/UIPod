@@ -31,7 +31,7 @@
 #include "codec_thread.h"
 #include "metadata.h"
 #include "cuesheet.h"
-#include "trimpod_m4b.h"
+#include "uipod_m4b.h"
 #include "buffering.h"
 #include "playlist.h"
 #include "abrepeat.h"
@@ -44,8 +44,8 @@
 #include "audiohw.h"
 #include "general.h"
 #include "iap-usb.h"
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
 #include <stdio.h>
 
 
@@ -1115,17 +1115,17 @@ static void audio_playlist_track_finish(void)
     struct mp3entry *ply_id3 = id3_get(PLAYING_ID3);
     struct mp3entry *id3 = valid_mp3entry(ply_id3);
 
-    /* Trimpod: on natural playlist end the global resume info is reset (the
+    /* UIPod: on natural playlist end the global resume info is reset (the
        NULL below), but the m4b store must still see the final position so a
        book that plays to the end clears its saved position. */
     if (filling == STATE_ENDED)
-        trimpod_m4b_resume_note(id3);
+        uipod_m4b_resume_note(id3);
 
     playlist_update_resume_info(filling == STATE_ENDED ? NULL : id3);
     if (id3)
     {
-        trimpod_navidrome_on_track_finish(id3);
-        trimpod_jellyfin_on_track_finish(id3);
+        uipod_navidrome_on_track_finish(id3);
+        uipod_jellyfin_on_track_finish(id3);
         send_track_event(PLAYBACK_EVENT_TRACK_FINISH,
                          track_event_flags, id3);
     }
@@ -1138,10 +1138,10 @@ static void audio_playlist_track_change(void)
 
     if (id3)
     {
-        trimpod_navidrome_enrich_id3(id3);
-        trimpod_jellyfin_enrich_id3(id3);
-        trimpod_navidrome_on_track_change(id3->path);
-        trimpod_jellyfin_on_track_change(id3->path);
+        uipod_navidrome_enrich_id3(id3);
+        uipod_jellyfin_enrich_id3(id3);
+        uipod_navidrome_on_track_change(id3->path);
+        uipod_jellyfin_on_track_change(id3->path);
         send_track_event(PLAYBACK_EVENT_TRACK_CHANGE,
                          track_event_flags, id3);
         iap_on_track_playback_index(playlist_get_display_index() - 1, false);
@@ -1480,9 +1480,9 @@ static bool audio_load_cuesheet(struct track_info *infop,
         struct cuesheet_file cue_file;
 
         bool have_cue_file = look_for_cuesheet_file(track_id3, &cue_file);
-        /* Trimpod: no sidecar .cue -- m4b audiobooks get their embedded
+        /* UIPod: no sidecar .cue -- m4b audiobooks get their embedded
            chapters extracted into the same cuesheet machinery. */
-        bool try_m4b = !have_cue_file && trimpod_is_m4b(track_id3->path);
+        bool try_m4b = !have_cue_file && uipod_is_m4b(track_id3->path);
 
         if (have_cue_file || try_m4b)
         {
@@ -1495,7 +1495,7 @@ static bool audio_load_cuesheet(struct track_info *infop,
 
                 bool parsed = have_cue_file
                     ? parse_cuesheet(&cue_file, (struct cuesheet *)cuesheet)
-                    : trimpod_m4b_load_chapters(track_id3->path,
+                    : uipod_m4b_load_chapters(track_id3->path,
                                                 (struct cuesheet *)cuesheet);
                 if (parsed)
                 {
@@ -1604,10 +1604,10 @@ static int audio_load_track(void)
         if (!path)
             break;
 
-        if (trimpod_navidrome_is_track_path(path))
-            trimpod_navidrome_prepare_track(path, false);
-        else if (trimpod_jellyfin_is_track_path(path))
-            trimpod_jellyfin_prepare_track(path, false);
+        if (uipod_navidrome_is_track_path(path))
+            uipod_navidrome_prepare_track(path, false);
+        else if (uipod_jellyfin_is_track_path(path))
+            uipod_jellyfin_prepare_track(path, false);
 
         /* Test for broken playlists by probing for the files */
         if (file_exists(path))
@@ -1619,7 +1619,7 @@ static int audio_load_track(void)
         logf("Open failed %s", path);
 
         /* only skip if failed track has a successor in playlist; a missing
-         * last entry ends it, as if it weren't there (Trimpod: otherwise its
+         * last entry ends it, as if it weren't there (UIPod: otherwise its
          * failed bufopen below reads as a full buffer and playback never ends) */
         if (!playlist_peek(playlist_peek_offset + 1, NULL, 0))
         {
@@ -1673,10 +1673,10 @@ static int audio_load_track(void)
         {
             id3_mutex_lock();
             get_metadata(ub_id3, fd, path);
-            if (trimpod_navidrome_is_track_path(path))
-                trimpod_navidrome_enrich_id3(ub_id3);
-            else if (trimpod_jellyfin_is_track_path(path))
-                trimpod_jellyfin_enrich_id3(ub_id3);
+            if (uipod_navidrome_is_track_path(path))
+                uipod_navidrome_enrich_id3(ub_id3);
+            else if (uipod_jellyfin_is_track_path(path))
+                uipod_jellyfin_enrich_id3(ub_id3);
             id3_mutex_unlock();
         }
 

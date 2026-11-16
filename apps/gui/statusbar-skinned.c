@@ -40,7 +40,7 @@
 #include "option_select.h"
 #include "misc.h"
 #include "string-extra.h"
-#include "trimpod_rs_ui.h"
+#include "uipod_rs_ui.h"
 
 /* initial setup of wps_data  */
 static int update_delay = DEFAULT_UPDATE_DELAY;
@@ -196,7 +196,7 @@ void sb_skin_update(enum screen_type screen, bool force)
                 skin_request_full_update(CUSTOM_STATUSBAR);
             skin_update(CUSTOM_STATUSBAR, screen, SKIN_REFRESH_NON_STATIC);
             if (screen == SCREEN_MAIN && get_current_activity() != ACTIVITY_USBSCREEN)
-                trimpod_gpu_render_header();
+                uipod_gpu_render_header();
         }
         next_update[i] = current_tick + update_delay; /* don't update too often */
     }

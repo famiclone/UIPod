@@ -102,7 +102,7 @@ int list_get_nb_lines(struct gui_synclist *list, enum screen_type screen)
         list->parent[screen]->width >= 800 &&
         list->parent[screen]->height >= 500)
     {
-        return 8; /* TRIMPOD_RS_LIST_VISIBLE_ROWS */
+        return 8; /* UIPOD_RS_LIST_VISIBLE_ROWS */
     }
     int lines = skinlist_get_line_count(screen, list);
     if (lines < 0)
@@ -124,7 +124,7 @@ void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
 static void gui_synclist_init_display_settings(struct gui_synclist * list)
 {
     struct user_settings *gs = &global_settings;
-    /* Trimpod: classic iPod right-hand scrollbar on overflowing lists -- the
+    /* UIPod: classic iPod right-hand scrollbar on overflowing lists -- the
      * single point all list scrollbar drawing derives from. */
     list->scrollbar = SCROLLBAR_RIGHT;
     list->scroll_paginated = gs->scroll_paginated;

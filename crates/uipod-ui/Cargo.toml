@@ -1,0 +1,20 @@
+[package]
+name = "uipod-ui"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust GPU UI engine for UIPod (taffy + femtovg on OpenGL ES 3.0)"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_ui"
+crate-type = ["rlib"]
+
+[dependencies]
+taffy = { version = "0.7", default-features = false, features = ["std", "flexbox", "taffy_tree"] }
+femtovg = { version = "0.10", default-features = false }
+glow = { version = "0.15", default-features = false }
+imgref = "1.12"
+rgb = "0.8"
+
+[dev-dependencies]
+png = "0.17"

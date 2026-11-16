@@ -29,19 +29,19 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.trimpod
-          tags: trimpod-toolchain:latest
+          file: Dockerfile.uipod
+          tags: uipod-toolchain:latest
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run Rust workspace unit tests
         run: |
-          mkdir -p build-trimpod/.cargo-cache
+          mkdir -p build-uipod/.cargo-cache
           docker run --rm \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -e CARGO_HOME=/build/build-trimpod/.cargo-cache \
-            -v "$PWD":/build -w /build trimpod-toolchain:latest \
+            -e CARGO_HOME=/build/build-uipod/.cargo-cache \
+            -v "$PWD":/build -w /build uipod-toolchain:latest \
             bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --locked --workspace --lib"
 
       - name: Cross-compile UIPod for TrimUI Brick (tg5040)

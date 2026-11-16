@@ -18,7 +18,7 @@
  *
  ****************************************************************************/
 
-/* Trimpod: themes are hardcoded to the iPod-style skin, so there is no Theme
+/* UIPod: themes are hardcoded to the iPod-style skin, so there is no Theme
  * Settings menu here.  browse_folder() remains because the .cfg config browser
  * and the EQ presets browser use it. */
 

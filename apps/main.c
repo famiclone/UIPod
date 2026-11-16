@@ -56,12 +56,12 @@
 #include "usb_screen.h"
 #include "power.h"
 #include "misc.h"
-#include "trimpod_hold.h"
-#include "trimpod_ui.h"
-#include "trimpod_library.h"
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
-#include "trimpod_m4b.h"
+#include "uipod_hold.h"
+#include "uipod_ui.h"
+#include "uipod_library.h"
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
+#include "uipod_m4b.h"
 #include "rbunicode.h"
 #include "dsp_core.h"
 #include "dircache.h"
@@ -166,18 +166,18 @@ int main(void)
     /* Build/refresh the SQLite library index (stat-gated: a blink when nothing
      * changed; shows "Scanning Library NN%" while parsing new files) so
      * Shuffle Songs and the library browse are ready. */
-    trimpod_library_init();
-    trimpod_navidrome_init();
-    trimpod_jellyfin_init();
+    uipod_library_init();
+    uipod_navidrome_init();
+    uipod_jellyfin_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */
     CHART(">root_menu");
     /* Warm the About glyph cache now, before playback resumes, so the first
      * About open doesn't fault glyphs off disk and stall the codec. */
-    trimpod_about_prewarm();
+    uipod_about_prewarm();
     /* Launched with the HOLD switch engaged: show the lock page instead of the
      * menu until it's released (no-op when the switch is off). */
-    trimpod_hold_run();
+    uipod_hold_run();
     root_menu();
 }
 
@@ -223,12 +223,12 @@ static void init(void)
     settings_reset();
     settings_load();
     settings_apply(true);
-    /* Trimpod: m4b chapters ride the cuesheet engine, so force it on (the
+    /* UIPod: m4b chapters ride the cuesheet engine, so force it on (the
      * setting is unexposed and stale configs may say off; must precede
      * audio_init so the scratch buffer reserves the cuesheet slot), and load
      * the per-file audiobook resume positions. */
     global_settings.cuesheet = true;
-    trimpod_m4b_resume_init();
+    uipod_m4b_resume_init();
 #ifdef RETRO_HANDHELD
     /* Apply the persisted CPU Frequency choice (Settings -> Power -> CPU).
      * power-target.c is the single owner of CPU policy; launch.sh only saves and

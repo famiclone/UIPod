@@ -25,7 +25,7 @@
 #include "lcd.h"        /* lcd_panel_is_dark: no presents while the panel is off */
 #include "panic.h"
 
-/* Trimpod renders through an OpenGL ES 2/3 context (not an SDL_Renderer) so the
+/* UIPod renders through an OpenGL ES 2/3 context (not an SDL_Renderer) so the
  * Milkdrop visualizer (projectM) can draw into the same window. In normal UI
  * mode we upload the 1024x768 LCD surface to a texture and draw it as a
  * full-window quad (1:1 nearest-filtered on TrimUI Brick, linear when downscaled). */
@@ -45,7 +45,7 @@ double display_zoom = 1;
 /* When the Milkdrop visualizer is running it owns the GL context and the window;
  * suppress the normal LCD presentation so other Rockbox threads' lcd_update()
  * calls don't fight for the context. */
-volatile bool trimpod_viz_active = false;
+volatile bool uipod_viz_active = false;
 
 static SDL_GLContext gl_ctx = NULL;
 static GLuint gl_lcd_tex = 0, gl_prog = 0, gl_vbo = 0;
@@ -233,7 +233,7 @@ static void get_window_dimensions(int *w, int *h)
 
 void sdl_window_render(void)
 {
-    if (trimpod_viz_active)
+    if (uipod_viz_active)
         return;   /* visualizer owns the GL context/window right now */
     if (lcd_panel_is_dark())
         return;   /* panel off: the surfaces stay current, the present is waste */

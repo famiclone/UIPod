@@ -44,8 +44,8 @@
 #include "option_select.h"
 #include "buffering.h"
 
-#include "trimpod_spectrum.h"
-#include "trimpod_eq.h"
+#include "uipod_spectrum.h"
+#include "uipod_eq.h"
 
 /* Refresh rate for the live audio spectrum (the %pm element): 5 ticks, every
  * third refresh of the 60 Hz panel, so the cadence is even. */
@@ -620,8 +620,8 @@ void draw_spectrum(struct gui_wps *gwps, int line_number,
         return;
 
     (void)line_number;
-    trimpod_spectrum_draw(gwps->display, viewport);
-    trimpod_eq_draw(gwps->display, viewport);   /* EQ curve over the spectrum */
+    uipod_spectrum_draw(gwps->display, viewport);
+    uipod_eq_draw(gwps->display, viewport);   /* EQ curve over the spectrum */
 }
 
 
@@ -657,7 +657,7 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
     if (lcd_panel_is_dark())
         spectrum = false;
 
-    /* Paused: trimpod_spectrum_draw feeds silence, so once the bars have
+    /* Paused: uipod_spectrum_draw feeds silence, so once the bars have
      * decayed nothing moves -- stop presenting frames. */
     static long paused_at;
     if (audio_status() & AUDIO_STATUS_PAUSE)

@@ -1,0 +1,15 @@
+[package]
+name = "uipod-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Unified staticlib FFI archive bundling all pure-Rust UIPod crates into a single libstd link unit"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+uipod-ui = { path = "../uipod-ui" }
+uipod-navidrome = { path = "../uipod-navidrome" }
+uipod-jellyfin = { path = "../uipod-jellyfin" }

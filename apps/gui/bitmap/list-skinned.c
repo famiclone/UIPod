@@ -117,7 +117,7 @@ const char* skinlist_get_item_text(int offset, bool wrap, char* buf, size_t buf_
 
 enum themable_icons skinlist_get_item_icon(int offset, bool wrap)
 {
-    (void)offset; (void)wrap;   /* Trimpod: no list icons */
+    (void)offset; (void)wrap;   /* UIPod: no list icons */
     return Icon_NOICON;
 }
 

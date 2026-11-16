@@ -40,8 +40,8 @@ void sdl_window_adjustment_needed(void);
 void sdl_window_setup(void);
 
 extern SDL_Window *sdlWindow;       /* the app window (GL-enabled on this target) */
-extern volatile bool trimpod_viz_active; /* visualizer owns the window/context */
-/* Bind Trimpod's GLES context to the calling thread before issuing GL calls. */
+extern volatile bool uipod_viz_active; /* visualizer owns the window/context */
+/* Bind UIPod's GLES context to the calling thread before issuing GL calls. */
 void sdl_gl_make_current(void);
 /* The GLES context used for both the LCD presentation and the visualizer. */
 SDL_GLContext sdl_gl_get_context(void);

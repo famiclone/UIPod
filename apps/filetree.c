@@ -272,7 +272,7 @@ int ft_load(struct tree_context* c, const char* tempdir)
     c->dirlength = files_in_dir;
     closedir(dir);
 
-    /* Trimpod: fixed folders-first, natural-alpha, case-insensitive sort
+    /* UIPod: fixed folders-first, natural-alpha, case-insensitive sort
      * (the File View sort settings were removed). */
     cmp_data.sort_dir = (*c->dirfilter == SHOW_PLUGINS) ? SORT_AS_FILE : TP_SORT_DIR;
     cmp_data.sort_file = TP_SORT_DIR;
@@ -348,7 +348,7 @@ void ft_enter(struct tree_context* c)
     else if ((file_attr & FILE_ATTR_MASK) == FILE_ATTR_CFG)
     {
         /* the one file type a Settings sub-browser (config, EQ presets) can
-         * pick; audio and playlists are browsed by Trimpod's own pages */
+         * pick; audio and playlists are browsed by UIPod's own pages */
         splash(0, ID2P(LANG_WAIT));
         if (settings_load_config(buf, true))
             splash(HZ, ID2P(LANG_SETTINGS_LOADED));

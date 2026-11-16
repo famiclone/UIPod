@@ -41,8 +41,8 @@
 #include "statusbar-skinned.h"
 #include "debug.h"
 #include "line.h"
-#include "trimpod_svg.h"
-#include "trimpod_rs_ui.h"
+#include "uipod_svg.h"
+#include "uipod_rs_ui.h"
 
 #define ICON_PADDING 3
 #define ICON_PADDING_S "3"
@@ -97,7 +97,7 @@ static int list_indicator_width(struct screen *d, const unsigned char *s)
     int wl, wx, wr, h;
     if (is_bracket_toggle(s))
     {
-        const struct trimpod_svg_icon *tog = trimpod_svg_toggle(s[1] != ' ');
+        const struct uipod_svg_icon *tog = uipod_svg_toggle(s[1] != ' ');
         if (tog)
             return tog->width;
         d->getstringsize((const unsigned char *)"[", &wl, &h);
@@ -124,9 +124,9 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
     struct viewport *vp = list_info->vp;
 
     int icon_adv = (!is_title && list_info->svg_icon && list_info->svg_icon->alpha) ?
-                (list_info->svg_icon->width + TRIMPOD_SVG_ICON_GAP) : 0;
+                (list_info->svg_icon->width + UIPOD_SVG_ICON_GAP) : 0;
 
-    /* Trimpod: no stock list icons.  Only the selection cursor (a cursor-style list,
+    /* UIPod: no stock list icons.  Only the selection cursor (a cursor-style list,
      * not a show_icons icon) draws a stock glyph; media lists may draw an SVG
      * file-type icon before the filename. */
     if (is_title)
@@ -141,11 +141,11 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
     {
         int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
         int iy = y + (lh - list_info->svg_icon->height) / 2;
-        trimpod_svg_draw(display, list_info->svg_icon, x + item_indent, iy,
+        uipod_svg_draw(display, list_info->svg_icon, x + item_indent, iy,
                          (linedes->style & STYLE_INVERT) != 0);
     }
 
-    /* Trimpod: [x]/[ ] toggle or ">" arrow in the right gutter (indic_gutter)
+    /* UIPod: [x]/[ ] toggle or ">" arrow in the right gutter (indic_gutter)
      * that list_draw reserved.  The name was drawn in a narrowed viewport (so the
      * marquee clips there); widen back over the gutter and extend the row's bar
      * across it on EVERY row -- an empty put_line == style_line -- so the
@@ -163,13 +163,13 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
             const unsigned char *g = (const unsigned char *)
                         (list_info->indicator ? list_info->indicator : ">");
             int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
-            const struct trimpod_svg_icon *tog =
-                        is_bracket_toggle(g) ? trimpod_svg_toggle(g[1] != ' ') : NULL;
+            const struct uipod_svg_icon *tog =
+                        is_bracket_toggle(g) ? uipod_svg_toggle(g[1] != ' ') : NULL;
             if (tog)
             {
                 int x0 = vp->width - tog->width - 16;
                 int yy = y + (lh - tog->height) / 2;
-                trimpod_svg_draw(display, tog, x0, yy,
+                uipod_svg_draw(display, tog, x0, yy,
                                  (linedes->style & STYLE_INVERT) != 0);
             }
             else
@@ -250,7 +250,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     const int screen = display->screen_type;
     list_draw_item *callback_draw_item;
 
-    if (screen == SCREEN_MAIN && trimpod_gpu_render_synclist(list))
+    if (screen == SCREEN_MAIN && uipod_gpu_render_synclist(list))
         return;
 
     const int list_start_item = list->start_item[screen];
@@ -320,7 +320,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         display->set_viewport(last);
     }
 
-    /* Trimpod: reserve a right gutter for the toggle or ">" arrow so the
+    /* UIPod: reserve a right gutter for the toggle or ">" arrow so the
      * name column (and the scroll-engine marquee) stops before it. Persisting it
      * on list_text_vp keeps the marquee inside the name column. */
     int indic_gutter = 0;
@@ -386,9 +386,9 @@ void list_draw(struct screen *display, struct gui_synclist *list)
             line_indent *= character_width;
         line_indent += indent;
 
-        const struct trimpod_svg_icon *svg_icon = list->callback_get_item_svg_icon ?
+        const struct uipod_svg_icon *svg_icon = list->callback_get_item_svg_icon ?
                     list->callback_get_item_svg_icon(i, list->data) : NULL;
-        int icon_adv = svg_icon ? (svg_icon->width + TRIMPOD_SVG_ICON_GAP) : 0;
+        int icon_adv = svg_icon ? (svg_icon->width + UIPOD_SVG_ICON_GAP) : 0;
 
         /* position the string at the correct offset place */
         int item_width,h;

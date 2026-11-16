@@ -2,11 +2,11 @@
 
 An iPod-inspired offline, **Navidrome**, and **Jellyfin** media player built for the **TrimUI Brick (`tg5040`)** running [NextUI](https://github.com/LoveRetro/NextUI).
 
-Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with native `1024×768` HiDPI pure-Rust UI rendering (`trimpod-ui`), pure-Rust Navidrome (`trimpod-navidrome`) & Jellyfin (`trimpod-jellyfin`) streaming/caching modules, hardware CedarX video playback, AutoEQ headphone profiles, and 100 Milkdrop GPU visualizations (`projectM`).
+Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with native `1024×768` HiDPI pure-Rust UI rendering (`uipod-ui`), pure-Rust Navidrome (`uipod-navidrome`) & Jellyfin (`uipod-jellyfin`) streaming/caching modules, hardware CedarX video playback, AutoEQ headphone profiles, and 100 Milkdrop GPU visualizations (`projectM`).
 
 ## Features
 
-- **Native `1024×768` HiDPI UI** rendered in Rust (`trimpod-ui`) with **Geologica** vector typography and **English + Ukrainian** localization.
+- **Native `1024×768` HiDPI UI** rendered in Rust (`uipod-ui`) with **Geologica** vector typography and **English + Ukrainian** localization.
 - **Three Media Sources (`Settings → Source type`)**:
   - **Local**: Offline music, podcasts, audiobooks (`.m4b` chapter skip + resume), and videos on SD card.
   - **Navidrome**: Subsonic/Navidrome streaming, automatic caching, scrobbling, and `MENU → Download` offline pinning into `/mnt/SDCARD/Media/Music/navidrome`.
@@ -39,10 +39,10 @@ Each GitHub Release also attaches `UIPod.pak.zip` matching `pak.json` (`release_
 
 ## Building Locally
 
-Requires Docker (`tg5040` cross-toolchain + Rust `aarch64-unknown-linux-gnu` are built automatically from `Dockerfile.trimpod`):
+Requires Docker (`tg5040` cross-toolchain + Rust `aarch64-unknown-linux-gnu` are built automatically from `Dockerfile.uipod`):
 
 ```sh
-./build.sh      # cross-compile Rust crates + firmware -> build-trimpod/
+./build.sh      # cross-compile Rust crates + firmware -> build-uipod/
 ./package.sh    # assemble dist/UIPod.pak, dist/UIPod.pak.zip & dist/UIPod-<ver>-brick.zip
 ```
 

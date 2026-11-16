@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble dist/Trimpod.pak from the build (build-trimpod), the bundled theme
+# Assemble dist/UIPod.pak from the build (build-uipod), the bundled theme
 # (assets/theme), and the static pak files (pak/ -- launch.sh, licenses,
 # config.cfg and the .sys device files).
 # Run ./build.sh first (it produces the runtime zip via 'make fullzip').
@@ -9,14 +9,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-ZIP="$ROOT/build-trimpod/trimpod-full.zip"
+ZIP="$ROOT/build-uipod/trimpod-full.zip"
 PAK="$ROOT/dist/UIPod.pak"
 THEME="$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox"
 UIPOD_VERSION="${UIPOD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo "v0.1.0")}"
 SAFE_VER="$(printf '%s' "$UIPOD_VERSION" | sed 's/[^A-Za-z0-9._+-]/-/g')"
 BRICK_ZIP="$ROOT/dist/UIPod-${SAFE_VER}-brick.zip"
 
-[ -n "$ZIP" ] && [ -f "$ZIP" ] || { echo "Missing build-trimpod/*-full.zip — run ./build.sh first."; exit 1; }
+[ -n "$ZIP" ] && [ -f "$ZIP" ] || { echo "Missing build-uipod/*-full.zip — run ./build.sh first."; exit 1; }
 
 echo ">> Staging runtime"
 rm -rf "$ROOT/dist"
@@ -83,13 +83,13 @@ with open(dst, "w", encoding="utf-8") as f:
 PY
 
 echo ">> Injecting umtprd (USB file transfer, GPL-3.0; source in lib/umtprd)"
-cp "$ROOT/build-trimpod/umtprd/umtprd" "$PAK/trimpod/umtprd"
+cp "$ROOT/build-uipod/umtprd/umtprd" "$PAK/trimpod/umtprd"
 cp "$ROOT/lib/umtprd/LICENSE" "$PAK/licenses/umtprd_gplv3.txt"
 chmod +x "$PAK/launch.sh" "$PAK/trimpod/trimpod" "$PAK/trimpod/umtprd"
 
-echo ">> Injecting stock video player plugins (AC-3, DivX, sound to Trimpod; source in lib/tplayer_plugins)"
+echo ">> Injecting stock video player plugins (AC-3, DivX, sound to UIPod; source in lib/tplayer_plugins)"
 mkdir -p "$PAK/trimpod/video"
-cp "$ROOT"/build-trimpod/tplayer_plugins/*.so "$PAK/trimpod/video/"
+cp "$ROOT"/build-uipod/tplayer_plugins/*.so "$PAK/trimpod/video/"
 
 # Ensure no macOS Finder metadata files leak into release archives.
 find "$PAK" -name '.DS_Store' -delete 2>/dev/null || true

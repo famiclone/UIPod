@@ -49,7 +49,7 @@
 #include "dir.h"
 #include "system.h"
 #include "general.h"
-#include "trimpod_keyboard.h"
+#include "uipod_keyboard.h"
 #include "misc.h"
 #include "icons.h"
 #include "font.h"
@@ -724,7 +724,7 @@ bool settings_save_config(int options)
     create_numbered_filename(filename, folder, namebase, ".cfg", 2
                              IF_CNFN_NUM_(, NULL));
 
-    /* allow user to modify the bare preset name via Trimpod's HiDPI keyboard */
+    /* allow user to modify the bare preset name via UIPod's HiDPI keyboard */
     char stem[MAX_PATH];
     const char *slash = strrchr(filename, '/');
     strlcpy(stem, slash ? slash + 1 : filename, sizeof(stem));
@@ -732,7 +732,7 @@ bool settings_save_config(int options)
     if (slen > 4 && strcasecmp(stem + slen - 4, ".cfg") == 0)
         stem[slen - 4] = '\0';
 
-    if (trimpod_kbd_input(stem, sizeof(stem)) != 0 || stem[0] == '\0')
+    if (uipod_kbd_input(stem, sizeof(stem)) != 0 || stem[0] == '\0')
         return false;
 
     snprintf(filename, sizeof(filename), "%s/%s.cfg", folder, stem);
@@ -840,7 +840,7 @@ void settings_apply(bool read_disk)
                 CHART2(">font_load ", global_settings.font_file);
                 if (font_ui >= 0)
                     font_unload(font_ui);
-                rc = font_load_ex(buf, 0, TRIMPOD_GLYPHS_TO_CACHE);
+                rc = font_load_ex(buf, 0, UIPOD_GLYPHS_TO_CACHE);
                 CHART2("<font_load ", global_settings.font_file);
                 screens[SCREEN_MAIN].setuifont(rc);
                 screens[SCREEN_MAIN].setfont(rc);

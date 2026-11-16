@@ -45,7 +45,7 @@
 #include "playback.h"
 #include "tdspeed.h"
 #include "viewport.h"
-#include "trimpod_ui.h"   /* Trimpod: header-legend string for the "Tl" token */
+#include "uipod_ui.h"   /* UIPod: header-legend string for the "Tl" token */
 
 #include "wps_internals.h"
 #include "skin_engine.h"
@@ -957,7 +957,7 @@ const char *get_token_value(struct gui_wps *gwps,
             if (intval)
             {
                 int minvol = sound_min(SOUND_VOLUME);
-                /* Trimpod: the volume bar spans [sound_min .. Maximum Volume
+                /* UIPod: the volume bar spans [sound_min .. Maximum Volume
                  * Limit] and fills COMPLETELY at the limit (matching the dB
                  * book-end labels %vn / %vx), instead of always scaling to the
                  * hardware 0 dB top. */
@@ -1132,10 +1132,10 @@ const char *get_token_value(struct gui_wps *gwps,
 
 
 
-        case SKIN_TOKEN_TRIMPOD_LEGEND:
-            /* Trimpod: the active page's header button-legend (or NULL); the SBS
-             * overlays it on the status row.  See trimpod_set_header_legend(). */
-            return trimpod_get_header_legend();
+        case SKIN_TOKEN_UIPOD_LEGEND:
+            /* UIPod: the active page's header button-legend (or NULL); the SBS
+             * overlays it on the status row.  See uipod_set_header_legend(). */
+            return uipod_get_header_legend();
 
         case SKIN_TOKEN_MAIN_HOLD:
 #ifdef HAS_BUTTON_HOLD

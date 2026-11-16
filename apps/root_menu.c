@@ -37,14 +37,14 @@
 #include "power.h"
 #include "audio.h"
 #include "dir.h"
-#include "trimpod_folders.h"
-#include "trimpod_library_browse.h"
-#include "trimpod_playlists.h"
-#include "trimpod_mainmenu.h"
-#include "trimpod_page.h"          /* trimpod_home_pending (hold-BACK -> root) */
-#include "trimpod_transition.h"    /* arm a single back-slide when homing */
+#include "uipod_folders.h"
+#include "uipod_library_browse.h"
+#include "uipod_playlists.h"
+#include "uipod_mainmenu.h"
+#include "uipod_page.h"          /* uipod_home_pending (hold-BACK -> root) */
+#include "uipod_transition.h"    /* arm a single back-slide when homing */
 
-int trimpod_settings_page(void);   /* main_menu.c */
+int uipod_settings_page(void);   /* main_menu.c */
 
 /* gui api */
 #include "list.h"
@@ -94,7 +94,7 @@ static int wpsscrn(void* param)
     else
     {
         splash(HZ*2, ID2P(LANG_NOTHING_TO_RESUME));
-        trimpod_transition_suppress_next();   /* only a splash: don't re-slide the menu */
+        uipod_transition_suppress_next();   /* only a splash: don't re-slide the menu */
     }
 
     if (ret_val == GO_TO_PLAYLIST_VIEWER
@@ -114,7 +114,7 @@ static int wpsscrn(void* param)
 }
 
 
-/* The Playlists screen is now the Trimpod playlists page (trimpod_playlists.c),
+/* The Playlists screen is now the UIPod playlists page (uipod_playlists.c),
  * which lists the catalog + a "+ Add Playlist" row; see items[] below. */
 
 /* True while the playlist viewer is being shown as the "file list" behind Now
@@ -130,7 +130,7 @@ static int playlist_view(void * param)
 
     /* A Play/Play Shuffled pick pending from the Playlists screen: start it
      * now and slide to Now Playing, leaving this viewer as the screen behind. */
-    switch (trimpod_playlists_start_pending())
+    switch (uipod_playlists_start_pending())
     {
         case 1:  pl_owns_viewer = true;  return GO_TO_WPS;
         case -1: return GO_TO_PLAYLISTS_SCREEN;   /* empty/failed: back to the list */
@@ -140,7 +140,7 @@ static int playlist_view(void * param)
     /* Tap A on a playlist row: show its track listing.  Picking a track there
      * makes it the current playlist and plays from it (-> Now Playing, with
      * the current-queue viewer behind); B backs out to the Playlists list. */
-    if (trimpod_playlists_take_pending_view(viewfile, sizeof(viewfile)))
+    if (uipod_playlists_take_pending_view(viewfile, sizeof(viewfile)))
     {
         switch (playlist_viewer_ex(viewfile, NULL))
         {
@@ -176,39 +176,39 @@ static int playlist_view(void * param)
 
 
 /* Settings: run the Settings menu_page, then return to the root. */
-static int trimpod_settings_screen(void *param)
+static int uipod_settings_screen(void *param)
 {
     (void)param;
-    trimpod_settings_page();
+    uipod_settings_page();
     return GO_TO_ROOT;
 }
 
-static int trimpod_extras_screen(void *param)
+static int uipod_extras_screen(void *param)
 {
     (void)param;
-    int r = trimpod_extras_page();
+    int r = uipod_extras_page();
     if (r == GO_TO_WPS || r == GO_TO_PLAYLISTS_SCREEN)
         return r;
     return GO_TO_ROOT;
 }
 
 static const struct root_items items[] = {
-    [GO_TO_FILEBROWSER] =   { trimpod_files_browse, NULL },
+    [GO_TO_FILEBROWSER] =   { uipod_files_browse, NULL },
     [GO_TO_WPS] =           { wpsscrn, NULL },
-    [GO_TO_MAINMENU] =      { trimpod_settings_screen, NULL },
-    [GO_TO_PLAYLISTS_SCREEN] = { trimpod_playlists_screen, NULL },
+    [GO_TO_MAINMENU] =      { uipod_settings_screen, NULL },
+    [GO_TO_PLAYLISTS_SCREEN] = { uipod_playlists_screen, NULL },
     [GO_TO_PLAYLIST_VIEWER] = { playlist_view, NULL },
-    [GO_TO_TRIMPOD_MUSIC] =     { trimpod_music_browse, NULL },
-    [GO_TO_TRIMPOD_PODCASTS] =  { trimpod_podcast_browse, NULL },
-    [GO_TO_TRIMPOD_AUDIOBOOKS] = { trimpod_audiobook_browse, NULL },
-    [GO_TO_TRIMPOD_SHUFFLE] =   { trimpod_shuffle_all, NULL },
-    [GO_TO_TRIMPOD_ARTISTS] =   { trimpod_library_browse, (void*)(intptr_t)TP_LIB_ARTISTS },
-    [GO_TO_TRIMPOD_ALBUMS] =    { trimpod_library_browse, (void*)(intptr_t)TP_LIB_ALBUMS },
-    [GO_TO_TRIMPOD_GENRES] =    { trimpod_library_browse, (void*)(intptr_t)TP_LIB_GENRES },
-    [GO_TO_TRIMPOD_SONGS] =     { trimpod_library_browse, (void*)(intptr_t)TP_LIB_SONGS },
-    [GO_TO_TRIMPOD_MOVIES] =    { trimpod_movies_browse, NULL },
-    [GO_TO_TRIMPOD_TELEVISION] = { trimpod_television_browse, NULL },
-    [GO_TO_TRIMPOD_EXTRAS] =    { trimpod_extras_screen, NULL },
+    [GO_TO_UIPOD_MUSIC] =     { uipod_music_browse, NULL },
+    [GO_TO_UIPOD_PODCASTS] =  { uipod_podcast_browse, NULL },
+    [GO_TO_UIPOD_AUDIOBOOKS] = { uipod_audiobook_browse, NULL },
+    [GO_TO_UIPOD_SHUFFLE] =   { uipod_shuffle_all, NULL },
+    [GO_TO_UIPOD_ARTISTS] =   { uipod_library_browse, (void*)(intptr_t)TP_LIB_ARTISTS },
+    [GO_TO_UIPOD_ALBUMS] =    { uipod_library_browse, (void*)(intptr_t)TP_LIB_ALBUMS },
+    [GO_TO_UIPOD_GENRES] =    { uipod_library_browse, (void*)(intptr_t)TP_LIB_GENRES },
+    [GO_TO_UIPOD_SONGS] =     { uipod_library_browse, (void*)(intptr_t)TP_LIB_SONGS },
+    [GO_TO_UIPOD_MOVIES] =    { uipod_movies_browse, NULL },
+    [GO_TO_UIPOD_TELEVISION] = { uipod_television_browse, NULL },
+    [GO_TO_UIPOD_EXTRAS] =    { uipod_extras_screen, NULL },
 };
 #define NUM_ITEMS (int)(sizeof(items)/sizeof(*items))
 
@@ -216,7 +216,7 @@ static int item_callback(int action,
                          const struct menu_item_ex *this_item,
                          struct gui_synclist *this_list);
 
-MENUITEM_RETURNVALUE_CHEVRON(file_browser, ID2P(LANG_TRIMPOD_BROWSE), GO_TO_FILEBROWSER,
+MENUITEM_RETURNVALUE_CHEVRON(file_browser, ID2P(LANG_UIPOD_BROWSE), GO_TO_FILEBROWSER,
                         item_callback, Icon_file_view_menu);
 /* Now Playing on Main (#215): always shown, no chevron (Type=NotActive3/Active3). */
 MENUITEM_RETURNVALUE(wps_item, ID2P(LANG_NOW_PLAYING), GO_TO_WPS,
@@ -225,28 +225,28 @@ MENUITEM_RETURNVALUE_CHEVRON(menu_, ID2P(LANG_SETTINGS), GO_TO_MAINMENU,
                         NULL, Icon_Submenu_Entered);
 MENUITEM_RETURNVALUE_CHEVRON(playlists, ID2P(LANG_PLAYLISTS), GO_TO_PLAYLISTS_SCREEN,
                      item_callback, Icon_Playlist);
-MENUITEM_RETURNVALUE_CHEVRON(music_item, ID2P(LANG_TRIMPOD_FILES), GO_TO_TRIMPOD_MUSIC,
+MENUITEM_RETURNVALUE_CHEVRON(music_item, ID2P(LANG_UIPOD_FILES), GO_TO_UIPOD_MUSIC,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(extras_item, ID2P(LANG_TRIMPOD_EXTRAS), GO_TO_TRIMPOD_EXTRAS,
+MENUITEM_RETURNVALUE_CHEVRON(extras_item, ID2P(LANG_UIPOD_EXTRAS), GO_TO_UIPOD_EXTRAS,
                      item_callback, Icon_Submenu_Entered);
-MENUITEM_RETURNVALUE_CHEVRON(podcast_item, ID2P(LANG_TRIMPOD_PODCASTS), GO_TO_TRIMPOD_PODCASTS,
+MENUITEM_RETURNVALUE_CHEVRON(podcast_item, ID2P(LANG_UIPOD_PODCASTS), GO_TO_UIPOD_PODCASTS,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(audiobook_item, ID2P(LANG_TRIMPOD_AUDIOBOOKS), GO_TO_TRIMPOD_AUDIOBOOKS,
+MENUITEM_RETURNVALUE_CHEVRON(audiobook_item, ID2P(LANG_UIPOD_AUDIOBOOKS), GO_TO_UIPOD_AUDIOBOOKS,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(movies_item, ID2P(LANG_TRIMPOD_VIDEOS), GO_TO_TRIMPOD_MOVIES,
+MENUITEM_RETURNVALUE_CHEVRON(movies_item, ID2P(LANG_UIPOD_VIDEOS), GO_TO_UIPOD_MOVIES,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(television_item, ID2P(LANG_TRIMPOD_TELEVISION), GO_TO_TRIMPOD_TELEVISION,
+MENUITEM_RETURNVALUE_CHEVRON(television_item, ID2P(LANG_UIPOD_TELEVISION), GO_TO_UIPOD_TELEVISION,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(artists_item, ID2P(LANG_TRIMPOD_ARTISTS), GO_TO_TRIMPOD_ARTISTS,
+MENUITEM_RETURNVALUE_CHEVRON(artists_item, ID2P(LANG_UIPOD_ARTISTS), GO_TO_UIPOD_ARTISTS,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(albums_item, ID2P(LANG_TRIMPOD_ALBUMS), GO_TO_TRIMPOD_ALBUMS,
+MENUITEM_RETURNVALUE_CHEVRON(albums_item, ID2P(LANG_UIPOD_ALBUMS), GO_TO_UIPOD_ALBUMS,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(genres_item, ID2P(LANG_TRIMPOD_GENRES), GO_TO_TRIMPOD_GENRES,
+MENUITEM_RETURNVALUE_CHEVRON(genres_item, ID2P(LANG_UIPOD_GENRES), GO_TO_UIPOD_GENRES,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(songs_item, ID2P(LANG_TRIMPOD_SONGS), GO_TO_TRIMPOD_SONGS,
+MENUITEM_RETURNVALUE_CHEVRON(songs_item, ID2P(LANG_UIPOD_SONGS), GO_TO_UIPOD_SONGS,
                      item_callback, Icon_Audio);
 /* Shuffle All is an action (plays immediately), not a submenu -> no chevron. */
-MENUITEM_RETURNVALUE(shuffle_item, ID2P(LANG_TRIMPOD_SHUFFLE_ALL), GO_TO_TRIMPOD_SHUFFLE,
+MENUITEM_RETURNVALUE(shuffle_item, ID2P(LANG_UIPOD_SHUFFLE_ALL), GO_TO_UIPOD_SHUFFLE,
                      item_callback, Icon_Audio);
 
 struct menu_item_ex root_menu_;
@@ -375,67 +375,67 @@ static int item_callback(int action,
             /* user-toggleable entries (Settings -> Appearance -> Main Menu) */
             if (this_item == &music_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_MUSIC))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_MUSIC))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &extras_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_EXTRAS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_EXTRAS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &podcast_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_PODCASTS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_PODCASTS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &audiobook_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_AUDIOBOOKS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_AUDIOBOOKS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &movies_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_MOVIES))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_MOVIES))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &television_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_TELEVISION))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_TELEVISION))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &artists_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_ARTISTS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_ARTISTS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &albums_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_ALBUMS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_ALBUMS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &genres_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_GENRES))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_GENRES))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &songs_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_SONGS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_SONGS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &playlists)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_PLAYLISTS))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_PLAYLISTS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &file_browser)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_BROWSE))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_BROWSE))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &shuffle_item)
             {
-                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_SHUFFLE))
+                if (!uipod_mainmenu_is_enabled(UIPOD_MM_SHUFFLE))
                     return ACTION_EXIT_MENUITEM;
             }
         break;
@@ -444,7 +444,7 @@ static int item_callback(int action,
 }
 
 /* Root menu: ui.figcraft Main (#215, "UIPod Mini") rendered by do_menu. */
-static int trimpod_root_run(int last)
+static int uipod_root_run(int last)
 {
     /* Settled back at the root: any playlist-viewer ownership is stale now. */
     pl_owns_viewer = false;
@@ -452,19 +452,19 @@ static int trimpod_root_run(int last)
     int n = 0;
 #define ROOT_ADD(cond, itemp) \
     do { if (cond) root_menu__[n++] = (struct menu_item_ex *)(itemp); } while (0)
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_MUSIC),      &music_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_EXTRAS),     &extras_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_ARTISTS),    &artists_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_ALBUMS),     &albums_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_GENRES),     &genres_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_MOVIES),     &movies_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_SONGS),      &songs_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_PLAYLISTS),  &playlists);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_PODCASTS),   &podcast_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_AUDIOBOOKS), &audiobook_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_TELEVISION), &television_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_BROWSE),     &file_browser);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_SHUFFLE),    &shuffle_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_MUSIC),      &music_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_EXTRAS),     &extras_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_ARTISTS),    &artists_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_ALBUMS),     &albums_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_GENRES),     &genres_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_MOVIES),     &movies_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_SONGS),      &songs_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_PLAYLISTS),  &playlists);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_PODCASTS),   &podcast_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_AUDIOBOOKS), &audiobook_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_TELEVISION), &television_item);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_BROWSE),     &file_browser);
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_SHUFFLE),    &shuffle_item);
     ROOT_ADD(true, &menu_);          /* Settings    */
     ROOT_ADD(true, &wps_item);       /* Now Playing */
 #undef ROOT_ADD
@@ -526,7 +526,7 @@ static inline int load_screen(int screen)
      * started playback and handed off to the WPS, backing out of the WPS must
      * return to the root menu -- NOT resolve "previous" back to here and
      * re-shuffle.  Pin its "previous" to the root. */
-    if ((screen == GO_TO_TRIMPOD_SHUFFLE || screen == GO_TO_TRIMPOD_EXTRAS)
+    if ((screen == GO_TO_UIPOD_SHUFFLE || screen == GO_TO_UIPOD_EXTRAS)
         && ret_val == GO_TO_WPS)
         last_screen = GO_TO_ROOT;
 
@@ -540,7 +540,7 @@ static void ignore_back_button_stub(bool ignore)
 
 static int root_menu_setup_screens(void)
 {
-    return GO_TO_ROOT;   /* Trimpod: always start at the Main Menu */
+    return GO_TO_ROOT;   /* UIPod: always start at the Main Menu */
 }
 
 
@@ -549,8 +549,8 @@ void root_menu(void)
     int previous_browser = global_status.last_browser;
 
     push_current_activity(ACTIVITY_MAINMENU);
-    if (!trimpod_source_is_configured())
-        trimpod_source_boot_page();
+    if (!uipod_source_is_configured())
+        uipod_source_boot_page();
     next_screen = root_menu_setup_screens();
 
     while (true)
@@ -564,27 +564,27 @@ void root_menu(void)
                 global_status.last_screen = GO_TO_ROOT; /* We've returned to ROOT */
                 /* idle return to Now Playing: load the WPS forward from here (B
                  * from it comes back); if the music stopped meanwhile, stay */
-                if (trimpod_wps_pending)
+                if (uipod_wps_pending)
                 {
-                    trimpod_wps_pending = trimpod_home_pending = false;
+                    uipod_wps_pending = uipod_home_pending = false;
                     if (audio_status() & AUDIO_STATUS_PLAY)
                     {
-                        trimpod_transition_take_back();   /* drop the unwound screens' back slide */
+                        uipod_transition_take_back();   /* drop the unwound screens' back slide */
                         pl_owns_viewer = false;
                         last_screen = GO_TO_ROOT;
                         next_screen = GO_TO_WPS;
                         break;
                     }
                 }
-                if (trimpod_home_pending)
-                    trimpod_transition_arm_back();  /* home: one back-slide, as if
+                if (uipod_home_pending)
+                    uipod_transition_arm_back();  /* home: one back-slide, as if
                                                      * the Main Menu were the prev
                                                      * screen (not the deep stack) */
-                trimpod_home_pending = false;  /* home reached: stop unwinding */
+                uipod_home_pending = false;  /* home reached: stop unwinding */
                 /* hardware BACK handled by HOST, not rockbox, at the root */
                 ignore_back_button_stub(true);
 
-                next_screen = trimpod_root_run(last_screen);
+                next_screen = uipod_root_run(last_screen);
 
                 ignore_back_button_stub(false);
 

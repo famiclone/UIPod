@@ -291,9 +291,9 @@ struct system_status
     char browse_last_folder[MAX_PATH];/* last visited file-browser folder */
 };
 
-#define TRIMPOD_MAX_FILES_IN_DIR      5000  /* file-browser dir cache size */
-#define TRIMPOD_MAX_FILES_IN_PLAYLIST 100000 /* queue index slots (8 B each) */
-#define TRIMPOD_GLYPHS_TO_CACHE       512   /* font glyph allocation (CJK lists thrash 250) */
+#define UIPOD_MAX_FILES_IN_DIR      5000  /* file-browser dir cache size */
+#define UIPOD_MAX_FILES_IN_PLAYLIST 100000 /* queue index slots (8 B each) */
+#define UIPOD_GLYPHS_TO_CACHE       512   /* font glyph allocation (CJK lists thrash 250) */
 
 struct user_settings
 {
@@ -415,7 +415,7 @@ struct user_settings
     /* power settings */
     int poweroff;   /* idle power off timer */
 
-    /* Trimpod visualizer */
+    /* UIPod visualizer */
     int viz_start_delay;  /* WPS idle seconds before auto-starting the visualizer (0=never) */
     int viz_transition;   /* seconds each preset shows before switching to a random next */
 #if BATTERY_CAPACITY_INC > 0
@@ -537,7 +537,7 @@ struct user_settings
 #endif
 };
 
-/* Trimpod: the stock "Other" (General Settings) menus were removed -- these
+/* UIPod: the stock "Other" (General Settings) menus were removed -- these
  * formerly-user-facing settings are baked in at their read sites (no serialized
  * setting). Values are the prior defaults, except warn-on-erase (off: no
  * iPod-style prompt). Sorting is fixed to folders-first natural-alpha. */

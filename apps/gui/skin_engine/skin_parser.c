@@ -416,7 +416,7 @@ static int parse_font_load(struct skin_element *element,
     if(element->params_count > 2)
         glyphs = get_param(element, 2)->data.number;
     else
-        glyphs = TRIMPOD_GLYPHS_TO_CACHE;
+        glyphs = UIPOD_GLYPHS_TO_CACHE;
     if (id < 2)
     {
         DEBUGF("font id must be >= 2 (%d)\n", id);

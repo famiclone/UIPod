@@ -137,10 +137,10 @@ static const char off_on[] = "off,on";
 static const int timeout_sec_common[] = {-1,0,1,2,3,4,5,6,7,8,9,10,15,20,25,30,
                                         45,60,90,120,180,240,300,600,900,1200,
                                         1500,1800,2700,3600,4500,5400,6300,7200};
-/* Trimpod "Auto Screen Off" timeouts: Never (0), 5s steps up to 1 min, then 2/5/10 min. */
+/* UIPod "Auto Screen Off" timeouts: Never (0), 5s steps up to 1 min, then 2/5/10 min. */
 static const int auto_screen_off_values[] =
     { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 120, 300, 600 };
-/* Trimpod "Visualization Transition": seconds each preset shows before switching;
+/* UIPod "Visualization Transition": seconds each preset shows before switching;
  * 0 = "Never" (hold the preset until the user manually changes it). */
 static const int viz_transition_values[] = { 0, 5, 10, 15, 20, 30, 45, 60, 75, 90 };
 
@@ -207,7 +207,7 @@ static const char graphic_numeric[] = "graphic,numeric";
   #define DEFAULT_VIEWERS_ICONSET ""
 #endif
 
-/* Trimpod: the Classic Dark pairing (power_menu.c's theme table), so a config
+/* UIPod: the Classic Dark pairing (power_menu.c's theme table), so a config
  * with a missing colour line still lands on a named theme, not stock Rockbox's
  * grey-on-black (which the Theme knob would show as "Custom"). */
 #define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0x18, 0x1C, 0x18)
@@ -258,7 +258,7 @@ static const char* formatter_time_unit_0_is_off(char *buffer, size_t buffer_size
 }
 
 
-/* Trimpod: "Auto Screen Off" reframing of the backlight timeout -- the always-on
+/* UIPod: "Auto Screen Off" reframing of the backlight timeout -- the always-on
  * value (0) reads "Never" (the screen never auto-turns-off).  The setting's value
  * list skips the -1 ("screen permanently off") entry, so only 0 and positive
  * timeouts reach this. */
@@ -453,7 +453,7 @@ static void volume_limit_set_default(void* setting, void* defaultval)
 
 const struct settings_list settings[] = {
 /* system_status settings .resume.cfg */
-    /* Trimpod: key is versioned "volume_ddb" -- the unit is deci-dB, so a stale
+    /* UIPod: key is versioned "volume_ddb" -- the unit is deci-dB, so a stale
      * whole-dB "volume: -30" must not be readable (it would load as -3.0 dB,
      * near max).  Unknown key falls back to sound_default(). */
     SYSTEM_STATUS_SOUND(F_NO_WRAP, volume, LANG_VOLUME, "volume_ddb", SOUND_VOLUME),
@@ -467,7 +467,7 @@ const struct settings_list settings[] = {
     SYSTEM_STATUS(0, last_screen,    -1,     "PVS"),
     SYSTEM_STATUS(0, last_browser,    0,     "BRS"),
 /* sound settings */
-    /* Trimpod: same unit versioning as volume_ddb -- a stale "volume limit" is
+    /* UIPod: same unit versioning as volume_ddb -- a stale "volume limit" is
      * ignored (no cap) rather than misread. */
     CUSTOM_SETTING(F_NO_WRAP, volume_limit, LANG_VOLUME_LIMIT,
                   NULL, "volume_limit_ddb",
@@ -567,11 +567,11 @@ const struct settings_list settings[] = {
 
 
     /* LCD */
-    /* Trimpod: presented as "Auto Screen Off" (Device Settings).  0 = "Never"
+    /* UIPod: presented as "Auto Screen Off" (Device Settings).  0 = "Never"
      * (screen never auto-turns-off); the -1 ("screen permanently off") entry is
      * skipped via &timeout_sec_common[1] / count 22. */
     TABLE_SETTING_LIST(F_TIME_SETTING | F_ALLOW_ARBITRARY_VALS,
-                    backlight_timeout, LANG_TRIMPOD_AUTO_SCREEN_OFF,
+                    backlight_timeout, LANG_UIPOD_AUTO_SCREEN_OFF,
                     DEFAULT_BACKLIGHT_TIMEOUT, "backlight timeout",
                     off_on, UNIT_SEC, formatter_time_unit_0_is_never,
                     backlight_set_timeout,
@@ -627,19 +627,19 @@ const struct settings_list settings[] = {
                 poweroff, LANG_POWEROFF_IDLE, 0, "idle poweroff",
                 off_on, UNIT_SEC, formatter_time_unit_0_is_never,
                 set_poweroff_timeout, 16, auto_screen_off_values),
-    /* Trimpod visualizer: idle-on-WPS seconds before auto-starting (0 = Never),
+    /* UIPod visualizer: idle-on-WPS seconds before auto-starting (0 = Never),
      * and how long each preset shows before switching.  Same value list/format
      * as Display Poweroff; read directly (no apply callback needed). */
     TABLE_SETTING_LIST(F_TIME_SETTING | F_ALLOW_ARBITRARY_VALS,
-                viz_start_delay, LANG_TRIMPOD_VIZ_ACTIVATE_AFTER, 0, "viz start delay",
+                viz_start_delay, LANG_UIPOD_VIZ_ACTIVATE_AFTER, 0, "viz start delay",
                 off_on, UNIT_SEC, formatter_time_unit_0_is_never,
                 NULL, 16, auto_screen_off_values),
     TABLE_SETTING_LIST(F_TIME_SETTING | F_ALLOW_ARBITRARY_VALS,
-                viz_transition, LANG_TRIMPOD_VIZ_TRANSITION, 20, "viz transition",
+                viz_transition, LANG_UIPOD_VIZ_TRANSITION, 20, "viz transition",
                 off_on, UNIT_SEC, formatter_seconds_0_is_never,
                 NULL, 10, viz_transition_values),
 #ifdef HAVE_PERCEPTUAL_VOLUME
-    /* Trimpod: perceptual by default with 40 even loudness increments (a 0..10
+    /* UIPod: perceptual by default with 40 even loudness increments (a 0..10
      * dial); not exposed in the menu. */
     CHOICE_SETTING(0, volume_adjust_mode, LANG_VOLUME_ADJUST_MODE,
                    VOLUME_ADJUST_PERCEPTUAL, "volume adjustment mode",
@@ -955,7 +955,7 @@ const struct settings_list settings[] = {
 
     CHOICE_SETTING(0, backlight_on_button_hold,
                    LANG_BACKLIGHT_ON_BUTTON_HOLD,
-                   /* Trimpod: the Brick's side switch is input-lock only and must
+                   /* UIPod: the Brick's side switch is input-lock only and must
                     * NOT blank the screen, so default to 0 ("normal") rather than
                     * upstream's 1 ("off") for HAS_BUTTON_HOLD targets. */
                    0,
@@ -1032,7 +1032,7 @@ const struct settings_list settings[] = {
                   root_menu_load_from_cfg, root_menu_write_to_cfg,
                   root_menu_is_changed, root_menu_set_default),
 
-    OFFON_SETTING(0, mono_album_art, LANG_TRIMPOD_MONO_ALBUM_ART, true,
+    OFFON_SETTING(0, mono_album_art, LANG_UIPOD_MONO_ALBUM_ART, true,
                   "mono album art", NULL),
 
 };

@@ -48,9 +48,9 @@
 #include "appevents.h"
 
 #include "root_menu.h"
-#include "trimpod_svg.h"
-#include "trimpod_transition.h"   /* slide the browser in/out */
-#include "trimpod_page.h"         /* trimpod_home_pending (hold-BACK -> root) */
+#include "uipod_svg.h"
+#include "uipod_transition.h"   /* slide the browser in/out */
+#include "uipod_page.h"         /* uipod_home_pending (hold-BACK -> root) */
 
 static struct gui_synclist tree_lists;
 
@@ -137,11 +137,11 @@ static const char* tree_get_filename(int selected_item, void *data,
     return(name);
 }
 
-static const struct trimpod_svg_icon *tree_get_svg_icon(int selected_item, void *data)
+static const struct uipod_svg_icon *tree_get_svg_icon(int selected_item, void *data)
 {
     struct tree_context *local_tc = (struct tree_context *)data;
     struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
-    return trimpod_svg_for_path(entry->name, (entry->attr & ATTR_DIRECTORY) != 0);
+    return uipod_svg_for_path(entry->name, (entry->attr & ATTR_DIRECTORY) != 0);
 }
 
 static bool tree_get_chevron(int selected_item, void *data)
@@ -347,8 +347,8 @@ static int dirbrowse(void)
 
     /* slide the browser in: BACK if we got here by backing out of a deeper
      * screen that armed it (e.g. B out of Now Playing), else FORWARD */
-    trimpod_transition_animate(
-        trimpod_transition_take_back() ? TRIMPOD_TRANS_BACK : TRIMPOD_TRANS_FORWARD,
+    uipod_transition_animate(
+        uipod_transition_take_back() ? UIPOD_TRANS_BACK : UIPOD_TRANS_FORWARD,
         browse_first_render, NULL);
     numentries = s_browse_numentries;
     reload_dir = false;
@@ -366,7 +366,7 @@ static int dirbrowse(void)
         bool restore = false;
 
         /* hold BACK anywhere: unwind this browser too and land on the Main Menu */
-        if (trimpod_home_pending)
+        if (uipod_home_pending)
             return exit_to_new_screen(GO_TO_ROOT);
 
         if (tc.dirlevel < 0)
@@ -381,7 +381,7 @@ static int dirbrowse(void)
         gui_synclist_do_button(&tree_lists, &button);
         tc.selected_item = gui_synclist_get_sel_pos(&tree_lists);
         if (button == ACTION_NONE)
-            trimpod_idle_to_wps();          /* the loop-top home check exits */
+            uipod_idle_to_wps();          /* the loop-top home check exits */
         bool do_restore_display = true;
         switch ( button ) {
             case ACTION_STD_OK:
@@ -393,7 +393,7 @@ static int dirbrowse(void)
                 break;
 
             case ACTION_TP_HOME:        /* hold BACK: jump to the Main Menu */
-                trimpod_home_pending = true;
+                uipod_home_pending = true;
                 return exit_to_new_screen(GO_TO_ROOT);
 
             case ACTION_STD_CANCEL:
@@ -482,9 +482,9 @@ static int dirbrowse(void)
              * menus -- deeper = forward, parent = back; an in-place reload
              * (context menu, filter, ...) just redraws. */
             if (tc.dirlevel != dirlevel_before) {
-                trimpod_transition_animate(
-                    tc.dirlevel > dirlevel_before ? TRIMPOD_TRANS_FORWARD
-                                                  : TRIMPOD_TRANS_BACK,
+                uipod_transition_animate(
+                    tc.dirlevel > dirlevel_before ? UIPOD_TRANS_FORWARD
+                                                  : UIPOD_TRANS_BACK,
                     browse_first_render, NULL);
                 numentries = s_browse_numentries;
             } else {
@@ -530,7 +530,7 @@ int rockbox_browse(struct browse_context *browse)
 
     /* backing out -> tell the menu/page we return to slide us away */
     if (ret_val == GO_TO_PREVIOUS || ret_val == GO_TO_ROOT)
-        trimpod_transition_arm_back();
+        uipod_transition_arm_back();
     return ret_val;
 }
 
@@ -567,10 +567,10 @@ void tree_mem_init(void)
     tc.sort_dir = TP_SORT_DIR;
 
     cache->name_buffer_size = AVERAGE_FILENAME_LENGTH *
-        TRIMPOD_MAX_FILES_IN_DIR;
+        UIPOD_MAX_FILES_IN_DIR;
     cache->name_buffer_handle = core_alloc_ex(cache->name_buffer_size, &ops);
 
-    cache->max_entries = TRIMPOD_MAX_FILES_IN_DIR;
+    cache->max_entries = UIPOD_MAX_FILES_IN_DIR;
     cache->entries_handle =
             core_alloc_ex(cache->max_entries*(sizeof(struct entry)), &ops);
 }

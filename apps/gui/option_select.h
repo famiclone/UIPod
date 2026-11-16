@@ -33,7 +33,7 @@ bool option_screen(const struct settings_list *setting,
                    struct viewport parent[NB_SCREENS],
                    bool use_temp_var, const unsigned char* option_title);
 
-/* Trimpod: used by do_menu for inline LEFT/RIGHT value cycling. */
+/* UIPod: used by do_menu for inline LEFT/RIGHT value cycling. */
 void option_select_next_val(const struct settings_list *setting,
                             bool previous, bool apply);
 const char *option_get_valuestring(const struct settings_list *setting,

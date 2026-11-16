@@ -31,8 +31,8 @@
 #include "bmp.h"
 #include "buffering.h"
 #include "linked_list.h"
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 /* #define LOGF_ENABLE */
@@ -645,10 +645,10 @@ static bool buffer_handle(int handle_id, size_t to_buffer)
         struct mp3entry *meta_id3 = ringbuf_ptr(h->data);
         get_metadata_ex(meta_id3,
                         h->fd, h->path, METADATA_CLOSE_FD_ON_EXIT);
-        if (trimpod_navidrome_is_track_path(h->path))
-            trimpod_navidrome_enrich_id3(meta_id3);
-        else if (trimpod_jellyfin_is_track_path(h->path))
-            trimpod_jellyfin_enrich_id3(meta_id3);
+        if (uipod_navidrome_is_track_path(h->path))
+            uipod_navidrome_enrich_id3(meta_id3);
+        else if (uipod_jellyfin_is_track_path(h->path))
+            uipod_jellyfin_enrich_id3(meta_id3);
         h->fd = -1; /* with above, behavior same as close_fd */
         h->widx = ringbuf_add(h->data, h->filesize);
         h->end  = h->filesize;

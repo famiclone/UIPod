@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Trimpod: the Power (Device) settings menu -- Theme, Brightness, Display
+ * UIPod: the Power (Device) settings menu -- Theme, Brightness, Display
  * Poweroff, Idle Poweroff, CPU Frequency, Charge Limit -- on one do_menu page.
  * Theme, CPU and Charge Limit are inline value knobs (LEFT/RIGHT cycle, applied
  * live); the others are plain settings rows.
@@ -34,8 +34,8 @@
 #include "screen_access.h" /* screens[].set_background for the bg colour presets */
 #include "viewport.h"       /* viewportmanager_theme_changed: full redraw on colour change */
 #include "exported_menus.h"
-#include "trimpod_mainmenu.h"
-#include "trimpod_ui.h"     /* trimpod_toggle_str */
+#include "uipod_mainmenu.h"
+#include "uipod_ui.h"     /* uipod_toggle_str */
 
 /* Theme: a named background + ink pair, cycled as one knob.  Backgrounds are
  * the iPod-family colour lineup (iPod mini + nano tones; Apple never published
@@ -47,69 +47,69 @@
  *   (complementary navy on yellow/orange, monochromatic deep tones elsewhere,
  *   the Game Boy green on Mono Green).
  * Written straight into the bg_color/fg_color theme settings. */
-#define TRIMPOD_INK_DARK  0x181C18   /* classic mono-LCD ink */
-#define TRIMPOD_INK_LIGHT 0xFFFFFF
+#define UIPOD_INK_DARK  0x181C18   /* classic mono-LCD ink */
+#define UIPOD_INK_LIGHT 0xFFFFFF
 
-struct trimpod_theme
+struct uipod_theme
 {
     const char *name;
     int         bg;      /* same type as global_settings.bg_color/fg_color */
     int         fg;
 };
 
-static const struct trimpod_theme trimpod_themes[] = {
+static const struct uipod_theme uipod_themes[] = {
     /* UIPod Classic (ui.figcraft design tokens): shipped default + dark companion */
     { "UIPod Classic",      0xD6D8D5, 0x3C3637 },
     { "UIPod Classic Dark", 0x1E1B1C, 0xD6D8D5 },
     /* Classic (0xD8DCD0, the mono LCD) */
-    { "Classic Dark",     0xD8DCD0, TRIMPOD_INK_DARK  },
-    { "Classic Light",    0xD8DCD0, TRIMPOD_INK_LIGHT },
+    { "Classic Dark",     0xD8DCD0, UIPOD_INK_DARK  },
+    { "Classic Light",    0xD8DCD0, UIPOD_INK_LIGHT },
     { "Classic Sepia",    0xD8DCD0, 0x5D4037 },  /* warm book-ink sepia   */
-    { "Silver Dark",      0xC4C7CC, TRIMPOD_INK_DARK  },
-    { "Silver Light",     0xC4C7CC, TRIMPOD_INK_LIGHT },
+    { "Silver Dark",      0xC4C7CC, UIPOD_INK_DARK  },
+    { "Silver Light",     0xC4C7CC, UIPOD_INK_LIGHT },
     { "Silver Slate",     0xC4C7CC, 0x37474F },  /* cool monochrome       */
-    { "Slate Dark",       0x637D8C, TRIMPOD_INK_DARK  },
-    { "Slate Light",      0x637D8C, TRIMPOD_INK_LIGHT },
+    { "Slate Dark",       0x637D8C, UIPOD_INK_DARK  },
+    { "Slate Light",      0x637D8C, UIPOD_INK_LIGHT },
     { "Slate Gold",       0x637D8C, 0xFFD97D },  /* warm on cool          */
-    { "Blue Dark",        0x0094E1, TRIMPOD_INK_DARK  },
-    { "Blue Light",       0x0094E1, TRIMPOD_INK_LIGHT },
+    { "Blue Dark",        0x0094E1, UIPOD_INK_DARK  },
+    { "Blue Light",       0x0094E1, UIPOD_INK_LIGHT },
     { "Blue Navy",        0x0094E1, 0x002B4A },  /* deep monochrome       */
-    { "Green Dark",       0xA0CB3B, TRIMPOD_INK_DARK  },
-    { "Green Light",      0xA0CB3B, TRIMPOD_INK_LIGHT },
+    { "Green Dark",       0xA0CB3B, UIPOD_INK_DARK  },
+    { "Green Light",      0xA0CB3B, UIPOD_INK_LIGHT },
     { "Green Forest",     0xA0CB3B, 0x2E4A1C },  /* deep monochrome       */
-    { "Yellow Dark",      0xFFD400, TRIMPOD_INK_DARK  },
-    { "Yellow Light",     0xFFD400, TRIMPOD_INK_LIGHT },
+    { "Yellow Dark",      0xFFD400, UIPOD_INK_DARK  },
+    { "Yellow Light",     0xFFD400, UIPOD_INK_LIGHT },
     { "Yellow Navy",      0xFFD400, 0x1D3557 },  /* complementary         */
-    { "Gold Dark",        0xFAB71F, TRIMPOD_INK_DARK  },
-    { "Gold Light",       0xFAB71F, TRIMPOD_INK_LIGHT },
+    { "Gold Dark",        0xFAB71F, UIPOD_INK_DARK  },
+    { "Gold Light",       0xFAB71F, UIPOD_INK_LIGHT },
     { "Gold Espresso",    0xFAB71F, 0x4E342E },  /* warm analogous        */
-    { "Orange Dark",      0xF08A1C, TRIMPOD_INK_DARK  },
-    { "Orange Light",     0xF08A1C, TRIMPOD_INK_LIGHT },
+    { "Orange Dark",      0xF08A1C, UIPOD_INK_DARK  },
+    { "Orange Light",     0xF08A1C, UIPOD_INK_LIGHT },
     { "Orange Navy",      0xF08A1C, 0x1D3557 },  /* complementary         */
-    { "Red Dark",         0xEA323C, TRIMPOD_INK_DARK  },   /* (PRODUCT)RED */
-    { "Red Light",        0xEA323C, TRIMPOD_INK_LIGHT },
+    { "Red Dark",         0xEA323C, UIPOD_INK_DARK  },   /* (PRODUCT)RED */
+    { "Red Light",        0xEA323C, UIPOD_INK_LIGHT },
     { "Red Cream",        0xEA323C, 0xFFF3E0 },  /* soft warm white       */
-    { "Pink Dark",        0xEC5298, TRIMPOD_INK_DARK  },
-    { "Pink Light",       0xEC5298, TRIMPOD_INK_LIGHT },
+    { "Pink Dark",        0xEC5298, UIPOD_INK_DARK  },
+    { "Pink Light",       0xEC5298, UIPOD_INK_LIGHT },
     { "Pink Berry",       0xEC5298, 0x4A0728 },  /* deep monochrome       */
-    { "Purple Dark",      0x9B72B0, TRIMPOD_INK_DARK  },
-    { "Purple Light",     0x9B72B0, TRIMPOD_INK_LIGHT },
+    { "Purple Dark",      0x9B72B0, UIPOD_INK_DARK  },
+    { "Purple Light",     0x9B72B0, UIPOD_INK_LIGHT },
     { "Purple Plum",      0x9B72B0, 0x2A1438 },  /* deep monochrome       */
-    { "Mono Green Dark",  0xBFCBB0, TRIMPOD_INK_DARK  },
-    { "Mono Green Light", 0xBFCBB0, TRIMPOD_INK_LIGHT },
+    { "Mono Green Dark",  0xBFCBB0, UIPOD_INK_DARK  },
+    { "Mono Green Light", 0xBFCBB0, UIPOD_INK_LIGHT },
     { "Mono Green Pixel", 0xBFCBB0, 0x0F380F },  /* the Game Boy pairing  */
 };
-#define TRIMPOD_NTHEMES \
-    ((int)(sizeof(trimpod_themes)/sizeof(trimpod_themes[0])))
+#define UIPOD_NTHEMES \
+    ((int)(sizeof(uipod_themes)/sizeof(uipod_themes[0])))
 
-static void trimpod_theme_apply(int idx)
+static void uipod_theme_apply(int idx)
 {
-    if (idx < 0 || idx >= TRIMPOD_NTHEMES)
+    if (idx < 0 || idx >= UIPOD_NTHEMES)
         return;
     unsigned old_bg = global_settings.bg_color;
     unsigned old_fg = global_settings.fg_color;
-    global_settings.bg_color = trimpod_themes[idx].bg;
-    global_settings.fg_color = trimpod_themes[idx].fg;
+    global_settings.bg_color = uipod_themes[idx].bg;
+    global_settings.fg_color = uipod_themes[idx].fg;
     screens[SCREEN_MAIN].set_background(global_settings.bg_color);
     screens[SCREEN_MAIN].set_foreground(global_settings.fg_color);
     /* Recolour the loaded skins' cached default colours in place, then force
@@ -127,28 +127,28 @@ static void trimpod_theme_apply(int idx)
 extern int  retrohh_cpu_get_choice(void);       /* kHz; 0 = Dynamic */
 extern void retrohh_cpu_set_choice(int khz);    /* persistence lives in power-target.c */
 
-/* Charge Limit: caps charging at a % while Trimpod runs (power-target.c). The
+/* Charge Limit: caps charging at a % while UIPod runs (power-target.c). The
  * row is hidden entirely when the standalone Battery Care daemon owns charging. */
 extern bool retrohh_charge_limit_hidden(void);
 extern int  retrohh_charge_limit_get_target(void);
 extern void retrohh_charge_limit_cycle(int dir);
 
-static const int trimpod_cpu_freqs[] = {
+static const int uipod_cpu_freqs[] = {
     408000, 600000, 816000, 1008000, 1200000, 1416000, 1608000, 1800000, 2000000
 };
-/* Display labels (MHz) paired 1:1 with trimpod_cpu_freqs (kHz). */
-static const char *const trimpod_cpu_labels[] = {
+/* Display labels (MHz) paired 1:1 with uipod_cpu_freqs (kHz). */
+static const char *const uipod_cpu_labels[] = {
     "408 MHz", "600 MHz", "816 MHz", "1008 MHz", "1200 MHz",
     "1416 MHz", "1608 MHz", "1800 MHz", "2000 MHz"
 };
-#define TRIMPOD_CPU_NFREQS \
-    ((int)(sizeof(trimpod_cpu_freqs)/sizeof(trimpod_cpu_freqs[0])))
+#define UIPOD_CPU_NFREQS \
+    ((int)(sizeof(uipod_cpu_freqs)/sizeof(uipod_cpu_freqs[0])))
 
-static int trimpod_cpu_nearest_index(int khz)
+static int uipod_cpu_nearest_index(int khz)
 {
-    int idx = TRIMPOD_CPU_NFREQS - 1;
-    for (int i = 0; i < TRIMPOD_CPU_NFREQS; i++)
-        if (trimpod_cpu_freqs[i] >= khz) { idx = i; break; }
+    int idx = UIPOD_CPU_NFREQS - 1;
+    for (int i = 0; i < UIPOD_CPU_NFREQS; i++)
+        if (uipod_cpu_freqs[i] >= khz) { idx = i; break; }
     return idx;
 }
 
@@ -162,29 +162,29 @@ static const char *tp_cpu_value_get(void *ctx, char *buf, int len)
     int khz = retrohh_cpu_get_choice();
     if (khz <= 0)
         return "Dynamic";
-    return trimpod_cpu_labels[trimpod_cpu_nearest_index(khz)];
+    return uipod_cpu_labels[uipod_cpu_nearest_index(khz)];
 }
 static void tp_cpu_value_cycle(void *ctx, int dir)
 {
     (void)ctx;
     /* Virtual list: index 0 = "Dynamic" (first), 1..N = the fixed steps. */
     int khz = retrohh_cpu_get_choice();
-    int vidx = khz <= 0 ? 0 : trimpod_cpu_nearest_index(khz) + 1;
+    int vidx = khz <= 0 ? 0 : uipod_cpu_nearest_index(khz) + 1;
     vidx += (dir < 0 ? -1 : 1);
     if (vidx < 0) vidx = 0;
-    if (vidx > TRIMPOD_CPU_NFREQS) vidx = TRIMPOD_CPU_NFREQS;
-    retrohh_cpu_set_choice(vidx == 0 ? 0 : trimpod_cpu_freqs[vidx - 1]);
+    if (vidx > UIPOD_CPU_NFREQS) vidx = UIPOD_CPU_NFREQS;
+    retrohh_cpu_set_choice(vidx == 0 ? 0 : uipod_cpu_freqs[vidx - 1]);
 }
-static const struct menu_value_cb trimpod_cpu_value =
+static const struct menu_value_cb uipod_cpu_value =
     { tp_cpu_value_get, tp_cpu_value_cycle, NULL };
 
 /* Current theme = the pair (bg_color, fg_color) matched against the table;
  * -1 when the saved settings predate the selector (an unlisted combo). */
 static int tp_theme_cur_index(void)
 {
-    for (int i = 0; i < TRIMPOD_NTHEMES; i++)
-        if (trimpod_themes[i].bg == global_settings.bg_color &&
-            trimpod_themes[i].fg == global_settings.fg_color)
+    for (int i = 0; i < UIPOD_NTHEMES; i++)
+        if (uipod_themes[i].bg == global_settings.bg_color &&
+            uipod_themes[i].fg == global_settings.fg_color)
             return i;
     return -1;
 }
@@ -192,7 +192,7 @@ static const char *tp_theme_value_get(void *ctx, char *buf, int len)
 {
     (void)ctx; (void)buf; (void)len;
     int idx = tp_theme_cur_index();
-    return idx >= 0 ? trimpod_themes[idx].name : "Custom";
+    return idx >= 0 ? uipod_themes[idx].name : "Custom";
 }
 static void tp_theme_value_cycle(void *ctx, int dir)
 {
@@ -201,16 +201,16 @@ static void tp_theme_value_cycle(void *ctx, int dir)
     /* from an unlisted combo any step lands on the first theme */
     int idx = (cur < 0) ? 0 : cur + (dir < 0 ? -1 : 1);
     if (idx < 0) idx = 0;
-    if (idx >= TRIMPOD_NTHEMES) idx = TRIMPOD_NTHEMES - 1;
+    if (idx >= UIPOD_NTHEMES) idx = UIPOD_NTHEMES - 1;
     if (idx != cur)
-        trimpod_theme_apply(idx);
+        uipod_theme_apply(idx);
 }
-static const struct menu_value_cb trimpod_theme_value =
+static const struct menu_value_cb uipod_theme_value =
     { tp_theme_value_get, tp_theme_value_cycle, NULL };
 
 /* Charge Limit: inline value 75/80/85/90/95/100% (100% = no cap), wrapping. The
  * row is omitted from the menu entirely when the Battery Care daemon is running
- * (see trimpod_power_page), so it's only shown when Trimpod manages. */
+ * (see uipod_power_page), so it's only shown when UIPod manages. */
 static const char *tp_charge_value_get(void *ctx, char *buf, int len)
 {
     (void)ctx;
@@ -222,13 +222,13 @@ static void tp_charge_value_cycle(void *ctx, int dir)
     (void)ctx;
     retrohh_charge_limit_cycle(dir);
 }
-static const struct menu_value_cb trimpod_charge_value =
+static const struct menu_value_cb uipod_charge_value =
     { tp_charge_value_get, tp_charge_value_cycle, NULL };
 
 static const char *tp_mono_art_value_get(void *ctx, char *buf, int len)
 {
     (void)ctx; (void)buf; (void)len;
-    return trimpod_toggle_str(global_settings.mono_album_art);
+    return uipod_toggle_str(global_settings.mono_album_art);
 }
 static void tp_mono_art_value_cycle(void *ctx, int dir)
 {
@@ -236,7 +236,7 @@ static void tp_mono_art_value_cycle(void *ctx, int dir)
     global_settings.mono_album_art = !global_settings.mono_album_art;
     settings_save();
 }
-static const struct menu_value_cb trimpod_mono_art_value =
+static const struct menu_value_cb uipod_mono_art_value =
     { tp_mono_art_value_get, tp_mono_art_value_cycle, NULL };
 
 static bool tp_lang_is_ukrainian(void)
@@ -271,45 +271,45 @@ static void tp_lang_value_cycle(void *ctx, int dir)
     viewportmanager_theme_changed(THEME_STATUSBAR | THEME_LISTS);
     settings_save();
 }
-static const struct menu_value_cb trimpod_lang_value =
+static const struct menu_value_cb uipod_lang_value =
     { tp_lang_value_get, tp_lang_value_cycle, NULL };
 
 /* Settings -> Appearance (#1172): Theme, Language, Monochrome Album Art, Main Menu. */
-MENUITEM_VALUE(tp_pw_theme, ID2P(LANG_TRIMPOD_THEME), &trimpod_theme_value, Icon_NOICON);
-MENUITEM_VALUE(tp_app_lang, ID2P(LANG_TRIMPOD_LANGUAGE), &trimpod_lang_value, Icon_NOICON);
-MENUITEM_VALUE(tp_pw_mono_art, ID2P(LANG_TRIMPOD_MONO_ALBUM_ART), &trimpod_mono_art_value, Icon_NOICON);
-MENUITEM_FUNCTION(tp_app_mainmenu, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_MAINMENU),
-                  trimpod_mainmenu_settings, NULL, Icon_NOICON);
-MAKE_MENU(trimpod_appearance_menu, ID2P(LANG_TRIMPOD_APPEARANCE), NULL,
+MENUITEM_VALUE(tp_pw_theme, ID2P(LANG_UIPOD_THEME), &uipod_theme_value, Icon_NOICON);
+MENUITEM_VALUE(tp_app_lang, ID2P(LANG_UIPOD_LANGUAGE), &uipod_lang_value, Icon_NOICON);
+MENUITEM_VALUE(tp_pw_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &uipod_mono_art_value, Icon_NOICON);
+MENUITEM_FUNCTION(tp_app_mainmenu, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_MAINMENU),
+                  uipod_mainmenu_settings, NULL, Icon_NOICON);
+MAKE_MENU(uipod_appearance_menu, ID2P(LANG_UIPOD_APPEARANCE), NULL,
           Icon_Submenu_Entered,
           &tp_pw_theme, &tp_app_lang, &tp_pw_mono_art, &tp_app_mainmenu);
 
-int trimpod_appearance_page(void)
+int uipod_appearance_page(void)
 {
-    do_menu(&trimpod_appearance_menu, NULL, NULL, false);
+    do_menu(&uipod_appearance_menu, NULL, NULL, false);
     return 0;
 }
 
 /* Settings -> Device: Brightness, Display Poweroff, Idle Poweroff, CPU, Charge Limit. */
-MENUITEM_VALUE(tp_pw_cpu, ID2P(LANG_TRIMPOD_CPU), &trimpod_cpu_value, Icon_NOICON);
+MENUITEM_VALUE(tp_pw_cpu, ID2P(LANG_UIPOD_CPU), &uipod_cpu_value, Icon_NOICON);
 MENUITEM_SETTING(tp_pw_brightness, &global_settings.brightness, NULL);
 MENUITEM_SETTING(tp_pw_screenoff, &global_settings.backlight_timeout, NULL);
 MENUITEM_SETTING(tp_pw_idlepoweroff, &global_settings.poweroff, NULL);
-MENUITEM_VALUE(tp_pw_charge, "Charge Limit", &trimpod_charge_value, Icon_NOICON);
-/* Two variants: the Charge Limit row is present only when Trimpod manages
+MENUITEM_VALUE(tp_pw_charge, "Charge Limit", &uipod_charge_value, Icon_NOICON);
+/* Two variants: the Charge Limit row is present only when UIPod manages
  * charging.  When the Battery Care daemon owns the bit the row is simply absent
- * (the "_nobatt" menu) rather than shown disabled -- see trimpod_power_page. */
-MAKE_MENU(trimpod_power_menu, ID2P(LANG_TRIMPOD_DEVICE), NULL, Icon_Submenu_Entered,
+ * (the "_nobatt" menu) rather than shown disabled -- see uipod_power_page. */
+MAKE_MENU(uipod_power_menu, ID2P(LANG_UIPOD_DEVICE), NULL, Icon_Submenu_Entered,
           &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff,
           &tp_pw_cpu, &tp_pw_charge);
-MAKE_MENU(trimpod_power_menu_nobatt, ID2P(LANG_TRIMPOD_DEVICE), NULL, Icon_Submenu_Entered,
+MAKE_MENU(uipod_power_menu_nobatt, ID2P(LANG_UIPOD_DEVICE), NULL, Icon_Submenu_Entered,
           &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff,
           &tp_pw_cpu);
 
-int trimpod_power_page(void)
+int uipod_power_page(void)
 {
     const struct menu_item_ex *m = retrohh_charge_limit_hidden()
-                                 ? &trimpod_power_menu_nobatt : &trimpod_power_menu;
+                                 ? &uipod_power_menu_nobatt : &uipod_power_menu;
     do_menu(m, NULL, NULL, false);
     return 0;
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build Rockbox (Trimpod) as an SDL application for the TrimUI Brick / NextUI (tg5040).
-# Cross-compiles inside the Trimpod toolchain image. Output lands in build-trimpod/.
+# Build UIPod as an SDL application for the TrimUI Brick / NextUI (tg5040).
+# Cross-compiles inside the UIPod toolchain image. Output lands in build-uipod/.
 #
 #   ./build.sh            # incremental build
 #   ./build.sh clean      # wipe build dir and reconfigure from scratch
@@ -8,9 +8,9 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-IMG="trimpod-toolchain:latest"
+IMG="uipod-toolchain:latest"
 BASE="ghcr.io/loveretro/tg5040-toolchain:latest"
-BUILD_DIR="build-trimpod"
+BUILD_DIR="build-uipod"
 TARGET_ID=210          # retro-handheld (TrimUI Brick SDL app), see tools/configure
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu || echo 4)"
 UIPOD_VERSION="${UIPOD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo "v0.1.0")}"
@@ -19,7 +19,7 @@ UIPOD_VERSION="${UIPOD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/nul
 if ! docker image inspect "$IMG" >/dev/null 2>&1 || \
    ! docker run --rm "$IMG" bash -lc "export PATH=/opt/cargo/bin:\$PATH; command -v cargo >/dev/null 2>&1" >/dev/null 2>&1; then
   echo ">> Building toolchain image $IMG ..."
-  docker build -t "$IMG" -f "$ROOT/Dockerfile.trimpod" "$ROOT"
+  docker build -t "$IMG" -f "$ROOT/Dockerfile.uipod" "$ROOT"
 fi
 
 CLEAN=0
@@ -40,13 +40,13 @@ docker run --rm \
   export PATH=/opt/cargo/bin:\$PATH
   export CARGO_HOME=/build/$BUILD_DIR/.cargo-cache
   export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=\${CROSS_COMPILE}gcc
-  echo '>> Building pure-Rust crates (trimpod-ui + trimpod-navidrome + trimpod-jellyfin -> libtrimpod_ffi.a) ...'
+  echo '>> Building pure-Rust crates (uipod-ui + uipod-navidrome + uipod-jellyfin -> libuipod_ffi.a) ...'
   cargo build --locked --release --target aarch64-unknown-linux-gnu -j $JOBS \
-    --manifest-path /build/crates/trimpod-ffi/Cargo.toml
+    --manifest-path /build/crates/uipod-ffi/Cargo.toml
 
   # /usr/local/bin (our sdl2-config wrapper, baked into the image) must win over
   # the sysroot's broken sdl2-config, so do NOT prepend \$SYSROOT/usr/bin here.
-  if [ ! -f $BUILD_DIR/Makefile ] || ! grep -q libtrimpod_ffi $BUILD_DIR/Makefile; then
+  if [ ! -f $BUILD_DIR/Makefile ] || ! grep -q libuipod_ffi $BUILD_DIR/Makefile; then
     rm -f $BUILD_DIR/Makefile $BUILD_DIR/make.dep
     cd $BUILD_DIR
     ../tools/configure --target=$TARGET_ID --type=N
@@ -54,7 +54,7 @@ docker run --rm \
     cd $BUILD_DIR
   fi
   rm -f rbversion.h firmware/common/version.o
-  if [ -f trimpod ] && [ /build/target/aarch64-unknown-linux-gnu/release/libtrimpod_ffi.a -nt trimpod ]; then
+  if [ -f trimpod ] && [ /build/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a -nt trimpod ]; then
     rm -f trimpod
   fi
   make -j$JOBS VERSION=\"\$VERSION\"

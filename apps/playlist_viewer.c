@@ -48,14 +48,14 @@
 #include "splash.h"
 #include "playback.h"
 #include "file.h"                 /* truncate an emptied playlist on autosave */
-#include "trimpod_transition.h"   /* slide the viewer in/out like every other screen */
-#include "trimpod_page.h"         /* trimpod_home_pending (hold-BACK -> root) */
-#include "trimpod_ui.h"           /* the Hold-A context menu */
-#include "trimpod_visualizer.h"   /* idle auto-start while music plays */
-#include "trimpod_playlists.h"    /* trimpod_resume_if_current */
-#include "trimpod_navidrome.h"
-#include "trimpod_jellyfin.h"
-#include "trimpod_svg.h"
+#include "uipod_transition.h"   /* slide the viewer in/out like every other screen */
+#include "uipod_page.h"         /* uipod_home_pending (hold-BACK -> root) */
+#include "uipod_ui.h"           /* the Hold-A context menu */
+#include "uipod_visualizer.h"   /* idle auto-start while music plays */
+#include "uipod_playlists.h"    /* uipod_resume_if_current */
+#include "uipod_navidrome.h"
+#include "uipod_jellyfin.h"
+#include "uipod_svg.h"
 
 
 
@@ -291,26 +291,26 @@ static bool retrieve_id3_tags(const int index, const char* name, struct mp3entry
     }
 
     if (!id3_retrieval_successful &&
-        trimpod_navidrome_is_track_path(name) &&
+        uipod_navidrome_is_track_path(name) &&
         !file_exists(name))
     {
-        id3_retrieval_successful = trimpod_navidrome_fill_id3(name, id3);
+        id3_retrieval_successful = uipod_navidrome_fill_id3(name, id3);
     }
     if (!id3_retrieval_successful &&
-        trimpod_jellyfin_is_track_path(name) &&
+        uipod_jellyfin_is_track_path(name) &&
         !file_exists(name))
     {
-        id3_retrieval_successful = trimpod_jellyfin_fill_id3(name, id3);
+        id3_retrieval_successful = uipod_jellyfin_fill_id3(name, id3);
     }
 
     if (!id3_retrieval_successful)
     {
         /* Read from disk: retrieves frequency, file size, and codec */
         id3_retrieval_successful = get_metadata_ex(id3, -1, name, flags);
-        if (id3_retrieval_successful && trimpod_navidrome_is_track_path(name))
-            trimpod_navidrome_enrich_id3(id3);
-        else if (id3_retrieval_successful && trimpod_jellyfin_is_track_path(name))
-            trimpod_jellyfin_enrich_id3(id3);
+        if (id3_retrieval_successful && uipod_navidrome_is_track_path(name))
+            uipod_navidrome_enrich_id3(id3);
+        else if (id3_retrieval_successful && uipod_jellyfin_is_track_path(name))
+            uipod_jellyfin_enrich_id3(id3);
     }
     return id3_retrieval_successful;
 }
@@ -611,7 +611,7 @@ static enum pv_context_result delete_track(int current_track_index,
     return PV_CONTEXT_MODIFIED;
 }
 
-/* Hold-A on a track: the Trimpod context menu, titled with the track's name.
+/* Hold-A on a track: the UIPod context menu, titled with the track's name.
  * Just the two edit actions -- everything else lives elsewhere (play = A,
  * shuffle = the playlist's own menu, track info = Now Playing). */
 static enum pv_context_result context_menu(int index)
@@ -623,15 +623,15 @@ static enum pv_context_result context_menu(int index)
 
     char name[MAX_PATH];
     format_name(name, current_track->name, sizeof(name));
-    bool is_nav = trimpod_source_is_navidrome() &&
-                  trimpod_navidrome_is_track_path(current_track->name);
-    bool is_jf  = trimpod_source_is_jellyfin() &&
-                  trimpod_jellyfin_is_track_path(current_track->name);
+    bool is_nav = uipod_source_is_navidrome() &&
+                  uipod_navidrome_is_track_path(current_track->name);
+    bool is_jf  = uipod_source_is_jellyfin() &&
+                  uipod_jellyfin_is_track_path(current_track->name);
     bool can_dl = is_nav || is_jf;
     static const char *const opts[] =
-        { ID2P(LANG_TRIMPOD_REMOVE_FROM_PLAYLIST), ID2P(LANG_MOVE),
-          ID2P(LANG_TRIMPOD_DOWNLOAD) };
-    int sel = trimpod_context_menu(name, opts, can_dl ? 3 : 2);
+        { ID2P(LANG_UIPOD_REMOVE_FROM_PLAYLIST), ID2P(LANG_MOVE),
+          ID2P(LANG_UIPOD_DOWNLOAD) };
+    int sel = uipod_context_menu(name, opts, can_dl ? 3 : 2);
     if (sel >= 0)
     {
         /* Abort current move */
@@ -649,9 +649,9 @@ static enum pv_context_result context_menu(int index)
                 return PV_CONTEXT_UNCHANGED;
             case 2:
                 if (is_jf)
-                    trimpod_jellyfin_download_track(current_track->name);
+                    uipod_jellyfin_download_track(current_track->name);
                 else
-                    trimpod_navidrome_download_track(current_track->name);
+                    uipod_navidrome_download_track(current_track->name);
                 return PV_CONTEXT_UNCHANGED;
         }
     }
@@ -699,11 +699,11 @@ static const char* playlist_callback_name(int selected_item,
     return(buffer);
 }
 
-static const struct trimpod_svg_icon *playlist_callback_svg_icon(int selected_item,
+static const struct uipod_svg_icon *playlist_callback_svg_icon(int selected_item,
                                                                  void *data)
 {
     struct playlist_entry *track = pv_get_track(data, selected_item);
-    return track ? trimpod_svg_for_path(track->name, false) : NULL;
+    return track ? uipod_svg_for_path(track->name, false) : NULL;
 }
 
 
@@ -839,9 +839,9 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
      * happens inside the tween's off-screen render pass. */
     {
         struct pv_open_ctx octx = { filename, &playlist_lists, recent_selection };
-        trimpod_transition_animate(
-            trimpod_transition_take_back() ? TRIMPOD_TRANS_BACK
-                                           : TRIMPOD_TRANS_FORWARD,
+        uipod_transition_animate(
+            uipod_transition_take_back() ? UIPOD_TRANS_BACK
+                                           : UIPOD_TRANS_FORWARD,
             pv_open_render, &octx);
     }
     if (!s_pv_open_ok)
@@ -855,7 +855,7 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
         int track;
 
         /* a nested screen requested home: unwind to the Main Menu */
-        if (trimpod_home_pending)
+        if (uipod_home_pending)
         {
             ret = PLAYLIST_VIEWER_MAINMENU;
             break;
@@ -900,7 +900,7 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
         switch (button)
         {
             case ACTION_TP_HOME:        /* hold BACK: jump to the Main Menu */
-                trimpod_home_pending = true;
+                uipod_home_pending = true;
                 ret = PLAYLIST_VIEWER_MAINMENU;
                 exit = true;
                 break;
@@ -957,7 +957,7 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                         audio_resume();
                     update_playlist(false);
                 }
-                else if (trimpod_resume_if_current(current_track->name))
+                else if (uipod_resume_if_current(current_track->name))
                     goto exit;      /* already playing: just show it */
                 else if (warn_on_pl_erase())
                 {
@@ -987,14 +987,14 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
             case ACTION_STD_CONTEXT:
             {
                 enum pv_context_result cres = context_menu(viewer.selected_track);
-                /* The context menu is a trimpod_page: closing it (A or B)
+                /* The context menu is a uipod_page: closing it (A or B)
                  * armed a back slide.  Consume it and slide the viewer back
-                 * in, as trimpod_page_run does for its nested pages --
+                 * in, as uipod_page_run does for its nested pages --
                  * skipped during a home unwind (one slide at the Main Menu)
                  * and when the viewer itself is about to close (its exit
                  * arms the parent's slide instead). */
-                bool back = trimpod_transition_take_back();
-                if (trimpod_home_pending)
+                bool back = uipod_transition_take_back();
+                if (uipod_home_pending)
                     break;
                 if (apply_context_result(cres))
                 {
@@ -1002,7 +1002,7 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                     ret = PLAYLIST_VIEWER_CANCEL;
                 }
                 else if (back)
-                    trimpod_transition_animate(TRIMPOD_TRANS_BACK,
+                    uipod_transition_animate(UIPOD_TRANS_BACK,
                                                pv_list_render, &playlist_lists);
                 else
                     update_gui(&playlist_lists, false);
@@ -1012,10 +1012,10 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                 ret = PLAYLIST_VIEWER_MAINMENU;
                 goto exit;
             case ACTION_NONE:   /* idle tick */
-                if (trimpod_visualizer_maybe_autostart())
+                if (uipod_visualizer_maybe_autostart())
                     gui_synclist_draw(&playlist_lists);
                 else
-                    trimpod_idle_to_wps();   /* the loop-top home check exits */
+                    uipod_idle_to_wps();   /* the loop-top home check exits */
                 break;
             default:
             {
@@ -1037,7 +1037,7 @@ exit:
      * slide us away.  Other exits (OK->WPS, USB, main menu) own their own
      * transitions, so only arm on cancel. */
     if (ret == PLAYLIST_VIEWER_CANCEL)
-        trimpod_transition_arm_back();
+        uipod_transition_arm_back();
     pop_current_activity_without_refresh();
     close_playlist_viewer();
     return ret;

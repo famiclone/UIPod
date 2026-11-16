@@ -67,12 +67,12 @@ struct menu_func {
 #define MENU_FUNC_USEPARAM 0x80
 #define MENU_FUNC_CHECK_RETVAL 0x100
 
-/* Trimpod: show a right-aligned disclosure arrow on this entry (it opens
+/* UIPod: show a right-aligned disclosure arrow on this entry (it opens
  * another menu/settings screen).  Defaults off; submenus (MT_MENU) get the
  * arrow automatically. */
 #define MENU_SHOW_CHEVRON 0x200
 
-/* Trimpod: this item is an inline value row -- its function_param->param points
+/* UIPod: this item is an inline value row -- its function_param->param points
  * at a struct menu_value_cb.  do_menu shows the value right-aligned and cycles
  * it in place with A / LEFT / RIGHT.  See MENUITEM_VALUE below. */
 #define MENU_VALUE_ITEM 0x400
@@ -187,7 +187,7 @@ int do_menu(const struct menu_item_ex *menu, int *start_selected,
          { MT_RETURN_VALUE|MENU_HAS_DESC, { .value = val},                  \
          {.callback_and_desc = & name##_}};
 
-/* Trimpod: like MENUITEM_RETURNVALUE but shows the disclosure arrow (the entry
+/* UIPod: like MENUITEM_RETURNVALUE but shows the disclosure arrow (the entry
  * opens another menu/settings screen). */
 #define MENUITEM_RETURNVALUE_CHEVRON(name, str, val, cb, icon)              \
      static const struct menu_callback_with_desc name##_ = {cb,str,icon};   \
@@ -252,7 +252,7 @@ int do_menu(const struct menu_item_ex *menu, int *start_selected,
         { MT_FUNCTION_CALL_W_PARAM|MENU_DYNAMIC_DESC|flags,                 \
          { .function_param = & name##__}, {.menu_get_name_and_icon = & name##_}};
 
-/* Trimpod: an inline "value" row for live device knobs that are NOT
+/* UIPod: an inline "value" row for live device knobs that are NOT
  * settings_list entries (CPU frequency, colour presets, the show/hide menu
  * toggles).  do_menu draws the value string right-aligned and cycles it in
  * place with A / LEFT / RIGHT; the app supplies get()/cycle() and an opaque

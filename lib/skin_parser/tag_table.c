@@ -143,7 +143,7 @@ static const struct tag_info legal_tags[] =
 
     TAG(SKIN_TOKEN_MAIN_HOLD,             "mh", "", SKIN_REFRESH_DYNAMIC),
     TAG(SKIN_TOKEN_REMOTE_HOLD,           "mr", "", SKIN_REFRESH_DYNAMIC),
-    TAG(SKIN_TOKEN_TRIMPOD_LEGEND,        "Tl", "", SKIN_REFRESH_DYNAMIC),
+    TAG(SKIN_TOKEN_UIPOD_LEGEND,        "Tl", "", SKIN_REFRESH_DYNAMIC),
     TAG(SKIN_TOKEN_REPEAT_MODE,           "mm", "", SKIN_REFRESH_DYNAMIC),
     TAG(SKIN_TOKEN_PLAYBACK_STATUS,       "mp", "", SKIN_REFRESH_DYNAMIC),
     TAG(SKIN_TOKEN_BUTTON_VOLUME,         "mv", "|D", SKIN_REFRESH_DYNAMIC),

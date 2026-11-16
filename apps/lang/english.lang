@@ -11489,8 +11489,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_EXIT
-  desc: Trimpod root menu entry to quit the app
+  id: LANG_UIPOD_EXIT
+  desc: UIPod root menu entry to quit the app
   user: core
   <source>
     *: "Exit"
@@ -11503,8 +11503,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_BROWSE
-  desc: Trimpod root menu entry for the file browser
+  id: LANG_UIPOD_BROWSE
+  desc: UIPod root menu entry for the file browser
   user: core
   <source>
     *: "Browse"
@@ -11517,8 +11517,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CONTROLS
-  desc: Trimpod Controls submenu (in Settings)
+  id: LANG_UIPOD_CONTROLS
+  desc: UIPod Controls submenu (in Settings)
   user: core
   <source>
     *: "Controls"
@@ -11531,8 +11531,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ABOUT
-  desc: Trimpod About submenu (in Settings)
+  id: LANG_UIPOD_ABOUT
+  desc: UIPod About submenu (in Settings)
   user: core
   <source>
     *: "About"
@@ -11545,8 +11545,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_THEME
-  desc: Trimpod Power > Theme entry (background + ink colour pairs)
+  id: LANG_UIPOD_THEME
+  desc: UIPod Power > Theme entry (background + ink colour pairs)
   user: core
   <source>
     *: "Theme"
@@ -11559,8 +11559,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CPU
-  desc: Trimpod Settings > CPU Setting (CPU frequency slider)
+  id: LANG_UIPOD_CPU
+  desc: UIPod Settings > CPU Setting (CPU frequency slider)
   user: core
   <source>
     *: "CPU Frequency"
@@ -11573,8 +11573,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VISUALIZERS
-  desc: Trimpod Settings > Audio Visualizer > Visualization Presets (Milkdrop preset list)
+  id: LANG_UIPOD_VISUALIZERS
+  desc: UIPod Settings > Audio Visualizer > Visualization Presets (Milkdrop preset list)
   user: core
   <source>
     *: "Visualization Presets"
@@ -11587,8 +11587,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUDIO_VISUALIZER
-  desc: Trimpod Settings > Visualizer Settings
+  id: LANG_UIPOD_AUDIO_VISUALIZER
+  desc: UIPod Settings > Visualizer Settings
   user: core
   <source>
     *: "Visualizers"
@@ -11601,8 +11601,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VIZ_TRANSITION
-  desc: Trimpod Settings > Visualizer Effects > seconds per preset before switching
+  id: LANG_UIPOD_VIZ_TRANSITION
+  desc: UIPod Settings > Visualizer Effects > seconds per preset before switching
   user: core
   <source>
     *: "Visualization Transition"
@@ -11615,8 +11615,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VIZ_ACTIVATE_AFTER
-  desc: Trimpod Settings > Visualizer Settings > activation delay selector
+  id: LANG_UIPOD_VIZ_ACTIVATE_AFTER
+  desc: UIPod Settings > Visualizer Settings > activation delay selector
   user: core
   <source>
     *: "Start Visualizer After"
@@ -11629,8 +11629,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_FOLDERS
-  desc: Trimpod Settings > Music Folders (music folder list)
+  id: LANG_UIPOD_FOLDERS
+  desc: UIPod Settings > Music Folders (music folder list)
   user: core
   <source>
     *: "Music Folders"
@@ -11643,8 +11643,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_MAINMENU
-  desc: Trimpod Settings > Menu Settings (toggle which entries show)
+  id: LANG_UIPOD_MAINMENU
+  desc: UIPod Settings > Menu Settings (toggle which entries show)
   user: core
   <source>
     *: "Main menu"
@@ -11657,8 +11657,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DEVICE
-  desc: Trimpod Settings > Power Settings (Brightness, Colour, Display Poweroff, CPU, Idle Power Off)
+  id: LANG_UIPOD_DEVICE
+  desc: UIPod Settings > Power Settings (Brightness, Colour, Display Poweroff, CPU, Idle Power Off)
   user: core
   <source>
     *: "Power"
@@ -11671,8 +11671,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTO_SCREEN_OFF
-  desc: Trimpod Settings > Power > Display Poweroff (backlight timeout; 0 = Never)
+  id: LANG_UIPOD_AUTO_SCREEN_OFF
+  desc: UIPod Settings > Power > Display Poweroff (backlight timeout; 0 = Never)
   user: core
   <source>
     *: "Display Poweroff"
@@ -11685,8 +11685,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_MUSIC
-  desc: Trimpod root menu Music entry (browse configured folders)
+  id: LANG_UIPOD_MUSIC
+  desc: UIPod root menu Music entry (browse configured folders)
   user: core
   <source>
     *: "Music"
@@ -11699,8 +11699,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PODCASTS
-  desc: Trimpod root menu Podcasts entry (browse configured folders)
+  id: LANG_UIPOD_PODCASTS
+  desc: UIPod root menu Podcasts entry (browse configured folders)
   user: core
   <source>
     *: "Podcasts"
@@ -11713,8 +11713,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUDIOBOOKS
-  desc: Trimpod root menu Audiobooks entry (browse configured folders)
+  id: LANG_UIPOD_AUDIOBOOKS
+  desc: UIPod root menu Audiobooks entry (browse configured folders)
   user: core
   <source>
     *: "Audiobooks"
@@ -11727,8 +11727,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PODCAST_FOLDERS
-  desc: Trimpod Settings > Podcast Folders (podcast folder list)
+  id: LANG_UIPOD_PODCAST_FOLDERS
+  desc: UIPod Settings > Podcast Folders (podcast folder list)
   user: core
   <source>
     *: "Podcast Folders"
@@ -11741,8 +11741,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUDIOBOOK_FOLDERS
-  desc: Trimpod Settings > Audiobook Folders (audiobook folder list)
+  id: LANG_UIPOD_AUDIOBOOK_FOLDERS
+  desc: UIPod Settings > Audiobook Folders (audiobook folder list)
   user: core
   <source>
     *: "Audiobook Folders"
@@ -11755,8 +11755,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NO_MUSIC
-  desc: Trimpod splash when Shuffle Songs finds no playable tracks
+  id: LANG_UIPOD_NO_MUSIC
+  desc: UIPod splash when Shuffle Songs finds no playable tracks
   user: core
   <source>
     *: "No music found"
@@ -11769,8 +11769,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_LIBRARY
-  desc: Trimpod Settings > Library submenu (folder lists + Rescan Library)
+  id: LANG_UIPOD_LIBRARY
+  desc: UIPod Settings > Library submenu (folder lists + Rescan Library)
   user: core
   <source>
     *: "Library"
@@ -11783,8 +11783,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ARTISTS
-  desc: Trimpod Library entry / screen title listing artists
+  id: LANG_UIPOD_ARTISTS
+  desc: UIPod Library entry / screen title listing artists
   user: core
   <source>
     *: "Artists"
@@ -11797,8 +11797,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ALL_SONGS
-  desc: Trimpod Library Albums screen row that plays every track by the artist
+  id: LANG_UIPOD_ALL_SONGS
+  desc: UIPod Library Albums screen row that plays every track by the artist
   user: core
   <source>
     *: "All Songs"
@@ -11811,8 +11811,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ALBUMS
-  desc: Trimpod Library root entry / screen title listing all albums
+  id: LANG_UIPOD_ALBUMS
+  desc: UIPod Library root entry / screen title listing all albums
   user: core
   <source>
     *: "Albums"
@@ -11825,8 +11825,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SONGS
-  desc: Trimpod Library root entry / screen title listing all songs
+  id: LANG_UIPOD_SONGS
+  desc: UIPod Library root entry / screen title listing all songs
   user: core
   <source>
     *: "Songs"
@@ -11839,8 +11839,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SHUFFLE_ALL
-  desc: Trimpod root-menu action that shuffles and plays the whole Music library
+  id: LANG_UIPOD_SHUFFLE_ALL
+  desc: UIPod root-menu action that shuffles and plays the whole Music library
   user: core
   <source>
     *: "Shuffle All"
@@ -11853,8 +11853,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_RESCAN
-  desc: Trimpod Library menu row that rebuilds the SQLite index from disk
+  id: LANG_UIPOD_RESCAN
+  desc: UIPod Library menu row that rebuilds the SQLite index from disk
   user: core
   <source>
     *: "Rescan Library"
@@ -11867,8 +11867,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SCANNING
-  desc: Trimpod screen held while the library index parses files; code appends the percent done
+  id: LANG_UIPOD_SCANNING
+  desc: UIPod screen held while the library index parses files; code appends the percent done
   user: core
   <source>
     *: "Scanning Library"
@@ -11881,8 +11881,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_UNKNOWN_ARTIST
-  desc: Trimpod Library label for tracks with no artist tag
+  id: LANG_UIPOD_UNKNOWN_ARTIST
+  desc: UIPod Library label for tracks with no artist tag
   user: core
   <source>
     *: "Unknown Artist"
@@ -17323,8 +17323,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_TO_PLAY_QUEUE
-  desc: Trimpod context menu: append to the live queue
+  id: LANG_UIPOD_ADD_TO_PLAY_QUEUE
+  desc: UIPod context menu: append to the live queue
   user: core
   <source>
     *: "Add to Play Queue"
@@ -17337,8 +17337,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_TO_PLAYLIST
-  desc: Trimpod context menu item and picker title
+  id: LANG_UIPOD_ADD_TO_PLAYLIST
+  desc: UIPod context menu item and picker title
   user: core
   <source>
     *: "Add to Playlist"
@@ -17351,8 +17351,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_REMOVE_FROM_PLAYLIST
-  desc: Trimpod playlist editor / viewer context menu
+  id: LANG_UIPOD_REMOVE_FROM_PLAYLIST
+  desc: UIPod playlist editor / viewer context menu
   user: core
   <source>
     *: "Remove from Playlist"
@@ -17365,8 +17365,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PREVIEW
-  desc: Trimpod visualizer preset context menu
+  id: LANG_UIPOD_PREVIEW
+  desc: UIPod visualizer preset context menu
   user: core
   <source>
     *: "Preview"
@@ -17379,8 +17379,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_OVERWRITE_PLAYLIST_Q
-  desc: Trimpod confirm: new playlist name already exists
+  id: LANG_UIPOD_OVERWRITE_PLAYLIST_Q
+  desc: UIPod confirm: new playlist name already exists
   user: core
   <source>
     *: "Overwrite playlist?"
@@ -17393,8 +17393,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_REMOVE_FROM_PLAYLIST_Q
-  desc: Trimpod confirm: remove a track in the editor
+  id: LANG_UIPOD_REMOVE_FROM_PLAYLIST_Q
+  desc: UIPod confirm: remove a track in the editor
   user: core
   <source>
     *: "Remove from playlist?"
@@ -17407,8 +17407,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DELETE_PLAYLIST_Q
-  desc: Trimpod confirm: delete a playlist
+  id: LANG_UIPOD_DELETE_PLAYLIST_Q
+  desc: UIPod confirm: delete a playlist
   user: core
   <source>
     *: "Delete this playlist?"
@@ -17421,8 +17421,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_REMOVE_FOLDER_Q
-  desc: Trimpod confirm: remove a library folder
+  id: LANG_UIPOD_REMOVE_FOLDER_Q
+  desc: UIPod confirm: remove a library folder
   user: core
   <source>
     *: "Remove this folder?"
@@ -17435,8 +17435,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CONFIRM_LEGEND
-  desc: Trimpod confirm page button line
+  id: LANG_UIPOD_CONFIRM_LEGEND
+  desc: UIPod confirm page button line
   user: core
   <source>
     *: "Cancel (B)      OK (A)"
@@ -17449,8 +17449,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_CREATE_FAILED
-  desc: Trimpod splash
+  id: LANG_UIPOD_PLAYLIST_CREATE_FAILED
+  desc: UIPod splash
   user: core
   <source>
     *: "Could not create playlist"
@@ -17463,8 +17463,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_EDIT_FAILED
-  desc: Trimpod splash: no buffer for the editor
+  id: LANG_UIPOD_PLAYLIST_EDIT_FAILED
+  desc: UIPod splash: no buffer for the editor
   user: core
   <source>
     *: "Cannot edit playlist"
@@ -17477,8 +17477,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_LOAD_FAILED
-  desc: Trimpod splash
+  id: LANG_UIPOD_PLAYLIST_LOAD_FAILED
+  desc: UIPod splash
   user: core
   <source>
     *: "Cannot load playlist"
@@ -17491,8 +17491,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAME_EXISTS
-  desc: Trimpod splash: rename target exists
+  id: LANG_UIPOD_NAME_EXISTS
+  desc: UIPod splash: rename target exists
   user: core
   <source>
     *: "Name already exists"
@@ -17505,8 +17505,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_RENAME_FAILED
-  desc: Trimpod splash
+  id: LANG_UIPOD_RENAME_FAILED
+  desc: UIPod splash
   user: core
   <source>
     *: "Rename failed"
@@ -17519,8 +17519,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADDED_TO_PLAYLIST
-  desc: Trimpod splash after a playlist pick
+  id: LANG_UIPOD_ADDED_TO_PLAYLIST
+  desc: UIPod splash after a playlist pick
   user: core
   <source>
     *: "Added to playlist"
@@ -17533,8 +17533,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_EMPTY
-  desc: Trimpod splash and empty-playlist page
+  id: LANG_UIPOD_PLAYLIST_EMPTY
+  desc: UIPod splash and empty-playlist page
   user: core
   <source>
     *: "Playlist is empty"
@@ -17547,8 +17547,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_EMPTY_HINT1
-  desc: Trimpod empty-playlist page, line 2
+  id: LANG_UIPOD_PLAYLIST_EMPTY_HINT1
+  desc: UIPod empty-playlist page, line 2
   user: core
   <source>
     *: "Press MENU on any song"
@@ -17561,8 +17561,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAYLIST_EMPTY_HINT2
-  desc: Trimpod empty-playlist page, line 3
+  id: LANG_UIPOD_PLAYLIST_EMPTY_HINT2
+  desc: UIPod empty-playlist page, line 3
   user: core
   <source>
     *: "to add it to a playlist"
@@ -17575,8 +17575,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_FOLDER_ADD_FAILED
-  desc: Trimpod splash: library folder not added
+  id: LANG_UIPOD_FOLDER_ADD_FAILED
+  desc: UIPod splash: library folder not added
   user: core
   <source>
     *: "Already added or list full"
@@ -17589,8 +17589,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_FOLDER
-  desc: Trimpod folder picker title
+  id: LANG_UIPOD_ADD_FOLDER
+  desc: UIPod folder picker title
   user: core
   <source>
     *: "Add Folder"
@@ -17603,8 +17603,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_FOLDER_ROW
-  desc: Trimpod folders settings page: last row
+  id: LANG_UIPOD_ADD_FOLDER_ROW
+  desc: UIPod folders settings page: last row
   user: core
   <source>
     *: "+ Add Folder"
@@ -17617,8 +17617,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_PLAYLIST_ROW
-  desc: Trimpod playlists page: last row
+  id: LANG_UIPOD_ADD_PLAYLIST_ROW
+  desc: UIPod playlists page: last row
   user: core
   <source>
     *: "+ Add Playlist"
@@ -17631,8 +17631,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_HOLD_A_TO_ADD
-  desc: Trimpod folder picker header legend
+  id: LANG_UIPOD_HOLD_A_TO_ADD
+  desc: UIPod folder picker header legend
   user: core
   <source>
     *: "MENU to add"
@@ -17645,8 +17645,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_HOLD_ON
-  desc: Trimpod hold screen
+  id: LANG_UIPOD_HOLD_ON
+  desc: UIPod hold screen
   user: core
   <source>
     *: "HOLD is ON"
@@ -17659,8 +17659,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_HOLD_HINT
-  desc: Trimpod hold screen
+  id: LANG_UIPOD_HOLD_HINT
+  desc: UIPod hold screen
   user: core
   <source>
     *: "Flip the side switch off"
@@ -17673,8 +17673,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_BACK
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_BACK
+  desc: UIPod controls page
   user: core
   <source>
     *: "B - Back (Hold: Home)"
@@ -17687,8 +17687,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_PLAY
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_PLAY
+  desc: UIPod controls page
   user: core
   <source>
     *: "A - Select / Enter"
@@ -17701,7 +17701,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_START
+  id: LANG_UIPOD_CTRL_START
   desc: UIPod controls page: START play/pause
   user: core
   <source>
@@ -17715,8 +17715,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_CONTEXT
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_CONTEXT
+  desc: UIPod controls page
   user: core
   <source>
     *: "MENU - Context / Settings"
@@ -17729,7 +17729,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_BRIGHTNESS
+  id: LANG_UIPOD_CTRL_BRIGHTNESS
   desc: UIPod controls page: SELECT + Volume brightness
   user: core
   <source>
@@ -17743,8 +17743,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_SEEK
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_SEEK
+  desc: UIPod controls page
   user: core
   <source>
     *: "Hold Left/Right - Seek"
@@ -17757,8 +17757,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_CHAPTER
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_CHAPTER
+  desc: UIPod controls page
   user: core
   <source>
     *: "L2/R2 - Chapter Skip"
@@ -17771,8 +17771,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_CTRL_LOCK
-  desc: Trimpod controls page
+  id: LANG_UIPOD_CTRL_LOCK
+  desc: UIPod controls page
   user: core
   <source>
     *: "Side Switch - Lock"
@@ -17785,8 +17785,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_START_VISUALIZER
-  desc: Trimpod Now Playing menu item
+  id: LANG_UIPOD_START_VISUALIZER
+  desc: UIPod Now Playing menu item
   user: core
   <source>
     *: "Start Visualizer"
@@ -17799,8 +17799,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAY_SHUFFLED
-  desc: Trimpod context menu: replace the queue with the selection, shuffled
+  id: LANG_UIPOD_PLAY_SHUFFLED
+  desc: UIPod context menu: replace the queue with the selection, shuffled
   user: core
   <source>
     *: "Play Shuffled"
@@ -17813,8 +17813,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_MOVIES
-  desc: Trimpod root menu Movies entry (browse configured folders)
+  id: LANG_UIPOD_MOVIES
+  desc: UIPod root menu Movies entry (browse configured folders)
   user: core
   <source>
     *: "Movies"
@@ -17827,8 +17827,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_TELEVISION
-  desc: Trimpod root menu Television entry (browse configured folders)
+  id: LANG_UIPOD_TELEVISION
+  desc: UIPod root menu Television entry (browse configured folders)
   user: core
   <source>
     *: "Television"
@@ -17841,8 +17841,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_MOVIE_FOLDERS
-  desc: Trimpod Settings > Movie Folders (movie folder list)
+  id: LANG_UIPOD_MOVIE_FOLDERS
+  desc: UIPod Settings > Movie Folders (movie folder list)
   user: core
   <source>
     *: "Movie Folders"
@@ -17855,8 +17855,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_TELEVISION_FOLDERS
-  desc: Trimpod Settings > Television Folders (television folder list)
+  id: LANG_UIPOD_TELEVISION_FOLDERS
+  desc: UIPod Settings > Television Folders (television folder list)
   user: core
   <source>
     *: "Television Folders"
@@ -17869,8 +17869,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VIDEO_HEVC
-  desc: Trimpod splash on opening an HEVC (H.265) video, which isn't supported
+  id: LANG_UIPOD_VIDEO_HEVC
+  desc: UIPod splash on opening an HEVC (H.265) video, which isn't supported
   user: core
   <source>
     *: "HEVC video isn't supported"
@@ -17883,8 +17883,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VIDEO_FAILED
-  desc: Trimpod splash when a video can't be played
+  id: LANG_UIPOD_VIDEO_FAILED
+  desc: UIPod splash when a video can't be played
   user: core
   <source>
     *: "Couldn't play this video"
@@ -17897,8 +17897,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ASPECT_FIT
-  desc: Trimpod video aspect ratio: whole picture with black bars
+  id: LANG_UIPOD_ASPECT_FIT
+  desc: UIPod video aspect ratio: whole picture with black bars
   user: core
   <source>
     *: "Fit"
@@ -17911,8 +17911,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ASPECT_STRETCH
-  desc: Trimpod video aspect ratio: fills the screen, shape distorted
+  id: LANG_UIPOD_ASPECT_STRETCH
+  desc: UIPod video aspect ratio: fills the screen, shape distorted
   user: core
   <source>
     *: "Stretch"
@@ -17925,8 +17925,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ
-  desc: Trimpod Equalizer menu AutoEQ entry
+  id: LANG_UIPOD_AUTOEQ
+  desc: UIPod Equalizer menu AutoEQ entry
   user: core
   <source>
     *: "AutoEQ"
@@ -17939,8 +17939,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_SEARCH
-  desc: Trimpod AutoEQ search row
+  id: LANG_UIPOD_AUTOEQ_SEARCH
+  desc: UIPod AutoEQ search row
   user: core
   <source>
     *: "Search..."
@@ -17953,8 +17953,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_UPDATE
-  desc: Trimpod AutoEQ update index row
+  id: LANG_UIPOD_AUTOEQ_UPDATE
+  desc: UIPod AutoEQ update index row
   user: core
   <source>
     *: "Update AutoEQ Database"
@@ -17967,8 +17967,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_DOWNLOADING
-  desc: Trimpod AutoEQ downloading splash
+  id: LANG_UIPOD_AUTOEQ_DOWNLOADING
+  desc: UIPod AutoEQ downloading splash
   user: core
   <source>
     *: "Downloading..."
@@ -17981,8 +17981,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_SAVED_APPLIED
-  desc: Trimpod AutoEQ preset saved and applied splash
+  id: LANG_UIPOD_AUTOEQ_SAVED_APPLIED
+  desc: UIPod AutoEQ preset saved and applied splash
   user: core
   <source>
     *: "Saved & Applied"
@@ -17995,8 +17995,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_DOWNLOAD_FAILED
-  desc: Trimpod AutoEQ download failed splash
+  id: LANG_UIPOD_AUTOEQ_DOWNLOAD_FAILED
+  desc: UIPod AutoEQ download failed splash
   user: core
   <source>
     *: "Download failed (check Wi-Fi)"
@@ -18009,8 +18009,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_UPDATED
-  desc: Trimpod AutoEQ index updated splash
+  id: LANG_UIPOD_AUTOEQ_UPDATED
+  desc: UIPod AutoEQ index updated splash
   user: core
   <source>
     *: "AutoEQ Database Updated"
@@ -18023,8 +18023,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_NO_MATCHES
-  desc: Trimpod AutoEQ empty search placeholder
+  id: LANG_UIPOD_AUTOEQ_NO_MATCHES
+  desc: UIPod AutoEQ empty search placeholder
   user: core
   <source>
     *: "(No matches)"
@@ -18037,8 +18037,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_APPLY
-  desc: Trimpod AutoEQ context menu: download, save, and apply
+  id: LANG_UIPOD_AUTOEQ_APPLY
+  desc: UIPod AutoEQ context menu: download, save, and apply
   user: core
   <source>
     *: "Download & Apply"
@@ -18051,8 +18051,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_AUTOEQ_SAVE_ONLY
-  desc: Trimpod AutoEQ context menu: download and save without applying
+  id: LANG_UIPOD_AUTOEQ_SAVE_ONLY
+  desc: UIPod AutoEQ context menu: download and save without applying
   user: core
   <source>
     *: "Save Preset Only"
@@ -18065,8 +18065,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_APPLY_PRESET
-  desc: Trimpod EQ presets context menu: apply preset
+  id: LANG_UIPOD_APPLY_PRESET
+  desc: UIPod EQ presets context menu: apply preset
   user: core
   <source>
     *: "Apply Preset"
@@ -18079,8 +18079,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DELETE_PRESET_Q
-  desc: Trimpod EQ presets delete confirmation
+  id: LANG_UIPOD_DELETE_PRESET_Q
+  desc: UIPod EQ presets delete confirmation
   user: core
   <source>
     *: "Delete this preset?"
@@ -18093,8 +18093,8 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_MONO_ALBUM_ART
-  desc: Trimpod setting: display album art in black and white
+  id: LANG_UIPOD_MONO_ALBUM_ART
+  desc: UIPod setting: display album art in black and white
   user: core
   <source>
     *: "Monochrome album art"
@@ -18107,7 +18107,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_FILES
+  id: LANG_UIPOD_FILES
   desc: ui.figcraft FILES variable
   user: core
   <source>
@@ -18121,7 +18121,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_ADD_DIRECTORY
+  id: LANG_UIPOD_ADD_DIRECTORY
   desc: ui.figcraft ADD_DIR variable
   user: core
   <source>
@@ -18135,7 +18135,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_REMOVE_DIRECTORY
+  id: LANG_UIPOD_REMOVE_DIRECTORY
   desc: Remove configured directory from Files list
   user: core
   <source>
@@ -18149,7 +18149,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_EXTRAS
+  id: LANG_UIPOD_EXTRAS
   desc: ui.figcraft EXTRAS variable
   user: core
   <source>
@@ -18163,7 +18163,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_VIDEOS
+  id: LANG_UIPOD_VIDEOS
   desc: ui.figcraft VIDEOS variable
   user: core
   <source>
@@ -18177,7 +18177,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_GENRES
+  id: LANG_UIPOD_GENRES
   desc: ui.figcraft GENRES variable
   user: core
   <source>
@@ -18191,7 +18191,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_UNKNOWN_GENRE
+  id: LANG_UIPOD_UNKNOWN_GENRE
   desc: Fallback label for tracks with no genre tag
   user: core
   <source>
@@ -18205,7 +18205,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_APPEARANCE
+  id: LANG_UIPOD_APPEARANCE
   desc: ui.figcraft APPEARANCE variable
   user: core
   <source>
@@ -18219,7 +18219,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SOUND
+  id: LANG_UIPOD_SOUND
   desc: ui.figcraft SOUND variable
   user: core
   <source>
@@ -18233,7 +18233,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SOURCE_TYPE
+  id: LANG_UIPOD_SOURCE_TYPE
   desc: ui.figcraft SOURCE _TYPE variable
   user: core
   <source>
@@ -18247,7 +18247,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SOURCE_LOCAL
+  id: LANG_UIPOD_SOURCE_LOCAL
   desc: Source screen Local option
   user: core
   <source>
@@ -18261,7 +18261,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SOURCE_NAVIDROME
+  id: LANG_UIPOD_SOURCE_NAVIDROME
   desc: Source screen Navidrome option
   user: core
   <source>
@@ -18275,7 +18275,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAVIDROME_SOON
+  id: LANG_UIPOD_NAVIDROME_SOON
   desc: Placeholder splash until Navidrome streaming client is connected
   user: core
   <source>
@@ -18289,7 +18289,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_LANGUAGE
+  id: LANG_UIPOD_LANGUAGE
   desc: Language selector row in Appearance settings
   user: core
   <source>
@@ -18303,7 +18303,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_SERVER_URL
+  id: LANG_UIPOD_NAV_SERVER_URL
   desc: Navidrome settings Server URL row
   user: core
   <source>
@@ -18317,7 +18317,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_USERNAME
+  id: LANG_UIPOD_NAV_USERNAME
   desc: Navidrome settings Username row
   user: core
   <source>
@@ -18331,7 +18331,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_PASSWORD
+  id: LANG_UIPOD_NAV_PASSWORD
   desc: Navidrome settings Password row
   user: core
   <source>
@@ -18345,7 +18345,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_QUALITY
+  id: LANG_UIPOD_NAV_QUALITY
   desc: Navidrome settings Audio Quality row
   user: core
   <source>
@@ -18359,7 +18359,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_QUAL_ORIGINAL
+  id: LANG_UIPOD_NAV_QUAL_ORIGINAL
   desc: Navidrome Original Lossless audio quality
   user: core
   <source>
@@ -18373,7 +18373,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_QUAL_320
+  id: LANG_UIPOD_NAV_QUAL_320
   desc: Navidrome MP3 320 kbps audio quality
   user: core
   <source>
@@ -18387,7 +18387,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_QUAL_192
+  id: LANG_UIPOD_NAV_QUAL_192
   desc: Navidrome MP3 192 kbps audio quality
   user: core
   <source>
@@ -18401,7 +18401,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CACHE_LIMIT
+  id: LANG_UIPOD_NAV_CACHE_LIMIT
   desc: Navidrome SD cache size limit row
   user: core
   <source>
@@ -18415,7 +18415,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_UNLIMITED
+  id: LANG_UIPOD_NAV_UNLIMITED
   desc: Navidrome unlimited cache option
   user: core
   <source>
@@ -18429,7 +18429,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_SELF_SIGNED
+  id: LANG_UIPOD_NAV_SELF_SIGNED
   desc: Navidrome allow self-signed TLS toggle
   user: core
   <source>
@@ -18443,7 +18443,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_SYNC
+  id: LANG_UIPOD_NAV_SYNC
   desc: Navidrome Connect and Sync action row
   user: core
   <source>
@@ -18457,7 +18457,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CLEAR_CACHE
+  id: LANG_UIPOD_NAV_CLEAR_CACHE
   desc: Navidrome Clear Cache action row
   user: core
   <source>
@@ -18471,7 +18471,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CLEAR_CACHE_Q
+  id: LANG_UIPOD_NAV_CLEAR_CACHE_Q
   desc: Navidrome Clear Cache confirmation prompt
   user: core
   <source>
@@ -18485,7 +18485,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CACHE_CLEARED
+  id: LANG_UIPOD_NAV_CACHE_CLEARED
   desc: Navidrome Cache cleared splash
   user: core
   <source>
@@ -18499,7 +18499,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_NOT_SET
+  id: LANG_UIPOD_NAV_NOT_SET
   desc: Navidrome unset field indicator
   user: core
   <source>
@@ -18513,7 +18513,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CONNECTING
+  id: LANG_UIPOD_NAV_CONNECTING
   desc: Navidrome connecting fullscreen message
   user: core
   <source>
@@ -18527,7 +18527,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_SYNCING
+  id: LANG_UIPOD_NAV_SYNCING
   desc: Navidrome syncing library fullscreen message
   user: core
   <source>
@@ -18541,7 +18541,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_SYNCED_FMT
+  id: LANG_UIPOD_NAV_SYNCED_FMT
   desc: Navidrome sync completion splash format
   user: core
   <source>
@@ -18555,7 +18555,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_BUFFERING
+  id: LANG_UIPOD_NAV_BUFFERING
   desc: Navidrome buffering fullscreen message
   user: core
   <source>
@@ -18569,7 +18569,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_NAV_CONFIG_NEEDED
+  id: LANG_UIPOD_NAV_CONFIG_NEEDED
   desc: Navidrome missing credentials splash
   user: core
   <source>
@@ -18583,7 +18583,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOAD
+  id: LANG_UIPOD_DOWNLOAD
   desc: Hold-A context menu action to download Navidrome track/album/folder to SD card
   user: core
   <source>
@@ -18597,7 +18597,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOADING
+  id: LANG_UIPOD_DOWNLOADING
   desc: Fullscreen progress message while downloading a single Navidrome track
   user: core
   <source>
@@ -18611,7 +18611,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOADING_FMT
+  id: LANG_UIPOD_DOWNLOADING_FMT
   desc: Fullscreen progress message while downloading multiple Navidrome tracks
   user: core
   <source>
@@ -18625,7 +18625,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOADED_ONE
+  id: LANG_UIPOD_DOWNLOADED_ONE
   desc: Splash shown when a single track finishes downloading
   user: core
   <source>
@@ -18639,7 +18639,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOADED_FMT
+  id: LANG_UIPOD_DOWNLOADED_FMT
   desc: Splash shown when multiple tracks finish downloading
   user: core
   <source>
@@ -18653,7 +18653,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_SOURCE_JELLYFIN
+  id: LANG_UIPOD_SOURCE_JELLYFIN
   desc: Source type option and settings item for Jellyfin
   user: core
   <source>
@@ -18667,7 +18667,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_VIDEO_QUALITY
+  id: LANG_UIPOD_JF_VIDEO_QUALITY
   desc: Jellyfin Video Quality row label
   user: core
   <source>
@@ -18681,7 +18681,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_VQ_AUTO
+  id: LANG_UIPOD_JF_VQ_AUTO
   desc: Jellyfin Video Quality Auto (720p)
   user: core
   <source>
@@ -18695,7 +18695,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_VQ_720P
+  id: LANG_UIPOD_JF_VQ_720P
   desc: Jellyfin Video Quality 720p 4 Mbps
   user: core
   <source>
@@ -18709,7 +18709,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_VQ_480P
+  id: LANG_UIPOD_JF_VQ_480P
   desc: Jellyfin Video Quality 480p 2 Mbps
   user: core
   <source>
@@ -18723,7 +18723,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_VQ_ORIGINAL
+  id: LANG_UIPOD_JF_VQ_ORIGINAL
   desc: Jellyfin Video Quality 1080p / Original
   user: core
   <source>
@@ -18737,7 +18737,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_SYNCED_FMT
+  id: LANG_UIPOD_JF_SYNCED_FMT
   desc: Jellyfin sync completion splash format
   user: core
   <source>
@@ -18751,7 +18751,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_JF_CLEAR_CACHE_Q
+  id: LANG_UIPOD_JF_CLEAR_CACHE_Q
   desc: Jellyfin Clear Cache confirmation prompt
   user: core
   <source>
@@ -18765,7 +18765,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_PLAY_FROM_START
+  id: LANG_UIPOD_PLAY_FROM_START
   desc: Video context menu action to play from 0:00
   user: core
   <source>
@@ -18779,7 +18779,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DELETE_DOWNLOAD
+  id: LANG_UIPOD_DELETE_DOWNLOAD
   desc: Video context menu action to remove offline SD download
   user: core
   <source>
@@ -18793,7 +18793,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DELETED
+  id: LANG_UIPOD_DELETED
   desc: Splash shown when offline download is deleted
   user: core
   <source>
@@ -18807,7 +18807,7 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_TRIMPOD_DOWNLOADED_VIDEOS_FMT
+  id: LANG_UIPOD_DOWNLOADED_VIDEOS_FMT
   desc: Splash shown when multiple videos finish downloading
   user: core
   <source>

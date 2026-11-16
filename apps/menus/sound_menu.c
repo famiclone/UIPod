@@ -37,7 +37,7 @@
 
 /***********************************/
 /*    SOUND MENU                   */
-/* Trimpod: "Volume" and "Maximum Volume Limit" are not exposed in the menu --
+/* UIPod: "Volume" and "Maximum Volume Limit" are not exposed in the menu --
  * volume is handled globally by the hardware rocker, and the underlying dB /
  * perceptual-loudness scale is not a user-facing concept. volume_limit stays at
  * its default (max, no cap); see the %mv volume bar in skin_tokens.c. */
@@ -186,7 +186,7 @@ MENUITEM_SETTING(replaygain_preamp,
 MAKE_MENU(replaygain_settings_menu,ID2P(LANG_REPLAYGAIN),0, Icon_NOICON,
           &replaygain_type, &replaygain_noclip, &replaygain_preamp);
 
-MAKE_MENU(sound_settings, ID2P(LANG_TRIMPOD_SOUND), NULL, Icon_Audio,
+MAKE_MENU(sound_settings, ID2P(LANG_UIPOD_SOUND), NULL, Icon_Audio,
           /* sub-pages first (entries that open their own page) */
           &crossfeed_menu, &equalizer_menu,
 #ifdef AUDIOHW_HAVE_EQ

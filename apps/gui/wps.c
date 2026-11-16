@@ -47,11 +47,11 @@
 #include "cuesheet.h"
 #include "ata_idle_notify.h"
 #include "root_menu.h"
-#include "trimpod_transition.h"   /* slide back to the browser on B */
+#include "uipod_transition.h"   /* slide back to the browser on B */
 #include "menu.h"                 /* do_menu / MENUITEM_VALUE (A: Now Playing menu) */
 #include "powermgmt.h"            /* sleep timer (Now Playing knob) */
-#include "trimpod_playlists.h"    /* Add to Playlist, Shuffle */
-#include "trimpod_page.h"          /* Now Playing is a trimpod_page */
+#include "uipod_playlists.h"    /* Add to Playlist, Shuffle */
+#include "uipod_page.h"          /* Now Playing is a uipod_page */
 #include "backdrop.h"
 #include "appevents.h"
 #include "viewport.h"
@@ -59,9 +59,9 @@
 #include "option_select.h"
 #include "playlist_viewer.h"
 #include "wps.h"
-#include "trimpod_visualizer.h"
-#include "trimpod_nowplaying.h"
-#include "trimpod_ui.h"
+#include "uipod_visualizer.h"
+#include "uipod_nowplaying.h"
+#include "uipod_ui.h"
 #include "statusbar-skinned.h"
 #include "skin_engine/wps_internals.h"
 
@@ -100,7 +100,7 @@ static bool s_wps_theme_disabled = false;
 static void update_non_static(void)
 {
     if (s_wps_theme_disabled)
-        trimpod_nowplaying_draw();
+        uipod_nowplaying_draw();
 }
 
 void wps_do_action(enum wps_do_action_type action, bool updatewps)
@@ -244,7 +244,7 @@ static bool ffwd_rew(int button, bool seek_from_end)
                    displays corectly */
                 gstate->ff_rewind_count = ff_rewind_count;
 
-                trimpod_nowplaying_draw();
+                uipod_nowplaying_draw();
 
                 break;
 
@@ -257,7 +257,7 @@ static bool ffwd_rew(int button, bool seek_from_end)
                 gstate->ff_rewind_count = 0;
                 ff_rewind = false;
                 status_set_ffmode(0);
-                trimpod_nowplaying_draw();
+                uipod_nowplaying_draw();
                 exit = true;
                 break;
 
@@ -310,7 +310,7 @@ static void gwps_caption_backlight(struct wps_state *state)
     }
 }
 
-/* Trimpod: chapters (cuesheet subtracks) never remap the D-pad -- prev/next
+/* UIPod: chapters (cuesheet subtracks) never remap the D-pad -- prev/next
  * stay whole-file skips; chapter navigation is L2/R2 (ACTION_TP_CHAP_*). */
 static void next_track(void)
 {
@@ -414,7 +414,7 @@ static void gwps_enter_wps(void)
         }
         s_wps_theme_disabled = true;
     }
-    trimpod_nowplaying_draw();
+    uipod_nowplaying_draw();
 }
 
 static long do_wps_exit(void)
@@ -438,14 +438,14 @@ static long do_wps_exit(void)
  * In either way, call gwps_leave_wps(), in order to restore the correct
  * "main screen" backdrops and statusbars
  */
-/* ---- Now Playing as a trimpod_page ------------------------------------- *
- * The While Playing Screen runs on the shared trimpod_page_run() loop
+/* ---- Now Playing as a uipod_page ------------------------------------- *
+ * The While Playing Screen runs on the shared uipod_page_run() loop
  * (poll -> on_action -> draw), with its state in struct wps_page, so it is a
- * page like every other Trimpod screen.  It drives the stock skin-engine
+ * page like every other UIPod screen.  It drives the stock skin-engine
  * renderer (refresh classes, peak-meter fast path, scroll thread). */
 struct wps_page
 {
-    struct trimpod_page base;
+    struct uipod_page base;
     long button;          /* last (party/ab-processed) action, for storage_spin */
     long last_left, last_right;
     long result;          /* GO_TO_* handed back to the root dispatch */
@@ -454,7 +454,7 @@ struct wps_page
     bool update;          /* force a non-static skin update on the next draw */
 };
 
-static void wps_page_draw(struct trimpod_page *p)
+static void wps_page_draw(struct uipod_page *p)
 {
     struct wps_page *w = (struct wps_page *)p;
     struct wps_state *state = get_wps_state();
@@ -482,12 +482,12 @@ static void wps_page_draw(struct trimpod_page *p)
     else
     {
         gwps_caption_backlight(state);
-        trimpod_nowplaying_draw();
+        uipod_nowplaying_draw();
         w->update = false;
     }
 }
 
-static int wps_page_poll(struct trimpod_page *p, int timeout)
+static int wps_page_poll(struct uipod_page *p, int timeout)
 {
     struct wps_page *w = (struct wps_page *)p;
     (void)timeout;
@@ -573,7 +573,7 @@ static const struct menu_value_cb np_pause_value =
 static const char *np_mono_art_get(void *ctx, char *buf, int len)
 {
     (void)ctx; (void)buf; (void)len;
-    return trimpod_toggle_str(global_settings.mono_album_art);
+    return uipod_toggle_str(global_settings.mono_album_art);
 }
 static void np_mono_art_cycle(void *ctx, int dir)
 {
@@ -586,20 +586,20 @@ static const struct menu_value_cb np_mono_art_value =
 
 MENUITEM_VALUE(np_pause, "", &np_pause_value, Icon_NOICON);
 MENUITEM_VALUE(np_sleeptimer, ID2P(LANG_SLEEP_TIMER), &np_sleep_value, Icon_NOICON);
-MENUITEM_VALUE(np_mono_art, ID2P(LANG_TRIMPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
+MENUITEM_VALUE(np_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
 /* Shuffle: an action, not a mode -- every pick reshuffles the live queue. */
 MENUITEM_RETURNVALUE(np_shuffle, ID2P(LANG_SHUFFLE), NP_SHUFFLE,
                      NULL, Icon_NOICON);
-MENUITEM_RETURNVALUE(np_addpl, ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST), NP_ADD_TO_PLAYLIST,
+MENUITEM_RETURNVALUE(np_addpl, ID2P(LANG_UIPOD_ADD_TO_PLAYLIST), NP_ADD_TO_PLAYLIST,
                      NULL, Icon_NOICON);
-MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_TRIMPOD_START_VISUALIZER), NP_START_VIZ, NULL, Icon_NOICON);
+MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_UIPOD_START_VISUALIZER), NP_START_VIZ, NULL, Icon_NOICON);
 /* Repeat: an inline setting row (LEFT/RIGHT cycle, applied live to the
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
           &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_mono_art, &np_addpl, &np_viz);
 
-static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
+static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                                                    int button)
 {
     struct wps_page *w = (struct wps_page *)p;
@@ -612,9 +612,9 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                 /* B backs out of Now Playing -> slide the previous screen in L->R.
                  * GO_TO_PREVIOUS (not _BROWSER): the root dispatch resolves the
                  * real previous screen via last_screen. */
-                trimpod_transition_arm_back();
+                uipod_transition_arm_back();
                 w->result = GO_TO_PREVIOUS;
-                return TRIMPOD_PAGE_DONE;
+                return UIPOD_PAGE_DONE;
 
                 /* A tap: play/pause (the tap/hold standard: tap executes).
                  * Sync paused first in case another thread changed it. */
@@ -632,17 +632,17 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                 int sel = do_menu(&nowplaying_menu, NULL, NULL, false);
                 if (sel == NP_SHUFFLE)
                 {
-                    trimpod_queue_reshuffle();
-                    trimpod_transition_arm_back();   /* slide back, as B does */
+                    uipod_queue_reshuffle();
+                    uipod_transition_arm_back();   /* slide back, as B does */
                 }
                 else if (sel == NP_ADD_TO_PLAYLIST &&
                          state->id3 && state->id3->path[0])
-                    trimpod_playlists_pick(state->id3->path, FILE_ATTR_AUDIO);
+                    uipod_playlists_pick(state->id3->path, FILE_ATTR_AUDIO);
                 else if (sel == NP_START_VIZ)
-                    trimpod_visualizer_run();   /* B returns to Now Playing */
+                    uipod_visualizer_run();   /* B returns to Now Playing */
 
                 if (!audio_status())   /* music stopped while away -> leave WPS */
-                    { w->result = GO_TO_ROOT; return TRIMPOD_PAGE_DONE; }
+                    { w->result = GO_TO_ROOT; return UIPOD_PAGE_DONE; }
                 w->restore = true;
                 break;
             }
@@ -655,7 +655,7 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                     adjust_volume(-1);
 
                 setvol();
-                trimpod_nowplaying_draw();
+                uipod_nowplaying_draw();
                 w->update = false;
                 break;
             /* Hold D-pad Left / Right: smooth accelerating rewind / fast-forward. */
@@ -664,7 +664,7 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                 if (ffwd_rew(button, false))
                 {
                     w->result = GO_TO_ROOT;
-                    return TRIMPOD_PAGE_DONE;
+                    return UIPOD_PAGE_DONE;
                 }
                 w->update = false;
                 break;
@@ -698,7 +698,7 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
             case ACTION_WPS_MENU:
                 gwps_leave_wps();
                 w->result = GO_TO_ROOT;
-                return TRIMPOD_PAGE_DONE;
+                return UIPOD_PAGE_DONE;
 
 
 
@@ -718,21 +718,21 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
             case ACTION_NONE: /* Timeout, do a partial update */
                 /* Auto-start the visualizer after the configured idle while
                  * music plays (0 = Never).  Runs the sequence inline rather
-                 * than via trimpod_visualizer_maybe_autostart() because the
+                 * than via uipod_visualizer_maybe_autostart() because the
                  * skin must be left/restored around the run. */
-                if (trimpod_visualizer_autostart_due())
+                if (uipod_visualizer_autostart_due())
                 {
                     /* Fade Now Playing to black first (hides the viz load).  A
                      * keypress during the fade cancels -> stay here. */
-                    if (trimpod_visualizer_fade_to_black())
+                    if (uipod_visualizer_fade_to_black())
                     {
                         w->update = true;   /* repaint Now Playing */
                         break;
                     }
                     gwps_leave_wps();
-                    trimpod_visualizer_run();   /* loads while black, fades in; B returns */
+                    uipod_visualizer_run();   /* loads while black, fades in; B returns */
                     if (!audio_status())
-                        { w->result = GO_TO_ROOT; return TRIMPOD_PAGE_DONE; }
+                        { w->result = GO_TO_ROOT; return UIPOD_PAGE_DONE; }
                     w->restore = true;
                     break;
                 }
@@ -742,7 +742,7 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
             case ACTION_WPS_VIEW_PLAYLIST:
                 gwps_leave_wps();
                 w->result = GO_TO_PLAYLIST_VIEWER;
-                return TRIMPOD_PAGE_DONE;
+                return UIPOD_PAGE_DONE;
             default:                /* system events: the page loop's */
                 w->update = true;
                 break;
@@ -753,12 +753,12 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
     if (w->exit)
     {
         w->result = do_wps_exit();
-        return TRIMPOD_PAGE_DONE;
+        return UIPOD_PAGE_DONE;
     }
-    return TRIMPOD_PAGE_STAY;
+    return UIPOD_PAGE_STAY;
 }
 
-static const struct trimpod_page_vtable wps_page_vtable =
+static const struct uipod_page_vtable wps_page_vtable =
 {
     .legend    = NULL,            /* the skin engine paints the SBS header */
     .draw      = wps_page_draw,
@@ -778,7 +778,7 @@ long gui_wps_show(void)
              * launch skips it).  The slide can flicker or show missing data
              * while a track loads -- the destination frame is captured before
              * id3 is ready; left visible rather than hidden by snapping. */
-            .no_enter_anim     = trimpod_transition_first_screen(),
+            .no_enter_anim     = uipod_transition_first_screen(),
             .no_arm_back       = true,  /* B arms its own back slide to browser */
             .no_header_refresh = true,  /* the skin engine owns the SBS header */
             .animated          = true,  /* counters/EQ/spectrum/viz repaint live */
@@ -789,7 +789,7 @@ long gui_wps_show(void)
 
     wps_state_init();
 
-    trimpod_page_run(&w.base);
+    uipod_page_run(&w.base);
     if (w.base.home)
     {
         /* Hold-B home: the run loop breaks out before on_action can leave the
