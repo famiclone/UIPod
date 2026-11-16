@@ -251,7 +251,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(trimpod)
         goto fail_unmap;
 
     tp->io.version = SND_PCM_IOPLUG_VERSION;
-    tp->io.name = "Trimpod";
+    tp->io.name = "UIPod";
     tp->io.callback = &tp_callback;
     tp->io.private_data = tp;
     tp->io.poll_fd = tp->wake_fd;

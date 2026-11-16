@@ -70,7 +70,9 @@
 #define MAX_FONT_SIZE   4000
 #endif
 #endif
-#define GLYPHS_TO_CACHE 256
+#ifndef GLYPHS_TO_CACHE
+#define GLYPHS_TO_CACHE 512
+#endif
 
 #if MEMORYSIZE < 4
 #define FONT_HARD_LIMIT

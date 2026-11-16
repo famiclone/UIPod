@@ -41,9 +41,11 @@
 #include "statusbar-skinned.h"
 #include "debug.h"
 #include "line.h"
+#include "trimpod_svg.h"
+#include "trimpod_rs_ui.h"
 
-#define ICON_PADDING 1
-#define ICON_PADDING_S "1"
+#define ICON_PADDING 3
+#define ICON_PADDING_S "3"
 
 
 /* these are static to make scrolling work */
@@ -88,13 +90,16 @@ static bool is_bracket_toggle(const unsigned char *s)
     return s && s[0] == '[' && s[1] && s[2] == ']' && s[3] == '\0';
 }
 
-/* Width of an indicator. A toggle is sized with its middle as 'x' so "[x]" and
- * "[ ]" measure identically (no width jitter on toggle). */
+/* Width of an indicator. A toggle uses its SVG icon width (or falls back to
+ * "[x]" metrics so "[x]" and "[ ]" measure identically without jitter). */
 static int list_indicator_width(struct screen *d, const unsigned char *s)
 {
     int wl, wx, wr, h;
     if (is_bracket_toggle(s))
     {
+        const struct trimpod_svg_icon *tog = trimpod_svg_toggle(s[1] != ' ');
+        if (tog)
+            return tog->width;
         d->getstringsize((const unsigned char *)"[", &wl, &h);
         d->getstringsize((const unsigned char *)"x", &wx, &h);
         d->getstringsize((const unsigned char *)"]", &wr, &h);
@@ -118,15 +123,27 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
     const char *dsp_text = list_info->dsp_text;
     struct viewport *vp = list_info->vp;
 
-    /* Trimpod: no list icons.  Only the selection cursor (a cursor-style list,
-     * not a show_icons icon) draws a glyph. */
+    int icon_adv = (!is_title && list_info->svg_icon && list_info->svg_icon->alpha) ?
+                (list_info->svg_icon->width + TRIMPOD_SVG_ICON_GAP) : 0;
+
+    /* Trimpod: no stock list icons.  Only the selection cursor (a cursor-style list,
+     * not a show_icons icon) draws a stock glyph; media lists may draw an SVG
+     * file-type icon before the filename. */
     if (is_title)
         display->put_line(x, y, linedes, "$t", dsp_text);
     else if (show_cursor)
-        display->put_line(x, y, linedes, "$*s$"ICON_PADDING_S"I$*t", item_indent,
+        display->put_line(x, y, linedes, "$*s$"ICON_PADDING_S"I$*t", item_indent + icon_adv,
                 is_selected ? Icon_Cursor : Icon_NOICON, item_offset, dsp_text);
     else
-        display->put_line(x, y, linedes, "$*s$*t", item_indent, item_offset, dsp_text);
+        display->put_line(x, y, linedes, "$*s$*t", item_indent + icon_adv, item_offset, dsp_text);
+
+    if (!is_title && list_info->svg_icon)
+    {
+        int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
+        int iy = y + (lh - list_info->svg_icon->height) / 2;
+        trimpod_svg_draw(display, list_info->svg_icon, x + item_indent, iy,
+                         (linedes->style & STYLE_INVERT) != 0);
+    }
 
     /* Trimpod: [x]/[ ] toggle or ">" arrow in the right gutter (indic_gutter)
      * that list_draw reserved.  The name was drawn in a narrowed viewport (so the
@@ -145,27 +162,39 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
         {
             const unsigned char *g = (const unsigned char *)
                         (list_info->indicator ? list_info->indicator : ">");
-            int w, h;
-            display->getstringsize(g, &w, &h);
-            int lh = (linedes->height > 0) ? linedes->height : h;
-            int yy = y + (lh - h) / 2;
-            int x0 = vp->width - list_indicator_width(display, g) - 2;
-            /* inverse-video on the inverse selection bar so the glyph stays visible */
-            display->set_drawmode((linedes->style & STYLE_INVERT) ?
-                                  (DRMODE_SOLID | DRMODE_INVERSEVID) : DRMODE_FG);
-            if (is_bracket_toggle(g))
+            int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
+            const struct trimpod_svg_icon *tog =
+                        is_bracket_toggle(g) ? trimpod_svg_toggle(g[1] != ' ') : NULL;
+            if (tog)
             {
-                int wl, wx, hh;
-                display->getstringsize((const unsigned char *)"[", &wl, &hh);
-                display->getstringsize((const unsigned char *)"x", &wx, &hh);
-                char mid[2] = { (char)g[1], '\0' };
-                display->putsxy(x0, yy, (const unsigned char *)"[");
-                display->putsxy(x0 + wl, yy, (const unsigned char *)mid);
-                display->putsxy(x0 + wl + wx, yy, (const unsigned char *)"]");
+                int x0 = vp->width - tog->width - 16;
+                int yy = y + (lh - tog->height) / 2;
+                trimpod_svg_draw(display, tog, x0, yy,
+                                 (linedes->style & STYLE_INVERT) != 0);
             }
             else
-                display->putsxy(x0, yy, g);
-            display->set_drawmode(DRMODE_SOLID);
+            {
+                int w, h;
+                display->getstringsize(g, &w, &h);
+                int yy = y + (lh - h) / 2;
+                int x0 = vp->width - list_indicator_width(display, g) - 6;
+                /* inverse-video on the inverse selection bar so the glyph stays visible */
+                display->set_drawmode((linedes->style & STYLE_INVERT) ?
+                                      (DRMODE_SOLID | DRMODE_INVERSEVID) : DRMODE_FG);
+                if (is_bracket_toggle(g))
+                {
+                    int wl, wx, hh;
+                    display->getstringsize((const unsigned char *)"[", &wl, &hh);
+                    display->getstringsize((const unsigned char *)"x", &wx, &hh);
+                    char mid[2] = { (char)g[1], '\0' };
+                    display->putsxy(x0, yy, (const unsigned char *)"[");
+                    display->putsxy(x0 + wl, yy, (const unsigned char *)mid);
+                    display->putsxy(x0 + wl + wx, yy, (const unsigned char *)"]");
+                }
+                else
+                    display->putsxy(x0, yy, g);
+                display->set_drawmode(DRMODE_SOLID);
+            }
         }
         vp->width -= list_info->indic_gutter;
     }
@@ -221,6 +250,9 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     const int screen = display->screen_type;
     list_draw_item *callback_draw_item;
 
+    if (screen == SCREEN_MAIN && trimpod_gpu_render_synclist(list))
+        return;
+
     const int list_start_item = list->start_item[screen];
     const bool scrollbar_in_left = (list->scrollbar == SCROLLBAR_LEFT);
     const bool scrollbar_in_right = (list->scrollbar == SCROLLBAR_RIGHT);
@@ -230,8 +262,8 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     struct line_desc linedes = LINE_DESC_DEFINIT;
     bool show_title;
     struct viewport *list_text_vp = &list_text[screen];
-    int indent = 8; /* small left margin so entries aren't flush-left
-                     * (offsets only the text; the selection bar stays full width) */
+    int indent = 26; /* small left margin so entries aren't flush-left
+                      * (offsets only the text; the selection bar stays full width) */
 
     if (list->callback_draw_item != NULL)
         callback_draw_item = list->callback_draw_item;
@@ -250,20 +282,6 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         list_text_vp->height -= title_height;
     }
 
-    /* Trimpod: reserve a right gutter for the [x]/[ ] toggle or ">" arrow so the
-     * name column (and the scroll-engine marquee) stops before it. Persisting it
-     * on list_text_vp keeps the marquee inside the name column. */
-    int indic_gutter = 0;
-    if (list->callback_get_item_indicator || list->callback_get_item_chevron)
-    {
-        const char *s = list->callback_get_item_indicator ?
-            list->callback_get_item_indicator(list->selected_item, list->data) : ">";
-        if (!s || !*s)
-            s = ">";
-        indic_gutter = list_indicator_width(display, (const unsigned char *)s) + 6;
-        list_text_vp->width -= indic_gutter;
-    }
-
     const int nb_lines = list_get_nb_lines(list, screen);
 
     linedes.height = list->line_height[screen];
@@ -278,38 +296,56 @@ void list_draw(struct screen *display, struct gui_synclist *list)
 
     #define draw_offset 0
 
-    /* draw the scrollbar if its needed */
-    if (list->scrollbar != SCROLLBAR_OFF)
+    /* Draw the classic iPod scrollbar FIRST so indic_gutter (chevron / toggle)
+     * sits immediately to the left of the scrollbar rather than to its right. */
+    if (list->scrollbar != SCROLLBAR_OFF && nb_lines < list->nb_items)
     {
-        /* if the scrollbar is shown the text viewport needs to shrink */
-        if (nb_lines < list->nb_items)
-        {
-            struct viewport vp = *list_text_vp;
-            vp.width = SCROLLBAR_WIDTH;
-            /* touchscreens must use full viewport height
-             * due to pixelwise rendering */
-            vp.height = linedes.height * nb_lines;
-            list_text_vp->width -= SCROLLBAR_WIDTH;
-            if (scrollbar_in_right)
-                vp.x += list_text_vp->width;
-            else /* left */
-                list_text_vp->x += SCROLLBAR_WIDTH;
-            struct viewport *last = display->set_viewport(&vp);
+        const int sb_box_w = 32;
+        const int sb_gap   = 8;
+        const int sb_col_w = sb_box_w + sb_gap;
 
-            /* button targets go itemwise */
-            int scrollbar_items = list->nb_items;
-            int scrollbar_min = list_start_item;
-            int scrollbar_max = list_start_item + nb_lines;
-            gui_scrollbar_draw(display,
-                    (scrollbar_in_left? 0: 1), 0, SCROLLBAR_WIDTH-1, vp.height,
-                    scrollbar_items, scrollbar_min, scrollbar_max, VERTICAL);
-            display->set_viewport(last);
+        struct viewport vp = *list_text_vp;
+        vp.width = sb_col_w;
+        vp.height = linedes.height * nb_lines;
+        list_text_vp->width -= sb_col_w;
+        if (scrollbar_in_right)
+            vp.x += list_text_vp->width;
+        else /* left */
+            list_text_vp->x += sb_col_w;
+
+        struct viewport *last = display->set_viewport(&vp);
+        gui_ipod_scrollbar_draw(display,
+                scrollbar_in_left ? 0 : sb_gap, 0, sb_box_w, vp.height,
+                list->nb_items, list_start_item, list_start_item + nb_lines);
+        display->set_viewport(last);
+    }
+
+    /* Trimpod: reserve a right gutter for the toggle or ">" arrow so the
+     * name column (and the scroll-engine marquee) stops before it. Persisting it
+     * on list_text_vp keeps the marquee inside the name column. */
+    int indic_gutter = 0;
+    if (list->callback_get_item_indicator || list->callback_get_item_chevron)
+    {
+        int max_iw = 0;
+        for (int r = start; r < end && r < list->nb_items; r++)
+        {
+            const char *s = list->callback_get_item_indicator ?
+                list->callback_get_item_indicator(r, list->data) : NULL;
+            if (!s || !*s)
+            {
+                if (list->callback_get_item_chevron &&
+                    list->callback_get_item_chevron(r, list->data))
+                    s = ">";
+                else
+                    continue;
+            }
+            int pad_r = is_bracket_toggle((const unsigned char *)s) ? 16 : 6;
+            int iw = list_indicator_width(display, (const unsigned char *)s) + pad_r + 16;
+            if (iw > max_iw)
+                max_iw = iw;
         }
-        /* shift everything a bit in relation to the title */
-        else if (!VP_IS_RTL(list_text_vp) && scrollbar_in_left)
-            indent += SCROLLBAR_WIDTH;
-        else if (VP_IS_RTL(list_text_vp) && scrollbar_in_right)
-            indent += SCROLLBAR_WIDTH;
+        indic_gutter = max_iw;
+        list_text_vp->width -= indic_gutter;
     }
 
     display->set_viewport(list_text_vp);
@@ -350,11 +386,15 @@ void list_draw(struct screen *display, struct gui_synclist *list)
             line_indent *= character_width;
         line_indent += indent;
 
+        const struct trimpod_svg_icon *svg_icon = list->callback_get_item_svg_icon ?
+                    list->callback_get_item_svg_icon(i, list->data) : NULL;
+        int icon_adv = svg_icon ? (svg_icon->width + TRIMPOD_SVG_ICON_GAP) : 0;
+
         /* position the string at the correct offset place */
         int item_width,h;
         display->getstringsize(entry_name, &item_width, &h);
-        item_offset = gui_list_get_item_offset(list, item_width, indent,
-                display, list_text_vp);
+        item_offset = gui_list_get_item_offset(list, item_width,
+                line_indent + icon_adv, display, list_text_vp);
 
         /* draw the selected line */
         if(
@@ -424,6 +464,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
                     list->callback_get_item_chevron(i, list->data) : false;
         list_info.indicator = list->callback_get_item_indicator ?
                     list->callback_get_item_indicator(i, list->data) : NULL;
+        list_info.svg_icon = svg_icon;
 
         callback_draw_item(&list_info);
     }

@@ -1,29 +1,16 @@
 {
-  "name": "Trimpod Classic",
-  "version": "v1.0.15",
+  "name": "UIPod",
+  "version": "v0.1.0",
   "type": "TOOL",
-  "description": "An iPod Classic-inspired, offline music player for the TrimUI Brick/Hammer with winamp-like visualizations.",
-  "author": "tyrannotorus",
-  "repo_url": "https://github.com/tyrannotorus/c-trimui-trimpod-classic-pak",
-  "release_filename": "Trimpod.pak.zip",
+  "description": "An iPod-inspired offline, Navidrome & Jellyfin media player for the TrimUI Brick/Hammer with GPU UI and visualizations.",
+  "author": "famiclone",
+  "repo_url": "https://github.com/famiclone/UIPod",
+  "release_filename": "UIPod.pak.zip",
   "screenshots": [
     "screenshots/trimpod-amber-main-menu.jpg"
   ],
   "platforms": ["tg5040"],
   "changelog": {
-    "v1.0.15": "- Video sound follows headphones and Bluetooth\n- USB-C headset buttons control playback\n- Leaving a video no longer blacks out the screen\n- Unplugging headphones pauses video and music\n- Volume is kept when headphones or Bluetooth change\n- L1/R1 seek 10 s in videos\n- Resume Playback skips deleted songs\n- Faster startup with large libraries\n- Deleted folders leave the library\n- Failed USB copies report an error\n- Lower idle CPU use with USB-C headphones and Bluetooth",
-    "v1.0.14": "- Usb Mounting\n- Video playback",
-    "v1.0.13": "- Improved battery life\n- Battery indicator is less pessimistic\n- The press that wakes the screen no longer passes through\n- Visualizers no longer stutter at a low CPU Frequency\n- Volume works with the hold switch on and no longer wakes the screen",
-    "v1.0.12": "- Selecting a song plays only that song\n- Play Shuffled added to folder, artist, album and playlist menus\n- Now Playing Shuffle reshuffles and restarts the queue each time, and is no longer saved\n- Hold up/down to scroll lists",
-    "v1.0.11": "- Holding Power now powers the Brick off instead of rebooting it",
-    "v1.0.10": "- Play Next and Add to Play Queue added to context menus\n- Idle menus return to Now Playing after 10 s\n- Holding Power powers off instead of exiting app\n- Play Queue limit increased to avoid truncated lists\n- Toggling a settings row with A no longer scrolls the list",
-    "v1.0.9": "Indexing shows a Scanning Library progress screen instead of a blank screen. Adding or removing a library folder reindexes immediately. Launch after a library change no longer stalls for ~15 s.",
-    "v1.0.8": "Audiobook support for .m4b files: each book resumes from where you left off, and L2/R2 skip between chapters.",
-    "v1.0.7": "Added Themes with Dark, Light, and a third ink variant per color. Volume bar now reads 'Volume X/40'. Fixed: playlist song menu not sliding back on close, status bar showing '.trimpod_queue', divider line ignoring the foreground color, and Now Playing spacing/status-bar text alignment.",
-    "v1.0.6": "Fixed music playing about 8% too fast (roughly 1.4 semitones sharp). USB-C headphones work again, with in-app volume control. Powering off a Bluetooth speaker no longer crashes the app. Unplugging headphones or losing a Bluetooth device now pauses playback instead of switching to the internal speaker.",
-    "v1.0.5": "Fixed bug allowing user to escape to file system after song end",
-    "v1.0.4": "Rebuilt the audio output path: direct ALSA output with a hardware/software split volume. Fixes quiet passages dropping to silence at low volume; maximum volume is now full scale.",
-    "v1.0.3": "Adjusted volume increments, improved performance by reducing redundant cycle burn, added a controls legend to Settings, various bug fixes.",
-    "v1.0.1": "Initial release."
+    "v0.1.0": "- Native 1024x768 HiDPI pure-Rust UI (trimpod-ui) with Geologica typography\n- English & Ukrainian localization\n- Navidrome / Subsonic music streaming, caching & offline downloads (/mnt/SDCARD/Media/Music/navidrome)\n- Jellyfin video (Movies, TV Shows) & audio streaming with automatic H.264/AAC transcoding and offline downloads (/mnt/SDCARD/Media/Videos/jellyfin)\n- Built-in AutoEQ headphone database & 10-band parametric EQ\n- 100 Milkdrop GPU visualizers via projectM"
   }
 }

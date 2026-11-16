@@ -54,6 +54,9 @@ extern void gui_scrollbar_draw(struct screen * screen, int x, int y,
                                int width, int height, int items,
                                int min_shown, int max_shown,
                                unsigned flags);
+extern void gui_ipod_scrollbar_draw(struct screen *screen, int x, int y,
+                                    int width, int height, int items,
+                                    int min_shown, int max_shown);
 extern void gui_bitmap_scrollbar_draw(struct screen * screen, struct bitmap *bm,
                             int x, int y,
                             int width, int height, int items,

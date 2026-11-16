@@ -59,6 +59,8 @@
 #include "trimpod_hold.h"
 #include "trimpod_ui.h"
 #include "trimpod_library.h"
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "trimpod_m4b.h"
 #include "rbunicode.h"
 #include "dsp_core.h"
@@ -165,6 +167,8 @@ int main(void)
      * changed; shows "Scanning Library NN%" while parsing new files) so
      * Shuffle Songs and the library browse are ready. */
     trimpod_library_init();
+    trimpod_navidrome_init();
+    trimpod_jellyfin_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */
     CHART(">root_menu");

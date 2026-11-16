@@ -17,4 +17,4 @@ export BL_TYPE="TYPE2"
 export SYSFS_BL_BRIGHTNESS="/tmp/rb_brightness"
 export SYSFS_BL_POWER="/tmp/rb_bl_power"
 # Zoom value
-ZOOMVAL="2"
+ZOOMVAL="1"

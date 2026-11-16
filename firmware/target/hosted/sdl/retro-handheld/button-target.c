@@ -51,8 +51,8 @@ bool retrohh_hold_switch(void)
  * (matching NextUI's JOY_* constants, workspace/tg5040/platform/platform.h), so
  * the physical buttons land where the launcher puts them.  The volume rocker is
  * NOT a separate device: SDL enumerates the pad node's KEY_VOLUMEUP/DOWN as
- * joystick buttons 14/13, so the rocker arrives here for free.  Indices 8
- * (MENU) and 9/10 (L3/R3) are unused by Trimpod. */
+ * joystick buttons 14/13, so the rocker arrives here for free.  Indices 9/10
+ * (L3/R3) are unused by UIPod. */
 int joybutton_to_button(int joybtn)
 {
     switch (joybtn)
@@ -65,9 +65,10 @@ int joybutton_to_button(int joybtn)
         case 5:  return BUTTON_R;        /* R1 */
         case 6:  return BUTTON_SELECT;
         case 7:  return BUTTON_START;
+        case 8:  return BUTTON_MENU;
         case 14: return BUTTON_VOL_UP;   /* volume rocker, on the pad node */
         case 13: return BUTTON_VOL_DOWN;
-        default: return BUTTON_NONE;     /* 8 = MENU, 9/10 = L3/R3 (unused) */
+        default: return BUTTON_NONE;     /* 9/10 = L3/R3 (unused) */
     }
 }
 

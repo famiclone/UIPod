@@ -1,0 +1,60 @@
+name: Build Brick Pak
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-tg5040:
+    name: Build UIPod.pak (TrimUI Brick / tg5040)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & cache tg5040 + Rust toolchain image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.trimpod
+          tags: trimpod-toolchain:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Rust workspace unit tests
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD":/build -w /build trimpod-toolchain:latest \
+            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --offline --workspace"
+
+      - name: Cross-compile UIPod for TrimUI Brick (tg5040)
+        run: |
+          BASE_VER="$(tr -d '[:space:]' < VERSION)"
+          export UIPOD_VERSION="${BASE_VER}-${GITHUB_SHA::7}"
+          ./build.sh clean
+          ./package.sh
+
+      - name: Upload TrimUI Brick pak artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: UIPod-tg5040-${{ github.sha }}
+          path: |
+            dist/UIPod.pak.zip
+            dist/UIPod-*-brick.zip
+          if-no-files-found: error
+          retention-days: 30

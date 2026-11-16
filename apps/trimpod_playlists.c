@@ -46,7 +46,10 @@
 #include "trimpod_ui.h"        /* trimpod_confirm */
 #include "trimpod_keyboard.h"  /* the on-screen keyboard */
 #include "trimpod_m4b.h"       /* an m4b tap resumes at its saved position */
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "trimpod_playlists.h"
+#include "trimpod_svg.h"
 
 #define PL_MAX        256
 #define PL_NAMEBUF    (PL_MAX * 64)   /* packed NUL-terminated names */
@@ -265,6 +268,15 @@ static const char *editor_get_name(int sel, void *data, char *buf, size_t buf_le
     return buf;
 }
 
+static const struct trimpod_svg_icon *editor_get_svg_icon(int sel, void *data)
+{
+    struct editor_page *p = (struct editor_page *)data;
+    struct playlist_track_info info;
+    if (p->pl && playlist_get_track_info(p->pl, sel, &info) == 0)
+        return trimpod_svg_for_path(info.filename, false);
+    return NULL;
+}
+
 /* No legend: B=back is the universal convention and Remove lives in the Hold-A
  * context submenu. */
 
@@ -350,6 +362,7 @@ static void edit_playlist(int sel)
     char title[MAX_PATH];
     pl_display_name(sel, title, sizeof(title));
     gui_synclist_init(&p.lists, editor_get_name, &p, false, 1, NULL);
+    gui_synclist_set_svg_icon_callback(&p.lists, editor_get_svg_icon);
     gui_synclist_set_title(&p.lists, title, Icon_Playlist);
     gui_synclist_set_nb_items(&p.lists, playlist_amount_ex(p.pl));
     gui_synclist_select_item(&p.lists, 0);
@@ -537,12 +550,86 @@ static void queue_add_playlist(const char *path)
 
 /* The per-playlist Hold-A context menu, titled with the playlist's name.
  * trimpod_context_menu returns the row index or -1 on cancel. */
+static void download_playlist_file(const char *m3u_path)
+{
+    int fd = open(m3u_path, O_RDONLY);
+    if (fd < 0)
+        return;
+    off_t fsz = filesize(fd);
+    if (fsz <= 0 || fsz > 2 * 1024 * 1024)
+    {
+        close(fd);
+        return;
+    }
+    char *content = malloc((size_t)fsz + 1);
+    if (!content)
+    {
+        close(fd);
+        return;
+    }
+    ssize_t n = read(fd, content, (size_t)fsz);
+    close(fd);
+    if (n <= 0)
+    {
+        free(content);
+        return;
+    }
+    content[n] = '\0';
+
+    char **paths = NULL;
+    int count = 0, cap = 0;
+    char *cursor = content;
+    while (*cursor && count < TRIMPOD_MAX_FILES_IN_PLAYLIST)
+    {
+        char *nl = strchr(cursor, '\n');
+        size_t len = nl ? (size_t)(nl - cursor) : strlen(cursor);
+        if (len > 0 && cursor[len - 1] == '\r')
+            len--;
+        if (len > 0 && cursor[0] != '#')
+        {
+            if (count == cap)
+            {
+                int ncap = cap ? cap * 2 : 32;
+                char **nv = realloc(paths, (size_t)ncap * sizeof(*nv));
+                if (!nv)
+                    break;
+                paths = nv;
+                cap = ncap;
+            }
+            char *line = malloc(len + 1);
+            if (line)
+            {
+                memcpy(line, cursor, len);
+                line[len] = '\0';
+                paths[count++] = line;
+            }
+        }
+        if (!nl)
+            break;
+        cursor = nl + 1;
+    }
+    free(content);
+
+    if (count > 0)
+    {
+        if (trimpod_source_is_jellyfin())
+            trimpod_jellyfin_download_tracks(paths, count);
+        else
+            trimpod_navidrome_download_tracks(paths, count);
+    }
+
+    for (int i = 0; i < count; i++)
+        free(paths[i]);
+    free(paths);
+}
+
 enum { PL_ACT_PLAY = 0, PL_ACT_SHUFFLED, PL_ACT_QUEUE,
-       PL_ACT_RENAME, PL_ACT_EDIT, PL_ACT_DELETE };
+       PL_ACT_RENAME, PL_ACT_EDIT, PL_ACT_DELETE, PL_ACT_DOWNLOAD };
 static const char *const playlist_action_opts[] =
     { ID2P(LANG_PLAY), ID2P(LANG_TRIMPOD_PLAY_SHUFFLED),
       ID2P(LANG_TRIMPOD_ADD_TO_PLAY_QUEUE),
-      ID2P(LANG_RENAME), ID2P(LANG_EDIT), ID2P(LANG_DELETE) };
+      ID2P(LANG_RENAME), ID2P(LANG_EDIT), ID2P(LANG_DELETE),
+      ID2P(LANG_TRIMPOD_DOWNLOAD) };
 
 /* Open the context menu for playlist `sel`; returns TRIMPOD_PAGE_DONE when a
  * chosen action leaves the page (play -> Now Playing), else STAY. */
@@ -552,8 +639,9 @@ static enum trimpod_page_result playlist_action(struct playlists_page *p, int se
     path_append(path, pl_dir, pl_namebuf + pl_off[sel], sizeof(path));
     pl_display_name(sel, name, sizeof(name));
 
-    int act = trimpod_context_menu(name, playlist_action_opts,
-                                   ARRAYLEN(playlist_action_opts));
+    bool remote_src = trimpod_source_is_navidrome() || trimpod_source_is_jellyfin();
+    int n_opts = ARRAYLEN(playlist_action_opts) - (remote_src ? 0 : 1);
+    int act = trimpod_context_menu(name, playlist_action_opts, n_opts);
     switch (act)
     {
         case PL_ACT_PLAY:
@@ -612,6 +700,9 @@ static enum trimpod_page_result playlist_action(struct playlists_page *p, int se
             }
             break;
         }
+        case PL_ACT_DOWNLOAD:
+            download_playlist_file(path);
+            break;
         default:                                /* -1: cancelled */
             break;
     }
@@ -840,30 +931,39 @@ static void trimpod_playlists_pick_tracks(char **paths, int count)
  * the highlighted row; a track has no Play Shuffled.  Everything is handled
  * here; true means a Play started a new queue (the caller -> Now Playing). */
 enum { MUSIC_CTX_PLAY = 0, MUSIC_CTX_SHUFFLED, MUSIC_CTX_PLAY_NEXT,
-       MUSIC_CTX_ADD_QUEUE, MUSIC_CTX_ADD_PL };
+       MUSIC_CTX_ADD_QUEUE, MUSIC_CTX_ADD_PL, MUSIC_CTX_DOWNLOAD };
 
 /* The picked MUSIC_CTX_* for a set (folder, artist, album) or a track; -1 on
  * cancel. */
-static int music_ctx_menu(const char *title, bool set)
+static int music_ctx_menu(const char *title, bool set, bool can_download)
 {
     static const char *const set_opts[] =
         { ID2P(LANG_PLAY), ID2P(LANG_TRIMPOD_PLAY_SHUFFLED),
           ID2P(LANG_PLAY_NEXT), ID2P(LANG_TRIMPOD_ADD_TO_PLAY_QUEUE),
-          ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST) };
+          ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST), ID2P(LANG_TRIMPOD_DOWNLOAD) };
     static const char *const track_opts[] =
         { ID2P(LANG_PLAY), ID2P(LANG_PLAY_NEXT),
           ID2P(LANG_TRIMPOD_ADD_TO_PLAY_QUEUE),
-          ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST) };
+          ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST), ID2P(LANG_TRIMPOD_DOWNLOAD) };
     if (set)
-        return trimpod_context_menu(title, set_opts, ARRAYLEN(set_opts));
-    int row = trimpod_context_menu(title, track_opts, ARRAYLEN(track_opts));
+    {
+        int n = (int)ARRAYLEN(set_opts) - (can_download ? 0 : 1);
+        return trimpod_context_menu(title, set_opts, n);
+    }
+    int n = (int)ARRAYLEN(track_opts) - (can_download ? 0 : 1);
+    int row = trimpod_context_menu(title, track_opts, n);
     return row > MUSIC_CTX_PLAY ? row + 1 : row;   /* past the missing row */
 }
 
 bool trimpod_music_context(const char *title, const char *path, int attr)
 {
     bool dir = attr & ATTR_DIRECTORY;
-    switch (music_ctx_menu(title, dir))
+    bool is_nav = !dir && trimpod_source_is_navidrome() &&
+                  trimpod_navidrome_is_track_path(path);
+    bool is_jf  = !dir && trimpod_source_is_jellyfin() &&
+                  trimpod_jellyfin_is_track_path(path);
+    bool can_dl = is_nav || is_jf;
+    switch (music_ctx_menu(title, dir, can_dl))
     {
         case MUSIC_CTX_PLAY:
             return dir ? trimpod_queue_add(path, attr, PLAYLIST_REPLACE, false)
@@ -879,6 +979,12 @@ bool trimpod_music_context(const char *title, const char *path, int attr)
         case MUSIC_CTX_ADD_PL:
             trimpod_playlists_pick(path, attr);
             break;
+        case MUSIC_CTX_DOWNLOAD:
+            if (is_jf)
+                trimpod_jellyfin_download_track(path);
+            else
+                trimpod_navidrome_download_track(path);
+            break;
     }
     return false;
 }
@@ -887,7 +993,12 @@ bool trimpod_music_context_tracks(const char *title, char **paths, int count)
 {
     if (count <= 0)
         return false;
-    switch (music_ctx_menu(title, true))
+    bool is_nav = trimpod_source_is_navidrome() &&
+                  trimpod_navidrome_is_track_path(paths[0]);
+    bool is_jf  = trimpod_source_is_jellyfin() &&
+                  trimpod_jellyfin_is_track_path(paths[0]);
+    bool can_dl = is_nav || is_jf;
+    switch (music_ctx_menu(title, true, can_dl))
     {
         case MUSIC_CTX_PLAY:
             return queue_add_tracks(paths, count, PLAYLIST_REPLACE, false);
@@ -901,6 +1012,12 @@ bool trimpod_music_context_tracks(const char *title, char **paths, int count)
             break;
         case MUSIC_CTX_ADD_PL:
             trimpod_playlists_pick_tracks(paths, count);
+            break;
+        case MUSIC_CTX_DOWNLOAD:
+            if (is_jf)
+                trimpod_jellyfin_download_tracks(paths, count);
+            else
+                trimpod_navidrome_download_tracks(paths, count);
             break;
     }
     return false;

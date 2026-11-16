@@ -882,8 +882,9 @@ rhhconf () {
     # Order matters: projectM core -> its eval lib -> GLES -> stdc++ (left-to-right).
     # -lstdc++fs: GCC 8.3's std::filesystem (used by projectM's FileScanner)
     # lives in a separate static library.
+    rsffi="$rootdir/target/aarch64-unknown-linux-gnu/release/libtrimpod_ffi.a"
     pmlibs="$rootdir/lib/projectm/lib/libprojectM-4.a $rootdir/lib/projectm/lib/libprojectM_eval.a -lGLESv2 -lEGL -lstdc++ -lstdc++fs"
-    LDOPTS="-lm -ldl -L/usr/lib -lSDL2 -lpthread $pmlibs"
+    LDOPTS="$rsffi -lm -ldl -lrt -L/usr/lib -lSDL2 -lpthread $pmlibs"
 
     rbdir="/tmp/trimpod"
     bindir="/tmp/trimpod"
@@ -2942,12 +2943,12 @@ fi
     modelname="retro-handheld"
     app_type="sdl-app"
     target="RETRO_HANDHELD"
-    memory=64
+    memory=96
     uname=`uname`
     extradefines="$extradefines -I$rootdir/lib/projectm/include"
     simcc "sdl-app"
     rhhconf
-    LDOPTS="$LDOPTS -lasound" # codec mixer volume control (trimpod-alsa.c)
+    LDOPTS="$LDOPTS -lasound -lssl -lcrypto" # codec mixer + AutoEQ HTTPS
     tool="cp "
     boottool="cp "
     bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"

@@ -7,4 +7,4 @@ export BL_TYPE="TYPE2"
 export SYSFS_BL_BRIGHTNESS="/sys/class/backlight/backlight/brightness"
 export SYSFS_BL_POWER="/sys/class/backlight/backlight/bl_power"
 # Zoom value
-ZOOMVAL="2"
+ZOOMVAL="0.625"

@@ -60,7 +60,10 @@
 #include "trimpod_transition.h"   /* slide on folder descend/ascend */
 #include "trimpod_playlists.h"    /* Hold-A = add highlighted file/folder to a playlist */
 #include "trimpod_library.h"      /* Shuffle All's track set */
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "trimpod_video.h"
+#include "trimpod_svg.h"
 
 #define PICKER_ROOT     "/mnt/SDCARD"   /* pickers open here, walk up to / */
 #define MAX_FOLDERS     24
@@ -96,6 +99,8 @@ struct folder_category
     int  n_folders;
 
     struct browse_pos pos;
+    bool active_in_dir;         /* true when WPS was entered from inside folders[active_idx] */
+    int  active_idx;
 };
 
 /* Music keeps the original "folders.txt" name so existing setups are preserved.
@@ -104,7 +109,7 @@ struct folder_category
 static struct folder_category cat_music = {
     .store_file = "folders.txt", .default_path = "/mnt/SDCARD/Music",
     .farm_path = "/tmp/trimpod_music",
-    .title_lang = LANG_TRIMPOD_FOLDERS, .browse_lang = LANG_TRIMPOD_MUSIC,
+    .title_lang = LANG_TRIMPOD_FOLDERS, .browse_lang = LANG_TRIMPOD_FILES,
 };
 static struct folder_category cat_podcast = {
     .store_file = "podcasts.txt", .default_path = "/mnt/SDCARD/Podcasts",
@@ -122,7 +127,7 @@ static struct folder_category cat_movies = {
     .store_file = "movies.txt", .default_path = "/mnt/SDCARD/Movies",
     .farm_path = "/tmp/trimpod_movies",
     .title_lang = LANG_TRIMPOD_MOVIE_FOLDERS,
-    .browse_lang = LANG_TRIMPOD_MOVIES, .video = true,
+    .browse_lang = LANG_TRIMPOD_VIDEOS, .video = true,
 };
 static struct folder_category cat_television = {
     .store_file = "television.txt", .default_path = "/mnt/SDCARD/Television",
@@ -161,10 +166,18 @@ static void folders_load(struct folder_category *cat)
     int fd = open(path, O_RDONLY);
     if (fd < 0)
     {
-        /* first run (no file yet): seed with the default folder.  The user may
-         * later remove it -- once the file exists we honour it verbatim. */
+        /* first run (no file yet): seed with the default folder (plus NextUI's
+         * /mnt/SDCARD/Media/Music for Music, where /mnt/SDCARD/Media/Music/navidrome
+         * also lives).  The user may later remove it -- once the file exists we
+         * honour it verbatim. */
         strlcpy(cat->folders[0], cat->default_path, FPATH_LEN);
         cat->n_folders = 1;
+        if (cat == &cat_music && cat->n_folders < MAX_FOLDERS)
+            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media/Music", FPATH_LEN);
+        else if (cat == &cat_movies && cat->n_folders < MAX_FOLDERS)
+            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media/Videos", FPATH_LEN);
+        else if (cat == &cat_television && cat->n_folders < MAX_FOLDERS)
+            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media/Videos/jellyfin/Shows", FPATH_LEN);
         return;
     }
     static char rbuf[LOAD_BUFSZ];
@@ -274,6 +287,7 @@ struct picker_page
     struct gui_synclist lists;
     char   curdir[FPATH_LEN];
     char   root[FPATH_LEN];
+    char   title_buf[FPATH_LEN];
     /* folder-picker mode (out!=NULL): Hold A picks a folder into out[] */
     char  *out;
     size_t out_len;
@@ -286,6 +300,35 @@ struct picker_page
     struct browse_pos *pos;        /* music mode: where the position persists */
     struct tree_context *mctx;     /* music mode: the stock browse engine state */
 };
+
+static const char *dir_basename_str(const char *path, char *out, size_t out_len)
+{
+    char tmp[FPATH_LEN];
+    strlcpy(tmp, path, sizeof(tmp));
+    size_t n = strlen(tmp);
+    while (n > 1 && tmp[n - 1] == '/')
+        tmp[--n] = '\0';
+    if (strcmp(tmp, "/") == 0)
+    {
+        strlcpy(out, "/", out_len);
+        return out;
+    }
+    const char *leaf = NULL;
+    path_basename(tmp, &leaf);
+    strlcpy(out, (leaf && *leaf) ? leaf : tmp, out_len);
+    return out;
+}
+
+static void picker_update_title(struct picker_page *p)
+{
+    const char *start_dir = dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/";
+    if (!p->music && strcmp(p->curdir, start_dir) == 0)
+        strlcpy(p->title_buf, str(LANG_TRIMPOD_ADD_DIRECTORY), sizeof(p->title_buf));
+    else
+        dir_basename_str(p->curdir, p->title_buf, sizeof(p->title_buf));
+    gui_synclist_set_title(&p->lists, p->title_buf,
+                           p->music ? Icon_Audio : Icon_file_view_menu);
+}
 
 /* ---- mode-aware list accessors --------------------------------------------
  * Music mode is backed by the stock tree_context (one browse + playlist engine,
@@ -325,6 +368,7 @@ static void music_load(struct picker_page *p)
     strlcpy(c->currdir, p->curdir, sizeof(c->currdir));
     c->selected_item = 0;
     ft_load(c, NULL);
+    picker_update_title(p);
     gui_synclist_set_nb_items(&p->lists, c->filesindir);
 
     int sel = 0;
@@ -416,6 +460,7 @@ static void pick_load(struct picker_page *p)
     qsort(pick_off, nfolders, sizeof pick_off[0], pick_off_cmp);
     qsort(pick_off + nfolders, pick_count - nfolders, sizeof pick_off[0],
           pick_off_cmp);
+    picker_update_title(p);
     gui_synclist_set_nb_items(&p->lists, pick_count);
 
     /* Default to the top, unless an ascend asked us to re-highlight the folder
@@ -455,6 +500,22 @@ static const char *pick_get_name(int sel, void *data, char *buf, size_t buf_len)
 {
     (void)buf; (void)buf_len;
     return item_name((struct picker_page *)data, sel);
+}
+
+static const struct trimpod_svg_icon *pick_get_svg_icon(int sel, void *data)
+{
+    struct picker_page *p = (struct picker_page *)data;
+    if (sel < 0 || sel >= item_count(p))
+        return NULL;
+    if (!p->music)
+        return trimpod_svg_tag("folder");
+    return trimpod_svg_for_path(item_name(p, sel), item_isdir(p, sel));
+}
+
+static bool pick_get_chevron(int sel, void *data)
+{
+    struct picker_page *p = (struct picker_page *)data;
+    return sel >= 0 && sel < item_count(p);
 }
 
 static const char *picker_legend(struct trimpod_page *self)
@@ -611,7 +672,8 @@ static bool folder_pick(char *out, size_t out_len)
             sizeof(p.curdir));
 
     gui_synclist_init(&p.lists, pick_get_name, &p, false, 1, NULL);
-    gui_synclist_set_title(&p.lists, str(LANG_TRIMPOD_ADD_FOLDER), Icon_file_view_menu);
+    gui_synclist_set_svg_icon_callback(&p.lists, pick_get_svg_icon);
+    gui_synclist_set_chevron_callback(&p.lists, pick_get_chevron);
     pick_load(&p);
 
     push_current_activity(ACTIVITY_FILEBROWSER);
@@ -621,31 +683,57 @@ static bool folder_pick(char *out, size_t out_len)
     return p.picked;
 }
 
-/* ---- Settings -> "<Name> Folders" (manage list) ----------------------- */
+/* ---- Files hub & Settings -> "<Name> Folders" ------------------------- */
 
-static const char *mgmt_get_name(int sel, void *data, char *buf, size_t buf_len)
-{
-    struct folder_category *cat = data;
-    if (sel == cat->n_folders)
-        return str(LANG_TRIMPOD_ADD_FOLDER_ROW);
-    snprintf(buf, buf_len, "%s", cat->folders[sel]);
-    return buf;
-}
+static bool browse_run(const char *root, const char *start, int title_lang,
+                       struct browse_pos *pos, bool show_empty, bool video,
+                       int *result);
 
-/* The folders list, derived from trimpod_page.  The run loop owns the loop,
- * header and key whitelist; this page describes the list and what A/B do.
- * A on "+ Add Folder" opens the picker; A on a folder row confirms removal;
- * B leaves. */
 struct folders_page
 {
     struct trimpod_page base;
     struct gui_synclist lists;
     struct folder_category *cat;
+    bool browse_mode;           /* true = Files/Videos hub (#694); false = Settings */
+    int  title_lang;
+    int  result;
 };
+
+static const char *mgmt_get_name(int sel, void *data, char *buf, size_t buf_len)
+{
+    struct folders_page *p = (struct folders_page *)data;
+    struct folder_category *cat = p->cat;
+    if (sel == cat->n_folders)
+        return str(LANG_TRIMPOD_ADD_DIRECTORY);
+    if (p->browse_mode)
+        return dir_basename_str(cat->folders[sel], buf, buf_len);
+    snprintf(buf, buf_len, "%s", cat->folders[sel]);
+    return buf;
+}
+
+static const struct trimpod_svg_icon *mgmt_get_svg_icon(int sel, void *data)
+{
+    struct folders_page *p = (struct folders_page *)data;
+    struct folder_category *cat = p->cat;
+    if (sel < 0 || sel > cat->n_folders)
+        return NULL;
+    if (sel == cat->n_folders)
+        return trimpod_svg_tag("add_dir");
+    return trimpod_svg_tag("folder");
+}
+
+static bool mgmt_get_chevron(int sel, void *data)
+{
+    struct folders_page *p = (struct folders_page *)data;
+    struct folder_category *cat = p->cat;
+    return sel >= 0 && sel <= cat->n_folders;
+}
 
 static void folders_page_draw(struct trimpod_page *self)
 {
     struct folders_page *p = (struct folders_page *)self;
+    gui_synclist_set_title(&p->lists, (char *)str(p->title_lang),
+                           p->browse_mode ? Icon_Audio : Icon_file_view_menu);
     gui_synclist_draw(&p->lists);
 }
 
@@ -665,11 +753,62 @@ static enum trimpod_page_result folders_page_on_action(struct trimpod_page *self
     int sel = gui_synclist_get_sel_pos(&p->lists);
 
     if (action == ACTION_STD_CANCEL)            /* B: leave */
+    {
+        if (p->browse_mode)
+            trimpod_transition_arm_back();
         return TRIMPOD_PAGE_DONE;
+    }
+
+    if (action == ACTION_STD_CONTEXT && p->browse_mode &&
+        sel >= 0 && sel < cat->n_folders)
+    {
+        const char *dir = cat->folders[sel];
+        if (!cat->video && dir_exists(dir))
+        {
+            char name[FPATH_LEN];
+            dir_basename_str(dir, name, sizeof(name));
+            static const char *const hub_opts[] = {
+                ID2P(LANG_PLAY),
+                ID2P(LANG_TRIMPOD_PLAY_SHUFFLED),
+                ID2P(LANG_TRIMPOD_ADD_TO_PLAYLIST),
+                ID2P(LANG_TRIMPOD_REMOVE_DIRECTORY),
+            };
+            int act = trimpod_context_menu(name, hub_opts, 4);
+            if (act == 0 || act == 1)
+            {
+                if (trimpod_queue_add(dir, ATTR_DIRECTORY, PLAYLIST_REPLACE,
+                                      act == 1))
+                {
+                    p->result = GO_TO_WPS;
+                    return TRIMPOD_PAGE_DONE;
+                }
+            }
+            else if (act == 2)
+                trimpod_playlists_pick(dir, ATTR_DIRECTORY);
+            else if (act == 3)
+            {
+                if (trimpod_confirm(str(LANG_TRIMPOD_REMOVE_FOLDER_Q), dir))
+                {
+                    folders_remove(cat, sel);
+                    gui_synclist_set_nb_items(&p->lists, cat->n_folders + 1);
+                    if (sel > cat->n_folders)
+                        gui_synclist_select_item(&p->lists, cat->n_folders);
+                }
+            }
+        }
+        else if (trimpod_confirm(str(LANG_TRIMPOD_REMOVE_FOLDER_Q), dir))
+        {
+            folders_remove(cat, sel);
+            gui_synclist_set_nb_items(&p->lists, cat->n_folders + 1);
+            if (sel > cat->n_folders)
+                gui_synclist_select_item(&p->lists, cat->n_folders);
+        }
+        return TRIMPOD_PAGE_STAY;
+    }
 
     if (action == ACTION_STD_OK)                /* A */
     {
-        if (sel == cat->n_folders)              /* "+ Add Folder" */
+        if (sel == cat->n_folders)              /* "Add directory" */
         {
             char picked[FPATH_LEN];
             if (folder_pick(picked, sizeof(picked)))
@@ -677,10 +816,35 @@ static enum trimpod_page_result folders_page_on_action(struct trimpod_page *self
                 if (!folders_add(cat, picked))
                     splash(HZ, ID2P(LANG_TRIMPOD_FOLDER_ADD_FAILED));
                 gui_synclist_set_nb_items(&p->lists, cat->n_folders + 1);
+                if (cat->n_folders > 0)
+                    gui_synclist_select_item(&p->lists, cat->n_folders - 1);
             }
         }
         else if (sel >= 0 && sel < cat->n_folders)   /* a folder row */
         {
+            if (p->browse_mode)
+            {
+                const char *dir = cat->folders[sel];
+                if (strcmp(dir, cat->default_path) == 0 && !dir_exists(dir))
+                    mkdir(dir);
+                if (!dir_exists(dir))
+                {
+                    splash(HZ, ID2P(LANG_FILE_NOT_FOUND));
+                    folders_page_draw(&p->base);
+                    return TRIMPOD_PAGE_STAY;
+                }
+                int r = GO_TO_ROOT;
+                browse_run(dir, dir, cat->browse_lang, &cat->pos, true,
+                           cat->video, &r);
+                if (r == GO_TO_WPS)
+                {
+                    cat->active_in_dir = true;
+                    cat->active_idx = sel;
+                    p->result = GO_TO_WPS;
+                    return TRIMPOD_PAGE_DONE;
+                }
+                return TRIMPOD_PAGE_STAY;
+            }
             if (trimpod_confirm(str(LANG_TRIMPOD_REMOVE_FOLDER_Q), cat->folders[sel]))
             {
                 folders_remove(cat, sel);
@@ -701,8 +865,9 @@ static const struct trimpod_page_vtable folders_vtable =
     .on_action = folders_page_on_action,
 };
 
-/* only A (add/remove) and B (back) act; list scrolling is consumed in poll */
-static const int folders_allowed[] = { ACTION_STD_OK, ACTION_STD_CANCEL, -1 };
+/* A (open/add/remove), B (back), Hold-A (context menu on Files hub) */
+static const int folders_allowed[] =
+    { ACTION_STD_OK, ACTION_STD_CANCEL, ACTION_STD_CONTEXT, -1 };
 
 static int folders_settings(struct folder_category *cat)
 {
@@ -713,9 +878,14 @@ static int folders_settings(struct folder_category *cat)
         .base = { .vt = &folders_vtable, .context = CONTEXT_LIST,
                   .allowed = folders_allowed },
         .cat = cat,
+        .browse_mode = false,
+        .title_lang = cat->title_lang,
+        .result = 0,
     };
-    gui_synclist_init(&p.lists, mgmt_get_name, cat, false, 1, NULL);
-    gui_synclist_set_title(&p.lists, (char *)str(cat->title_lang),
+    gui_synclist_init(&p.lists, mgmt_get_name, &p, false, 1, NULL);
+    gui_synclist_set_svg_icon_callback(&p.lists, mgmt_get_svg_icon);
+    gui_synclist_set_chevron_callback(&p.lists, mgmt_get_chevron);
+    gui_synclist_set_title(&p.lists, (char *)str(p.title_lang),
                            Icon_file_view_menu);
     gui_synclist_set_nb_items(&p.lists, cat->n_folders + 1);
     gui_synclist_select_item(&p.lists, 0);
@@ -849,7 +1019,9 @@ static bool browse_run(const char *root, const char *start, int title_lang,
         strlcpy(p.curdir, start, sizeof(p.curdir));
 
     gui_synclist_init(&p.lists, pick_get_name, &p, false, 1, NULL);
-    gui_synclist_set_title(&p.lists, (char *)str(title_lang), Icon_Audio);
+    gui_synclist_set_svg_icon_callback(&p.lists, pick_get_svg_icon);
+    gui_synclist_set_chevron_callback(&p.lists, pick_get_chevron);
+    (void)title_lang;
     music_load(&p);
 
     /* If a restored folder turned up empty (its files were since removed),
@@ -886,19 +1058,52 @@ static int folder_browse(struct folder_category *cat)
 {
     folders_load(cat);
 
-    const char *root = folder_resolve_root(cat);
-    int r;
-    if (root && browse_run(root, root, cat->browse_lang, &cat->pos, false,
-                           cat->video, &r))
-        return r;
+    int start_sel = 0;
+    if (cat->active_in_dir)
+    {
+        int idx = cat->active_idx;
+        cat->active_in_dir = false;
+        if (idx >= 0 && idx < cat->n_folders && dir_exists(cat->folders[idx]))
+        {
+            start_sel = idx;
+            int r = GO_TO_ROOT;
+            browse_run(cat->folders[idx], cat->folders[idx], cat->browse_lang,
+                       &cat->pos, true, cat->video, &r);
+            if (r == GO_TO_WPS)
+            {
+                cat->active_in_dir = true;
+                cat->active_idx = idx;
+                return GO_TO_WPS;
+            }
+            if (trimpod_home_pending)
+                return GO_TO_ROOT;
+        }
+    }
 
-    /* No usable source folder yet: instead of a dead-end "(empty)", drop the user
-     * into THIS category's folder list (the default folder + "+ Add Folder") so
-     * they can set it up (most won't know to visit Settings -> Audio Folders).
-     * Called directly here, so backing out of the list returns to the main menu
-     * -- not the Settings -> Audio Folders menu. */
-    folders_settings(cat);
-    return GO_TO_ROOT;
+    struct folders_page p =
+    {
+        .base = { .vt = &folders_vtable, .context = CONTEXT_LIST,
+                  .allowed = folders_allowed, .no_arm_back = true,
+                  .enter_honor_back = true },
+        .cat = cat,
+        .browse_mode = true,
+        .title_lang = cat->browse_lang,
+        .result = GO_TO_ROOT,
+    };
+    gui_synclist_init(&p.lists, mgmt_get_name, &p, false, 1, NULL);
+    gui_synclist_set_svg_icon_callback(&p.lists, mgmt_get_svg_icon);
+    gui_synclist_set_chevron_callback(&p.lists, mgmt_get_chevron);
+    gui_synclist_set_title(&p.lists, (char *)str(p.title_lang), Icon_Audio);
+    gui_synclist_set_nb_items(&p.lists, cat->n_folders + 1);
+    if (start_sel < 0 || start_sel > cat->n_folders)
+        start_sel = 0;
+    gui_synclist_select_item(&p.lists, start_sel);
+
+    push_current_activity(ACTIVITY_FILEBROWSER);
+    trimpod_page_run(&p.base);
+    pop_current_activity();
+
+    return p.base.home ? GO_TO_ROOT : p.result;
 }
 
 /* ---- public entry points (one thin wrapper per category) -------------- */
@@ -909,11 +1114,31 @@ int trimpod_audiobook_settings(void) { return folders_settings(&cat_audiobook); 
 int trimpod_movies_settings(void)    { return folders_settings(&cat_movies); }
 int trimpod_television_settings(void) { return folders_settings(&cat_television); }
 
-int trimpod_music_browse(void *param)     { (void)param; return folder_browse(&cat_music); }
+int trimpod_music_browse(void *param)
+{
+    (void)param;
+    if (trimpod_source_is_navidrome())
+        return trimpod_navidrome_files_browse();
+    if (trimpod_source_is_jellyfin())
+        return trimpod_jellyfin_files_browse();
+    return folder_browse(&cat_music);
+}
 int trimpod_podcast_browse(void *param)   { (void)param; return folder_browse(&cat_podcast); }
 int trimpod_audiobook_browse(void *param) { (void)param; return folder_browse(&cat_audiobook); }
-int trimpod_movies_browse(void *param)    { (void)param; return folder_browse(&cat_movies); }
-int trimpod_television_browse(void *param) { (void)param; return folder_browse(&cat_television); }
+int trimpod_movies_browse(void *param)
+{
+    (void)param;
+    if (trimpod_source_is_jellyfin())
+        return trimpod_jellyfin_videos_browse(false);
+    return folder_browse(&cat_movies);
+}
+int trimpod_television_browse(void *param)
+{
+    (void)param;
+    if (trimpod_source_is_jellyfin())
+        return trimpod_jellyfin_videos_browse(true);
+    return folder_browse(&cat_television);
+}
 
 /* root "Browse": the whole filesystem in the same browser as the categories.
  * Every entry opens at the card -- no remembered position, which could be the
@@ -934,15 +1159,37 @@ int trimpod_files_browse(void *param)
 int trimpod_shuffle_all(void *param)
 {
     (void)param;
-    trimpod_library_refresh_if_stale();
-    folders_load(&cat_music);
-
-    if (!folder_resolve_root(&cat_music))
+    if (trimpod_source_is_navidrome())
     {
-        /* No music configured yet: drop into the Music folder setup, exactly as
-         * browsing an empty Music entry does, rather than a dead-end splash. */
-        folders_settings(&cat_music);
-        return GO_TO_ROOT;
+        if (!trimpod_navidrome_has_tracks())
+        {
+            trimpod_navidrome_settings_page(false);
+            return GO_TO_ROOT;
+        }
+    }
+    else if (trimpod_source_is_jellyfin())
+    {
+        if (!trimpod_jellyfin_has_tracks())
+        {
+            if (!trimpod_jellyfin_has_media())
+                trimpod_jellyfin_settings_page(false);
+            else
+                splash(HZ, ID2P(LANG_TRIMPOD_NO_MUSIC));
+            return GO_TO_ROOT;
+        }
+    }
+    else
+    {
+        trimpod_library_refresh_if_stale();
+        folders_load(&cat_music);
+
+        if (!folder_resolve_root(&cat_music))
+        {
+            /* No music configured yet: drop into the Music folder setup, exactly as
+             * browsing an empty Music entry does, rather than a dead-end splash. */
+            folders_settings(&cat_music);
+            return GO_TO_ROOT;
+        }
     }
 
     struct trimpod_queue q;

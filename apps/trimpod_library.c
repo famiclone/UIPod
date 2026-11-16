@@ -41,6 +41,8 @@
 #include "kernel.h"    /* yield */
 #include "backlight.h" /* backlight_on */
 #include "trimpod_folders.h"
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "trimpod_ui.h" /* trimpod_fullscreen_message */
 
 #define SCHEMA_VERSION 4
@@ -497,7 +499,7 @@ static void sync_roots(void)
  * there took ~15 s.  The index is worked on in tmpfs instead and copied back
  * to the card in one sequential pass after a reconcile that changed it. */
 #define DB_SD    ROCKBOX_DIR "/library.db"
-#define DB_RAM   "/tmp/trimpod-library.db"
+#define DB_RAM   "/tmp/uipod-library.db"
 #define COPY_BUF (256 * 1024)
 
 static bool db_in_ram;
@@ -588,10 +590,37 @@ void trimpod_library_mark_stale(void)
 
 void trimpod_library_refresh_if_stale(void)
 {
+    if (trimpod_source_is_navidrome() || trimpod_source_is_jellyfin()) return;
     /* A computer still attached may be mid-copy: wait for the unplug. */
     if (!library_stale || retrohh_usb_host_connected()) return;
     library_stale = false;
     trimpod_library_reconcile(false);
+}
+
+enum { QDB_LOCAL = 0, QDB_NAVIDROME = 1, QDB_JELLYFIN = 2 };
+
+static sqlite3 *active_query_db(int *lock_kind)
+{
+    if (trimpod_source_is_navidrome())
+    {
+        *lock_kind = QDB_NAVIDROME;
+        return trimpod_navidrome_db_lock();
+    }
+    if (trimpod_source_is_jellyfin())
+    {
+        *lock_kind = QDB_JELLYFIN;
+        return trimpod_jellyfin_db_lock();
+    }
+    *lock_kind = QDB_LOCAL;
+    return db;
+}
+
+static void release_query_db(int lock_kind)
+{
+    if (lock_kind == QDB_NAVIDROME)
+        trimpod_navidrome_db_unlock();
+    else if (lock_kind == QDB_JELLYFIN)
+        trimpod_jellyfin_db_unlock();
 }
 
 /* ---- Shuffle All's track set ------------------------------------------ */
@@ -599,15 +628,21 @@ void trimpod_library_refresh_if_stale(void)
 void trimpod_library_music_paths(bool (*cb)(const char *path, void *ctx),
                                  void *ctx)
 {
-    if (!db || !cb) return;
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
     /* Title order is what Shuffle Off restores.  The LIMIT is the queue cap, so
      * an over-cap library yields a random sample, not its alphabetical head. */
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(db,
+    if (sqlite3_prepare_v2(qdb,
             "SELECT path FROM (SELECT path, title FROM tracks WHERE category=?"
             " ORDER BY RANDOM() LIMIT ?) ORDER BY title, path;", -1, &st, NULL)
             != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
         return;
+    }
     sqlite3_bind_int(st, 1, TP_CAT_MUSIC);
     sqlite3_bind_int(st, 2, TRIMPOD_MAX_FILES_IN_PLAYLIST);
     while (sqlite3_step(st) == SQLITE_ROW)
@@ -617,27 +652,38 @@ void trimpod_library_music_paths(bool (*cb)(const char *path, void *ctx),
             break;
     }
     sqlite3_finalize(st);
+    release_query_db(lock_kind);
 }
 
 void trimpod_library_artists(int category,
         void (*cb)(const char *, int, void *), void *ctx)
 {
-    if (!db || !cb) return;
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(db,
+    if (sqlite3_prepare_v2(qdb,
             "SELECT browse_artist, COUNT(*) FROM tracks WHERE category=?"
             " GROUP BY sort_artist ORDER BY sort_artist;", -1, &st, NULL) != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
         return;
+    }
     sqlite3_bind_int(st, 1, category);
     while (sqlite3_step(st) == SQLITE_ROW)
         cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
     sqlite3_finalize(st);
+    release_query_db(lock_kind);
 }
 
 void trimpod_library_albums(int category, const char *ba,
         void (*cb)(const char *, int, void *), void *ctx)
 {
-    if (!db || !cb) return;
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
     /* One artist -> chronological (year, then title); ba==NULL -> every album in
      * the library, alphabetical (the flat "Albums" facet). */
     char sql[160];
@@ -647,19 +693,26 @@ void trimpod_library_albums(int category, const char *ba,
         ba ? " AND browse_artist=?" : "",
         ba ? "MAX(year), album" : "album");
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK)
+    if (sqlite3_prepare_v2(qdb, sql, -1, &st, NULL) != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
         return;
+    }
     sqlite3_bind_int(st, 1, category);
     if (ba) sqlite3_bind_text(st, 2, ba, -1, SQLITE_STATIC);
     while (sqlite3_step(st) == SQLITE_ROW)
         cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
     sqlite3_finalize(st);
+    release_query_db(lock_kind);
 }
 
 void trimpod_library_tracks(int category, const char *ba, const char *album,
         void (*cb)(const char *title, const char *path, void *ctx), void *ctx)
 {
-    if (!db || !cb) return;
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
     /* Deterministic order: the browse queues rows as listed, so a row index is
      * its playlist index.  album==NULL -> the artist's whole library; ba==NULL
      * too -> the "Songs" facet. */
@@ -673,8 +726,11 @@ void trimpod_library_tracks(int category, const char *ba, const char *album,
         album ? " AND album=?" : "",
         order);
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK)
+    if (sqlite3_prepare_v2(qdb, sql, -1, &st, NULL) != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
         return;
+    }
     int bi = 1;
     sqlite3_bind_int (st, bi++, category);
     if (ba)    sqlite3_bind_text(st, bi++, ba,    -1, SQLITE_STATIC);
@@ -683,6 +739,57 @@ void trimpod_library_tracks(int category, const char *ba, const char *album,
         cb((const char *)sqlite3_column_text(st, 0),
            (const char *)sqlite3_column_text(st, 1), ctx);
     sqlite3_finalize(st);
+    release_query_db(lock_kind);
+}
+
+void trimpod_library_genres(int category,
+        void (*cb)(const char *genre, int track_count, void *ctx), void *ctx)
+{
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(qdb,
+            "SELECT COALESCE(genre, ''), COUNT(*) FROM tracks WHERE category=?"
+            " GROUP BY COALESCE(genre, '')"
+            " ORDER BY CASE WHEN genre IS NULL OR genre='' THEN 1 ELSE 0 END,"
+            " genre COLLATE NOCASE;", -1, &st, NULL) != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
+        return;
+    }
+    sqlite3_bind_int(st, 1, category);
+    while (sqlite3_step(st) == SQLITE_ROW)
+        cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
+    sqlite3_finalize(st);
+    release_query_db(lock_kind);
+}
+
+void trimpod_library_genre_tracks(int category, const char *genre,
+        void (*cb)(const char *title, const char *path, void *ctx), void *ctx)
+{
+    if (!cb) return;
+    int lock_kind = QDB_LOCAL;
+    sqlite3 *qdb = active_query_db(&lock_kind);
+    if (!qdb) { release_query_db(lock_kind); return; }
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(qdb,
+            "SELECT title, path FROM tracks"
+            " WHERE category=? AND COALESCE(genre, '')=?"
+            " ORDER BY album COLLATE NOCASE, discnum, tracknum, title COLLATE NOCASE, path;",
+            -1, &st, NULL) != SQLITE_OK)
+    {
+        release_query_db(lock_kind);
+        return;
+    }
+    sqlite3_bind_int (st, 1, category);
+    sqlite3_bind_text(st, 2, genre ? genre : "", -1, SQLITE_STATIC);
+    while (sqlite3_step(st) == SQLITE_ROW)
+        cb((const char *)sqlite3_column_text(st, 0),
+           (const char *)sqlite3_column_text(st, 1), ctx);
+    sqlite3_finalize(st);
+    release_query_db(lock_kind);
 }
 
 /* ---- open / migrate / init ------------------------------------------- */

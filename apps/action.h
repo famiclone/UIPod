@@ -421,5 +421,6 @@ int get_action_statuscode(int *button);
 * from normal button events.
 */
 void action_wait_for_release(void);
+bool action_from_menu_key(void);
 
 #endif /* __ACTION_H__ */

@@ -1,0 +1,11 @@
+[package]
+name = "trimpod-jellyfin"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust Jellyfin client, video stream/transcode planner, audio & video cache/downloader, and C ABI for UIPod"
+
+[lib]
+name = "trimpod_jellyfin"
+crate-type = ["rlib"]
+
+[dependencies]

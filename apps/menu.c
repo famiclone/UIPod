@@ -42,6 +42,7 @@
 #include "option_select.h"
 #include "trimpod_transition.h"   /* page slide transitions (shared) */
 #include "trimpod_page.h"         /* trimpod_home_pending (hold-BACK -> root) */
+#include "trimpod_ui.h"           /* trimpod_toggle_str for Yes/No boolean switches */
 #include "trimpod_visualizer.h"   /* idle auto-start while music plays */
 #include "screens.h"
 #include "lang.h"
@@ -225,6 +226,13 @@ static const char *menu_get_indicator(int selected_item, void *data)
         const struct settings_list *s = find_setting(menu->variable);
         if (s)
         {
+            if (((s->flags & F_BOOL_SETTING) == F_BOOL_SETTING) &&
+                s->bool_setting &&
+                s->bool_setting->lang_yes == LANG_SET_BOOL_YES &&
+                s->bool_setting->lang_no == LANG_SET_BOOL_NO)
+            {
+                return trimpod_toggle_str(*(bool *)s->setting);
+            }
             int cur = ((s->flags & F_T_MASK) == F_T_BOOL)
                           ? (*(bool *)s->setting ? 1 : 0)
                           : *(int *)s->setting;
@@ -378,6 +386,9 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
             trimpod_transition_take_back() ? TRIMPOD_TRANS_BACK : TRIMPOD_TRANS_FORWARD,
             menu_transition_render, &lists);
 
+#ifdef HAVE_BACKLIGHT_BRIGHTNESS
+    int old_brightness = global_settings.brightness;
+#endif
     while (!done)
     {
         /* A nested screen (a submenu, or a page launched from a function item)
@@ -402,6 +413,13 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
 
         /* query audio status to see if it changed */
         redraw_lists = query_audio_status(&old_audio_status);
+#ifdef HAVE_BACKLIGHT_BRIGHTNESS
+        if (global_settings.brightness != old_brightness)
+        {
+            old_brightness = global_settings.brightness;
+            redraw_lists = true;
+        }
+#endif
 
         /* Idle auto-start of the visualizer while music plays (the WPS runs
          * its own inline hook -- it restores the skin around it). */
@@ -486,11 +504,19 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
         }
         else if (action == ACTION_STD_CONTEXT)
         {
-            /* Trimpod's root menu is fixed, so Hold-A has no context action there
-             * -- and the stock GO_TO_ROOTITEM_CONTEXT reorder screen is NOT wired
-             * into the dispatch, so returning it spins the dispatch loop (freeze).
-             * Only non-root setting rows have a context menu (reset). */
-            if (menu != &root_menu_ && !in_stringlist)
+            /* UIPod: on the Main Menu, pressing MENU jumps straight into
+             * Settings (Hold-A on the Main Menu remains a no-op).  On non-root
+             * setting menus, context opens the setting reset prompt. */
+            if (menu == &root_menu_)
+            {
+                if (action_from_menu_key())
+                {
+                    gui_synclist_scroll_stop(&lists);
+                    ret = GO_TO_MAINMENU;
+                    done = true;
+                }
+            }
+            else if (!in_stringlist)
             {
                 int type = (menu->flags&MENU_TYPE_MASK);
                 selected = get_menu_selection(gui_synclist_get_sel_pos(&lists),menu);
@@ -715,6 +741,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                 continue;
 
 
+            lists.title = init_title(menu, &lists.title_icon, buf, sizeof buf);
             gui_synclist_set_title(&lists, lists.title, lists.title_icon);
             if (menu_trans >= 0)
             {

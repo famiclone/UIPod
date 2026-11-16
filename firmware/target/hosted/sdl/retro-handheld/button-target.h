@@ -41,9 +41,10 @@
 /* Dedicated hardware volume rocker (sunxi-keyboard: KEY_VOLUMEUP/DOWN) */
 #define BUTTON_VOL_UP   0x00004000
 #define BUTTON_VOL_DOWN 0x00008000
+#define BUTTON_MENU     0x00010000
 #define BUTTON_VOL_MASK (BUTTON_VOL_UP | BUTTON_VOL_DOWN)
 
-#define BUTTON_MAIN 0xFFFF
+#define BUTTON_MAIN 0x1FFFF
 
 /* Software power-off */
 #define POWEROFF_BUTTON BUTTON_POWER

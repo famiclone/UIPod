@@ -66,6 +66,8 @@ typedef bool list_get_chevron(int selected_item, void * data);
  * When set, it takes the place of the disclosure chevron on that row.
  */
 typedef const char* list_get_indicator(int selected_item, void * data);
+struct trimpod_svg_icon;
+typedef const struct trimpod_svg_icon *list_get_svg_icon(int selected_item, void * data);
 /*
  * Text callback
  *  - selected_item : an integer that tells the number of the item to display
@@ -108,6 +110,7 @@ struct list_putlineinfo_t {
                              * precedence over show_chevron when set. */
     int indic_gutter;    /* Trimpod: px reserved on the right for the indicator;
                           * vp->width is already the name column. */
+    const struct trimpod_svg_icon *svg_icon; /* Trimpod: optional left SVG file-type icon */
 };
 
 typedef void list_draw_item(struct list_putlineinfo_t *list_info);
@@ -169,6 +172,7 @@ struct gui_synclist
     list_draw_item *callback_draw_item;
     list_get_chevron *callback_get_item_chevron;  /* Trimpod */
     list_get_indicator *callback_get_item_indicator;  /* Trimpod */
+    list_get_svg_icon *callback_get_item_svg_icon;  /* Trimpod */
 
     /* The data that will be passed to the callback function YOU implement */
     void * data;
@@ -200,6 +204,7 @@ extern void gui_synclist_init(
 extern void gui_synclist_set_nb_items(struct gui_synclist * lists, int nb_items);
 extern void gui_synclist_set_chevron_callback(struct gui_synclist * lists, list_get_chevron chevron_callback);
 extern void gui_synclist_set_indicator_callback(struct gui_synclist * lists, list_get_indicator indicator_callback);
+extern void gui_synclist_set_svg_icon_callback(struct gui_synclist * lists, list_get_svg_icon svg_icon_callback);
 extern void gui_synclist_set_viewport_defaults(struct viewport *vp, enum screen_type screen);
 #ifdef HAVE_LCD_COLOR
 extern void gui_synclist_set_color_callback(struct gui_synclist * lists, list_get_color color_callback);

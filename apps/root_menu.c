@@ -183,6 +183,15 @@ static int trimpod_settings_screen(void *param)
     return GO_TO_ROOT;
 }
 
+static int trimpod_extras_screen(void *param)
+{
+    (void)param;
+    int r = trimpod_extras_page();
+    if (r == GO_TO_WPS || r == GO_TO_PLAYLISTS_SCREEN)
+        return r;
+    return GO_TO_ROOT;
+}
+
 static const struct root_items items[] = {
     [GO_TO_FILEBROWSER] =   { trimpod_files_browse, NULL },
     [GO_TO_WPS] =           { wpsscrn, NULL },
@@ -195,9 +204,11 @@ static const struct root_items items[] = {
     [GO_TO_TRIMPOD_SHUFFLE] =   { trimpod_shuffle_all, NULL },
     [GO_TO_TRIMPOD_ARTISTS] =   { trimpod_library_browse, (void*)(intptr_t)TP_LIB_ARTISTS },
     [GO_TO_TRIMPOD_ALBUMS] =    { trimpod_library_browse, (void*)(intptr_t)TP_LIB_ALBUMS },
+    [GO_TO_TRIMPOD_GENRES] =    { trimpod_library_browse, (void*)(intptr_t)TP_LIB_GENRES },
     [GO_TO_TRIMPOD_SONGS] =     { trimpod_library_browse, (void*)(intptr_t)TP_LIB_SONGS },
     [GO_TO_TRIMPOD_MOVIES] =    { trimpod_movies_browse, NULL },
     [GO_TO_TRIMPOD_TELEVISION] = { trimpod_television_browse, NULL },
+    [GO_TO_TRIMPOD_EXTRAS] =    { trimpod_extras_screen, NULL },
 };
 #define NUM_ITEMS (int)(sizeof(items)/sizeof(*items))
 
@@ -205,47 +216,32 @@ static int item_callback(int action,
                          const struct menu_item_ex *this_item,
                          struct gui_synclist *this_list);
 
-/* Trimpod: cleanly quit the app (returns to NextUI). sys_poweroff() does not
- * power off the hardware on this hosted/SDL target -- it tears down SDL and
- * exit()s the process, identical to the existing button quit. */
-static int trimpod_exit(void)
-{
-    sys_poweroff();
-    return 0;
-}
-MENUITEM_FUNCTION(exit_item, 0, ID2P(LANG_TRIMPOD_EXIT),
-                        trimpod_exit, NULL, Icon_System_menu);
-
 MENUITEM_RETURNVALUE_CHEVRON(file_browser, ID2P(LANG_TRIMPOD_BROWSE), GO_TO_FILEBROWSER,
                         item_callback, Icon_file_view_menu);
-
-static char *get_wps_item_name(int selected_item, void * data,
-                               char *buffer, size_t buffer_len)
-{
-    (void)selected_item; (void)data; (void)buffer; (void)buffer_len;
-    if (audio_status())
-        return ID2P(LANG_NOW_PLAYING);
-    return ID2P(LANG_RESUME_PLAYBACK);
-}
-MENUITEM_RETURNVALUE_DYNTEXT(wps_item, GO_TO_WPS, item_callback, get_wps_item_name,
-                                NULL, NULL, Icon_Playback_menu);
+/* Now Playing on Main (#215): always shown, no chevron (Type=NotActive3/Active3). */
+MENUITEM_RETURNVALUE(wps_item, ID2P(LANG_NOW_PLAYING), GO_TO_WPS,
+                     item_callback, Icon_Playback_menu);
 MENUITEM_RETURNVALUE_CHEVRON(menu_, ID2P(LANG_SETTINGS), GO_TO_MAINMENU,
                         NULL, Icon_Submenu_Entered);
 MENUITEM_RETURNVALUE_CHEVRON(playlists, ID2P(LANG_PLAYLISTS), GO_TO_PLAYLISTS_SCREEN,
                      item_callback, Icon_Playlist);
-MENUITEM_RETURNVALUE_CHEVRON(music_item, ID2P(LANG_TRIMPOD_MUSIC), GO_TO_TRIMPOD_MUSIC,
+MENUITEM_RETURNVALUE_CHEVRON(music_item, ID2P(LANG_TRIMPOD_FILES), GO_TO_TRIMPOD_MUSIC,
                      item_callback, Icon_Audio);
+MENUITEM_RETURNVALUE_CHEVRON(extras_item, ID2P(LANG_TRIMPOD_EXTRAS), GO_TO_TRIMPOD_EXTRAS,
+                     item_callback, Icon_Submenu_Entered);
 MENUITEM_RETURNVALUE_CHEVRON(podcast_item, ID2P(LANG_TRIMPOD_PODCASTS), GO_TO_TRIMPOD_PODCASTS,
                      item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(audiobook_item, ID2P(LANG_TRIMPOD_AUDIOBOOKS), GO_TO_TRIMPOD_AUDIOBOOKS,
                      item_callback, Icon_Audio);
-MENUITEM_RETURNVALUE_CHEVRON(movies_item, ID2P(LANG_TRIMPOD_MOVIES), GO_TO_TRIMPOD_MOVIES,
+MENUITEM_RETURNVALUE_CHEVRON(movies_item, ID2P(LANG_TRIMPOD_VIDEOS), GO_TO_TRIMPOD_MOVIES,
                      item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(television_item, ID2P(LANG_TRIMPOD_TELEVISION), GO_TO_TRIMPOD_TELEVISION,
                      item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(artists_item, ID2P(LANG_TRIMPOD_ARTISTS), GO_TO_TRIMPOD_ARTISTS,
                      item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(albums_item, ID2P(LANG_TRIMPOD_ALBUMS), GO_TO_TRIMPOD_ALBUMS,
+                     item_callback, Icon_Audio);
+MENUITEM_RETURNVALUE_CHEVRON(genres_item, ID2P(LANG_TRIMPOD_GENRES), GO_TO_TRIMPOD_GENRES,
                      item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(songs_item, ID2P(LANG_TRIMPOD_SONGS), GO_TO_TRIMPOD_SONGS,
                      item_callback, Icon_Audio);
@@ -258,21 +254,21 @@ static struct menu_callback_with_desc root_menu_desc = {
         item_callback, ID2P(LANG_ROCKBOX_TITLE), Icon_Rockbox };
 
 static struct menu_table menu_table[] = {
-    /* Order here represents the default ordering (Trimpod layout) */
-    { "music", &music_item },
-    { "podcasts", &podcast_item },
-    { "audiobooks", &audiobook_item },
-    { "movies", &movies_item },
-    { "television", &television_item },
+    /* Order here matches ui.figcraft Main (#215) */
+    { "files", &music_item },
+    { "extras", &extras_item },
     { "artists", &artists_item },
     { "albums", &albums_item },
+    { "genres", &genres_item },
+    { "videos", &movies_item },
     { "songs", &songs_item },
     { "playlists", &playlists },
-    { "files", &file_browser },
-    { "settings", &menu_ },
-    { "exit", &exit_item },
+    { "podcasts", &podcast_item },
+    { "audiobooks", &audiobook_item },
+    { "television", &television_item },
+    { "browse", &file_browser },
     { "shuffle", &shuffle_item },
-    /* Trimpod: Resume Playback / Now Playing sits below Exit */
+    { "settings", &menu_ },
     { "wps", &wps_item },
 };
 #define MAX_MENU_ITEMS (sizeof(menu_table) / sizeof(struct menu_table))
@@ -376,10 +372,15 @@ static int item_callback(int action,
         case ACTION_TREE_STOP:
             return ACTION_REDRAW;
         case ACTION_REQUEST_MENUITEM:
-            /* user-toggleable entries (Settings -> Main Menu) */
+            /* user-toggleable entries (Settings -> Appearance -> Main Menu) */
             if (this_item == &music_item)
             {
                 if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_MUSIC))
+                    return ACTION_EXIT_MENUITEM;
+            }
+            else if (this_item == &extras_item)
+            {
+                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_EXTRAS))
                     return ACTION_EXIT_MENUITEM;
             }
             else if (this_item == &podcast_item)
@@ -412,6 +413,11 @@ static int item_callback(int action,
                 if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_ALBUMS))
                     return ACTION_EXIT_MENUITEM;
             }
+            else if (this_item == &genres_item)
+            {
+                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_GENRES))
+                    return ACTION_EXIT_MENUITEM;
+            }
             else if (this_item == &songs_item)
             {
                 if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_SONGS))
@@ -427,12 +433,9 @@ static int item_callback(int action,
                 if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_BROWSE))
                     return ACTION_EXIT_MENUITEM;
             }
-            else if (this_item == &wps_item)
+            else if (this_item == &shuffle_item)
             {
-                /* Now Playing / Resume Playback: shown only when there is
-                 * something to play or resume.  A finished playlist is
-                 * replayed from the playlist itself. */
-                if (!audio_status() && global_status.resume_index == -1)
+                if (!trimpod_mainmenu_is_enabled(TRIMPOD_MM_SHUFFLE))
                     return ACTION_EXIT_MENUITEM;
             }
         break;
@@ -440,12 +443,7 @@ static int item_callback(int action,
     return action;
 }
 
-/* Root menu: the stock root_menu_ (built from menu_table, with chevrons and the
- * dynamic Now Playing / Resume label) rendered by the canonical do_menu, which
- * returns the chosen item's GO_TO_* into the dispatch loop.  Visibility follows
- * the Main Menu toggles + the recent-bookmarks setting; Settings, Exit and Now
- * Playing are always present.  B is inert at the root (do_menu keeps root_menu_
- * open on cancel); the very first screen at launch renders with no slide. */
+/* Root menu: ui.figcraft Main (#215, "UIPod Mini") rendered by do_menu. */
 static int trimpod_root_run(int last)
 {
     /* Settled back at the root: any playlist-viewer ownership is stale now. */
@@ -455,19 +453,20 @@ static int trimpod_root_run(int last)
 #define ROOT_ADD(cond, itemp) \
     do { if (cond) root_menu__[n++] = (struct menu_item_ex *)(itemp); } while (0)
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_MUSIC),      &music_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_PODCASTS),   &podcast_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_AUDIOBOOKS), &audiobook_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_MOVIES),     &movies_item);
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_TELEVISION), &television_item);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_EXTRAS),     &extras_item);
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_ARTISTS),    &artists_item);
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_ALBUMS),     &albums_item);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_GENRES),     &genres_item);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_MOVIES),     &movies_item);
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_SONGS),      &songs_item);
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_PLAYLISTS),  &playlists);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_PODCASTS),   &podcast_item);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_AUDIOBOOKS), &audiobook_item);
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_TELEVISION), &television_item);
     ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_BROWSE),     &file_browser);
-    ROOT_ADD(true, &menu_);          /* Settings  */
-    ROOT_ADD(true, &exit_item);      /* Exit      */
-    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_SHUFFLE), &shuffle_item);
-    ROOT_ADD(true, &wps_item);       /* Now Playing / Resume Playback */
+    ROOT_ADD(trimpod_mainmenu_is_enabled(TRIMPOD_MM_SHUFFLE),    &shuffle_item);
+    ROOT_ADD(true, &menu_);          /* Settings    */
+    ROOT_ADD(true, &wps_item);       /* Now Playing */
 #undef ROOT_ADD
 
     root_menu_.flags = MENU_HAS_DESC | MT_MENU | MENU_ITEM_COUNT(n);
@@ -527,7 +526,8 @@ static inline int load_screen(int screen)
      * started playback and handed off to the WPS, backing out of the WPS must
      * return to the root menu -- NOT resolve "previous" back to here and
      * re-shuffle.  Pin its "previous" to the root. */
-    if (screen == GO_TO_TRIMPOD_SHUFFLE && ret_val == GO_TO_WPS)
+    if ((screen == GO_TO_TRIMPOD_SHUFFLE || screen == GO_TO_TRIMPOD_EXTRAS)
+        && ret_val == GO_TO_WPS)
         last_screen = GO_TO_ROOT;
 
     return ret_val;
@@ -549,6 +549,8 @@ void root_menu(void)
     int previous_browser = global_status.last_browser;
 
     push_current_activity(ACTIVITY_MAINMENU);
+    if (!trimpod_source_is_configured())
+        trimpod_source_boot_page();
     next_screen = root_menu_setup_screens();
 
     while (true)

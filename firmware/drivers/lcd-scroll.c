@@ -38,7 +38,7 @@ struct scroll_screen_info LCDFN(scroll_info) =
     .ticks        = 12,
     .delay        = HZ/2,
     .bidir_limit  = 50,
-    .step         = 6,
+    .step         = 19,
 };
 
 

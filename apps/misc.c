@@ -718,6 +718,23 @@ void adjust_volume_ex(int steps, enum volume_adjust_mode mode)
     setvol();
 }
 
+#ifdef HAVE_BACKLIGHT_BRIGHTNESS
+void adjust_brightness(int steps)
+{
+    int val = global_settings.brightness + steps;
+    if (val < MIN_BRIGHTNESS_SETTING)
+        val = MIN_BRIGHTNESS_SETTING;
+    if (val > MAX_BRIGHTNESS_SETTING)
+        val = MAX_BRIGHTNESS_SETTING;
+    if (val != global_settings.brightness)
+    {
+        global_settings.brightness = val;
+        backlight_set_brightness(val);
+        settings_save();
+    }
+}
+#endif
+
 char* strrsplt(char* str, int c)
 {
     char* s = strrchr(str, c);

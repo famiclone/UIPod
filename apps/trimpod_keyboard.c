@@ -1,22 +1,19 @@
 /***************************************************************************
- * Trimpod: a minimal on-screen keyboard, iPod aesthetic, ChicagoFLF.
+ * Trimpod: a minimal on-screen keyboard, iPod aesthetic, Geologica.
  *
- * A fixed grid -- numbers, A-Z, hyphen, then a row of wide special keys
- * (capslock / space / del / enter).  Capslock swaps the letter case in place.
- * Monochrome 1st-gen look: white field, black keys outlined, the highlighted
- * key inverted (black fill, white glyph).
+ * A fixed grid -- numbers, A-Z, hyphen (plus optional `sym` layer for URLs and
+ * passwords), then a row of wide special keys (capslock / [sym] / space / del /
+ * enter).  Capslock swaps the letter case in place.
  *
- * A trimpod_page like every other Trimpod screen: trimpod_page_run owns the
- * loop, the enter/exit slide transitions and the key whitelist; this page just
- * draws the full-screen grid and reacts to actions.
- *
- * Button map: D-pad moves the highlight, A engages the highlighted key
- * (letter/number/hyphen/space/caps/del/enter), Y backspaces, B always cancels.
+ * Button map: D-pad moves the highlight, A engages the highlighted key,
+ * Y backspaces, B cancels and restores the original string.
  * Returns 0 when enter is engaged, -1 on cancel.
  ****************************************************************************/
 #include "config.h"
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+#include "string-extra.h"
 #include "action.h"
 #include "screens.h"       /* screens[], SCREEN_MAIN */
 #include "lcd.h"           /* DRMODE_*, lcd_set_drawmode */
@@ -27,28 +24,67 @@
 #include "trimpod_page.h"
 #include "trimpod_keyboard.h"
 
-/* ChicagoFLF size that fits a 5-row grid + field on the 320x240 logical panel.
- * Loaded explicitly so the keyboard is ChicagoFLF regardless of the UI font. */
-#define KBD_FONT_PATH   FONT_DIR "/20-ChicagoFLF.fnt"
+/* Geologica size that fits a 5-row grid + field on the 1024x768 panel.
+ * Loaded explicitly so the keyboard fits cleanly regardless of the UI font. */
+#define KBD_FONT_PATH   FONT_DIR "/67-Geologica.fnt"
 
-/* Character rows (lowercase base; capslock upcases letters at draw/insert).
- * Row 4 is the special keys, handled separately. */
-static const char *const kbd_rows[4] =
+/* Character rows (lowercase base; capslock upcases letters at draw/insert). */
+static const char *const kbd_alpha_rows_plain[4] =
 {
     "1234567890",
     "abcdefghij",
     "klmnopqrst",
     "uvwxyz-",
 };
+
+static const char *const kbd_alpha_rows_url[4] =
+{
+    "1234567890",
+    "abcdefghij",
+    "klmnopqrst",
+    "uvwxyz-.:/",
+};
+
+static const char *const kbd_sym_rows[4] =
+{
+    "1234567890",
+    ":/.-_@?=&+",
+    "#!$%*~,;|\\",
+    "()[]{}<>'\"",
+};
+
 #define KBD_NROWS       5            /* 4 char rows + 1 special row */
 #define KBD_SPECIAL_ROW 4
-#define KBD_NSPECIAL    4            /* caps, space, del, enter */
 
-enum special { SP_CAPS = 0, SP_SPACE, SP_DEL, SP_ENTER };
-
-static int row_count(int row)
+struct kbd_page
 {
-    return (row == KBD_SPECIAL_ROW) ? KBD_NSPECIAL : (int)strlen(kbd_rows[row]);
+    struct trimpod_page base;
+    struct screen *s;
+    char  *buffer;
+    int    buflen;
+    int    row, col;
+    bool   caps;
+    bool   sym_mode;
+    bool   allow_symbols;
+    int    fid;
+    int    result;       /* 0 = accepted (enter), -1 = cancelled */
+};
+
+static int special_count(const struct kbd_page *p)
+{
+    return p->allow_symbols ? 5 : 4;
+}
+
+static const char *active_row_str(const struct kbd_page *p, int row)
+{
+    if (p->allow_symbols && p->sym_mode)
+        return kbd_sym_rows[row];
+    return p->allow_symbols ? kbd_alpha_rows_url[row] : kbd_alpha_rows_plain[row];
+}
+
+static int row_count(const struct kbd_page *p, int row)
+{
+    return (row == KBD_SPECIAL_ROW) ? special_count(p) : (int)strlen(active_row_str(p, row));
 }
 
 static char upcase(char c)
@@ -57,20 +93,31 @@ static char upcase(char c)
 }
 
 /* The label shown on a key; for a letter it reflects the current caps state. */
-static const char *key_label(int row, int col, bool caps, char *buf)
+static const char *key_label(const struct kbd_page *p, int row, int col, char *buf)
 {
     if (row == KBD_SPECIAL_ROW)
     {
+        if (p->allow_symbols)
+        {
+            switch (col)
+            {
+                case 0:  return p->caps ? "CAPS" : "caps";
+                case 1:  return p->sym_mode ? "abc" : "sym";
+                case 2:  return "space";
+                case 3:  return "del";
+                default: return "enter";
+            }
+        }
         switch (col)
         {
-            case SP_CAPS:  return caps ? "CAPS" : "caps";
-            case SP_SPACE: return "space";
-            case SP_DEL:   return "del";
-            default:       return "enter";
+            case 0:  return p->caps ? "CAPS" : "caps";
+            case 1:  return "space";
+            case 2:  return "del";
+            default: return "enter";
         }
     }
-    char c = kbd_rows[row][col];
-    buf[0] = caps ? upcase(c) : c;
+    char c = active_row_str(p, row)[col];
+    buf[0] = (!p->sym_mode && p->caps) ? upcase(c) : c;
     buf[1] = '\0';
     return buf;
 }
@@ -101,11 +148,11 @@ static const char *visible_tail(struct screen *s, const char *text, int maxw)
     return p;
 }
 
-static void draw(struct screen *s, struct viewport *vp,
-                 const char *text, int sel_row, int sel_col, bool caps)
+static void draw(const struct kbd_page *p, struct viewport *vp)
 {
+    struct screen *s = p->s;
     const int W = vp->width;
-    const int margin = 6, gap = 3;
+    const int margin = 19, gap = 10;
     const unsigned fg = global_settings.fg_color;   /* theme text colour */
     const unsigned bg = global_settings.bg_color;   /* theme LCD ("backlight") colour */
 
@@ -114,27 +161,29 @@ static void draw(struct screen *s, struct viewport *vp,
     s->clear_viewport();
 
     /* ---- input field ------------------------------------------------- */
-    const int fx = margin, fy = 6, fw = W - 2 * margin, fh = 28;
+    const int fx = margin, fy = 19, fw = W - 2 * margin, fh = 90;
     s->set_foreground(fg);
-    s->drawrect(fx, fy, fw, fh);
+    for (int b = 0; b < 3; b++)
+        s->drawrect(fx + b, fy + b, fw - 2 * b, fh - 2 * b);
 
     int tw, th;
-    const char *vis = visible_tail(s, text, fw - 12);
+    const char *vis = visible_tail(s, p->buffer, fw - 38);
     s->getstringsize((const unsigned char *)vis, &tw, &th);
     lcd_set_drawmode(DRMODE_FG);
-    s->putsxy(fx + 6, fy + (fh - th) / 2, (const unsigned char *)vis);
+    s->putsxy(fx + 19, fy + (fh - th) / 2, (const unsigned char *)vis);
     /* caret just after the text */
-    s->fillrect(fx + 6 + tw + 1, fy + 4, 2, fh - 8);
+    s->fillrect(fx + 19 + tw + 3, fy + 13, 6, fh - 26);
 
     /* ---- key grid ---------------------------------------------------- */
-    const int grid_top = fy + fh + 8;
-    const int key_h = 34, row_step = key_h + gap;
+    const int n_sp = special_count(p);
+    const int grid_top = fy + fh + 26;
+    const int key_h = 109, row_step = key_h + gap;
     const int key_w = (W - 2 * margin - 9 * gap) / 10;          /* 10-col rows */
-    const int sp_w  = (W - 2 * margin - (KBD_NSPECIAL - 1) * gap) / KBD_NSPECIAL;
+    const int sp_w  = (W - 2 * margin - (n_sp - 1) * gap) / n_sp;
 
     for (int r = 0; r < KBD_NROWS; r++)
     {
-        const int n = row_count(r);
+        const int n = row_count(p, r);
         const int kw = (r == KBD_SPECIAL_ROW) ? sp_w : key_w;
         const int row_w = n * kw + (n - 1) * gap;
         const int start_x = (W - row_w) / 2;
@@ -143,9 +192,9 @@ static void draw(struct screen *s, struct viewport *vp,
         for (int c = 0; c < n; c++)
         {
             const int x = start_x + c * (kw + gap);
-            const bool selected = (r == sel_row && c == sel_col);
+            const bool selected = (r == p->row && c == p->col);
             char cbuf[2];
-            const char *label = key_label(r, c, caps, cbuf);
+            const char *label = key_label(p, r, c, cbuf);
 
             /* cell: selected -> solid black; otherwise white with a border */
             lcd_set_drawmode(DRMODE_SOLID);
@@ -157,7 +206,8 @@ static void draw(struct screen *s, struct viewport *vp,
             else
             {
                 s->set_foreground(fg);
-                s->drawrect(x, y, kw, key_h);
+                for (int b = 0; b < 3; b++)
+                    s->drawrect(x + b, y + b, kw - 2 * b, key_h - 2 * b);
             }
 
             int lw, lh;
@@ -192,25 +242,13 @@ static void backspace(char *buffer)
 
 /* ---- the keyboard as a trimpod_page ----------------------------------- */
 
-struct kbd_page
-{
-    struct trimpod_page base;
-    struct screen *s;
-    char  *buffer;
-    int    buflen;
-    int    row, col;
-    bool   caps;
-    int    fid;
-    int    result;       /* 0 = accepted (enter), -1 = cancelled */
-};
-
 static void kbd_page_draw(struct trimpod_page *self)
 {
     struct kbd_page *p = (struct kbd_page *)self;
     struct viewport vp = {0};  /* zero-init: viewport_set_fullscreen bus-errors otherwise */
     viewport_set_fullscreen(&vp, SCREEN_MAIN);
     p->s->setfont(p->fid);
-    draw(p->s, &vp, p->buffer, p->row, p->col, p->caps);
+    draw(p, &vp);
     p->s->set_viewport(NULL);
 }
 
@@ -228,41 +266,56 @@ static enum trimpod_page_result kbd_page_on_action(struct trimpod_page *self,
     switch (action)
     {
         case ACTION_KBD_LEFT:
-            p->col = (p->col - 1 + row_count(p->row)) % row_count(p->row);
+            p->col = (p->col - 1 + row_count(p, p->row)) % row_count(p, p->row);
             break;
         case ACTION_KBD_RIGHT:
-            p->col = (p->col + 1) % row_count(p->row);
+            p->col = (p->col + 1) % row_count(p, p->row);
             break;
         case ACTION_KBD_UP:
         {
-            int from = row_count(p->row);
+            int from = row_count(p, p->row);
             p->row = (p->row - 1 + KBD_NROWS) % KBD_NROWS;
-            p->col = remap_col(p->col, from, row_count(p->row));
+            p->col = remap_col(p->col, from, row_count(p, p->row));
             break;
         }
         case ACTION_KBD_DOWN:
         {
-            int from = row_count(p->row);
+            int from = row_count(p, p->row);
             p->row = (p->row + 1) % KBD_NROWS;
-            p->col = remap_col(p->col, from, row_count(p->row));
+            p->col = remap_col(p->col, from, row_count(p, p->row));
             break;
         }
 
         case ACTION_KBD_SELECT:            /* A: engage the highlighted key */
             if (p->row == KBD_SPECIAL_ROW)
             {
-                switch (p->col)
+                if (p->allow_symbols)
                 {
-                    case SP_CAPS:  p->caps = !p->caps; break;
-                    case SP_SPACE: append_char(p->buffer, p->buflen, ' '); break;
-                    case SP_DEL:   backspace(p->buffer); break;
-                    case SP_ENTER: p->result = 0; return TRIMPOD_PAGE_DONE;
+                    switch (p->col)
+                    {
+                        case 0: p->caps = !p->caps; break;
+                        case 1: p->sym_mode = !p->sym_mode; break;
+                        case 2: append_char(p->buffer, p->buflen, ' '); break;
+                        case 3: backspace(p->buffer); break;
+                        case 4: p->result = 0; return TRIMPOD_PAGE_DONE;
+                    }
+                }
+                else
+                {
+                    switch (p->col)
+                    {
+                        case 0: p->caps = !p->caps; break;
+                        case 1: append_char(p->buffer, p->buflen, ' '); break;
+                        case 2: backspace(p->buffer); break;
+                        case 3: p->result = 0; return TRIMPOD_PAGE_DONE;
+                    }
                 }
             }
             else
             {
-                char c = kbd_rows[p->row][p->col];
-                append_char(p->buffer, p->buflen, p->caps ? upcase(c) : c);
+                char c = active_row_str(p, p->row)[p->col];
+                append_char(p->buffer, p->buflen,
+                            (!p->sym_mode && p->caps) ? upcase(c) : c);
             }
             break;
 
@@ -291,12 +344,19 @@ static const int kbd_allowed[] =
     ACTION_KBD_SELECT, ACTION_KBD_BACKSPACE, ACTION_KBD_ABORT, -1
 };
 
-int trimpod_kbd_input(char *buffer, int buflen)
+int trimpod_kbd_input_ex(char *buffer, int buflen, bool allow_symbols)
 {
+    if (!buffer || buflen <= 0)
+        return -1;
+
+    char *backup = malloc((size_t)buflen);
+    if (backup)
+        strlcpy(backup, buffer, (size_t)buflen);
+
     struct screen *s = &screens[SCREEN_MAIN];
     int fid = font_load(KBD_FONT_PATH);
     if (fid < 0)
-        fid = FONT_UI;                 /* the UI font is ChicagoFLF too */
+        fid = FONT_UI;                 /* the UI font is Geologica too */
 
     struct kbd_page p =
     {
@@ -306,13 +366,23 @@ int trimpod_kbd_input(char *buffer, int buflen)
                   .no_header_refresh = true,
                   .animated = true },        /* repaints the grid/cursor each tick */
         .s = s, .buffer = buffer, .buflen = buflen,
-        .row = 1, .col = 0, .caps = false, .fid = fid, .result = -1,
+        .row = 1, .col = 0, .caps = false, .sym_mode = false,
+        .allow_symbols = allow_symbols, .fid = fid, .result = -1,
     };
 
     trimpod_page_run(&p.base);
+
+    if (p.result != 0 && backup)
+        strlcpy(buffer, backup, (size_t)buflen);
+    free(backup);
 
     s->setfont(FONT_UI);
     if (fid != FONT_UI)
         font_unload(fid);
     return p.result;
+}
+
+int trimpod_kbd_input(char *buffer, int buflen)
+{
+    return trimpod_kbd_input_ex(buffer, buflen, false);
 }

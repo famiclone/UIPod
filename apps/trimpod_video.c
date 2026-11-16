@@ -8,7 +8,6 @@
  *
  *   A            = play / pause (pausing shows the overlay)
  *   D-pad <- ->  = back / ahead 10 s (hold to keep going)
- *   L1 / R1      = back / ahead 10 s, as on Now Playing
  *   L2 / R2      = previous / next chapter, as on Now Playing
  *   X            = aspect ratio: Fit, Stretch
  *   Volume +/-   = volume
@@ -46,16 +45,16 @@ extern void retrohh_cpu_hold_dynamic(void);     /* power-target.c owns CPU polic
 extern void retrohh_cpu_release_dynamic(void);
 
 /* The bar and text of the Now Playing panels (1ST_GEN_REMIX.wps), on a taller strip. */
-#define STRIP_TOP    180
+#define STRIP_TOP    576
 #define STRIP_ROWS   (LCD_HEIGHT - STRIP_TOP)
-#define BAR_X        20
-#define BAR_Y        192
-#define BAR_W        280
-#define BAR_H        14
-#define TEXT_Y       210
-#define TEXT_H       25
+#define BAR_X        64
+#define BAR_Y        616
+#define BAR_W        896
+#define BAR_H        42
+#define TEXT_Y       672
+#define TEXT_H       80
 #define BAR_BMP_DIR  ROCKBOX_DIR "/wps/1ST_GEN_REMIX"
-#define BAR_BMP_BYTES (BAR_W * BAR_H * 4 + 64)
+#define BAR_BMP_BYTES ((BAR_W + 16) * (BAR_H + 4) * 4 + 256)
 
 #define SEEK_STEP_MS        10000
 #define SEEK_END_MARGIN_MS  1000
@@ -85,12 +84,15 @@ extern void retrohh_cpu_release_dynamic(void);
 #define RESUME_SAVE_TICKS   (60 * HZ)
 /* The picture stays hidden until the resume seek lands, for at most this long.
  * It lands on a keyframe before the target, so half way counts. */
-#define REVEAL_WAIT_TICKS   (4 * HZ)
+#define REVEAL_WAIT_TICKS        (4 * HZ)
+#define STREAM_REVEAL_WAIT_TICKS (8 * HZ)
 
 enum overlay_panel { PANEL_NONE, PANEL_PROGRESS, PANEL_VOLUME };
 
 static struct retrohh_video_info info;
 static enum retrohh_video_aspect aspect;   /* kept between videos */
+static const struct trimpod_video_stream_opts *s_stream_opts;
+static int s_stream_base_ms;
 
 static struct
 {
@@ -186,16 +188,26 @@ static void resume_remove_at(int index)
 }
 
 /* realpath: the virtual-folder farm and the real path name the same video. */
-static void resume_open(const char *path)
+static void resume_open_ex(const char *path, const char *explicit_key,
+                           int server_resume_ms, bool force_from_start)
 {
     int index;
 
     resume_load();
-    if (!realpath(path, resume_key))
+    if (explicit_key && explicit_key[0])
+        strlcpy(resume_key, explicit_key, sizeof resume_key);
+    else if (!realpath(path, resume_key))
         strlcpy(resume_key, path, sizeof resume_key);
     index = resume_find(resume_key);
     resume_saved_ms = index >= 0 ? resume_entries[index].position_ms : 0;
-    resume_start_ms = resume_saved_ms;
+    if (force_from_start)
+        resume_start_ms = 0;
+    else if (resume_saved_ms > 0)
+        resume_start_ms = resume_saved_ms;
+    else if (server_resume_ms >= RESUME_MIN_MS)
+        resume_start_ms = server_resume_ms;
+    else
+        resume_start_ms = 0;
     resume_next_save = current_tick + RESUME_SAVE_TICKS;
 }
 
@@ -386,10 +398,29 @@ static void send_queued_seek(void)
 {
     if (v.seek_target_ms < 0 || TIME_BEFORE(current_tick, v.seek_send_tick))
         return;
-    retrohh_video_seek(v.seek_target_ms);
-    v.position_ms = v.seek_target_ms;
+
+    int target = v.seek_target_ms;
     v.seek_target_ms = -1;
     v.stalled_polls = 0;
+
+    if (s_stream_opts && s_stream_opts->is_transcoded)
+    {
+        /* Live MPEG-TS transcode has no byte-range index: restart transcode at StartTimeTicks. */
+        retrohh_video_stop();
+        s_stream_base_ms = target;
+        if (s_stream_opts->on_reopen_at)
+            s_stream_opts->on_reopen_at(s_stream_opts->cb_ctx, target);
+        v.reported = false;
+        retrohh_video_start(s_stream_opts->url, 0);
+        if (v.paused)
+            retrohh_video_pause(true);
+        v.position_ms = target;
+        v.ignore_report_until = current_tick + 2 * HZ;
+        return;
+    }
+
+    retrohh_video_seek(target);
+    v.position_ms = target;
     v.ignore_report_until = current_tick + SEEK_REPORT_TICKS;
 }
 
@@ -427,6 +458,8 @@ static void set_paused(bool paused)
     v.paused = paused;
     retrohh_video_pause(paused);
     show_progress();
+    if (s_stream_opts && s_stream_opts->on_progress && v.reported)
+        s_stream_opts->on_progress(s_stream_opts->cb_ctx, display_position(), paused, false);
 }
 
 static void pause_and_save(void)
@@ -453,13 +486,18 @@ static void hide_video(void)
  * be. */
 static bool start_player(const char *path, int start_ms)
 {
+    long wait_ticks = s_stream_opts ? STREAM_REVEAL_WAIT_TICKS : REVEAL_WAIT_TICKS;
+    int player_start = (s_stream_opts && s_stream_opts->is_transcoded) ? 0 : start_ms;
+
     hide_video();
-    if (!retrohh_video_start(path, start_ms))
+    if (!retrohh_video_start(path, player_start))
         return false;
     v.position_ms = start_ms;
+    if (s_stream_opts && s_stream_opts->duration_ms > 0)
+        v.duration_ms = s_stream_opts->duration_ms;
     v.seek_target_ms = -1;
-    v.reveal_by = current_tick + REVEAL_WAIT_TICKS;
-    v.ignore_report_until = start_ms ? v.reveal_by : current_tick;
+    v.reveal_by = current_tick + wait_ticks;
+    v.ignore_report_until = player_start ? v.reveal_by : current_tick;
     return true;
 }
 
@@ -476,32 +514,46 @@ static bool poll_player(void)
     if (!retrohh_video_status(&position, &duration, &playing))
         return true;
 
-    v.duration_ms = duration;
+    int eff_dur = duration;
+    if (eff_dur <= 0 && s_stream_opts && s_stream_opts->duration_ms > 0)
+        eff_dur = s_stream_opts->duration_ms;
+
+    int eff_pos = (s_stream_opts && s_stream_opts->is_transcoded)
+                      ? (s_stream_base_ms + position)
+                      : position;
+    if (eff_dur > 0 && eff_pos > eff_dur)
+        eff_pos = eff_dur;
+
+    v.duration_ms = eff_dur;
     if (!v.reported)
     {
         v.reported = true;
         retrohh_video_set_aspect(&info, aspect);
+        if (s_stream_opts && s_stream_opts->on_progress)
+            s_stream_opts->on_progress(s_stream_opts->cb_ctx, eff_pos, v.paused, false);
     }
-    if (position >= resume_start_ms / 2 || !TIME_BEFORE(current_tick, v.reveal_by))
+
+    int target_reveal = (s_stream_opts && s_stream_opts->is_transcoded) ? 0 : (resume_start_ms / 2);
+    if (position >= target_reveal || !TIME_BEFORE(current_tick, v.reveal_by))
         v.revealed = true;
     if (TIME_BEFORE(current_tick, v.ignore_report_until))
         return true;
-    v.position_ms = position;
+    v.position_ms = eff_pos;
 
     if (v.paused)
         return true;
     if (!playing)
         return false;
     /* The player can sit on the last frame without saying it finished. */
-    if (duration > 0 && position >= duration - END_MARGIN_MS &&
-        position == v.last_reported_ms)
+    if (eff_dur > 0 && eff_pos >= eff_dur - END_MARGIN_MS &&
+        eff_pos == v.last_reported_ms)
     {
         if (++v.stalled_polls >= END_STALL_POLLS)
             return false;
     }
     else
         v.stalled_polls = 0;
-    v.last_reported_ms = position;
+    v.last_reported_ms = eff_pos;
     return true;
 }
 
@@ -539,8 +591,8 @@ static void run_session(void)
                 trimpod_home_pending = true;
                 return;
             case ACTION_WPS_BROWSE:
-                /* The overlay up, B leaves; otherwise it pauses and shows it. */
-                if (v.paused || v.shown != PANEL_NONE)
+                /* While still buffering (!revealed) or with overlay up, B leaves immediately. */
+                if (!v.revealed || v.paused || v.shown != PANEL_NONE)
                     return;
                 pause_and_save();
                 break;
@@ -592,8 +644,11 @@ static void run_session(void)
             next_poll = current_tick + (v.revealed ? POLL_TICKS : 0);
             if (v.reported && !TIME_BEFORE(current_tick, resume_next_save))
             {
+                int pos_now = display_position();
                 resume_next_save = current_tick + RESUME_SAVE_TICKS;
-                resume_save(display_position(), v.duration_ms);
+                resume_save(pos_now, v.duration_ms);
+                if (s_stream_opts && s_stream_opts->on_progress)
+                    s_stream_opts->on_progress(s_stream_opts->cb_ctx, pos_now, v.paused, false);
             }
         }
         if (v.revealed)
@@ -601,18 +656,11 @@ static void run_session(void)
     }
 }
 
-void trimpod_video_play(const char *path)
+static void run_video_common(const char *play_target)
 {
-    if (retrohh_video_probe(path, &info) && info.hevc)
-    {
-        splash(2 * HZ, ID2P(LANG_TRIMPOD_VIDEO_HEVC));
-        return;
-    }
-
     if (audio_status())
         audio_stop();
     load_bar_bitmaps();
-    resume_open(path);
 
     retrohh_cpu_hold_dynamic();
     backlight_set_timeout(0);           /* a video is active use, not idle */
@@ -621,17 +669,24 @@ void trimpod_video_play(const char *path)
 
     memset(&v, 0, sizeof v);
     v.last_volume = global_status.volume;
-    if (start_player(path, resume_start_ms))
+    if (start_player(play_target, resume_start_ms))
     {
         button_clear_queue();
         run_session();
     }
 
+    int final_pos = display_position();
+    int final_dur = v.duration_ms;
+    bool was_reported = v.reported;
+
     /* Picture and overlay go in one frame; the player exits behind it. */
     hide_video();
-    if (v.reported)
-        resume_save(display_position(), v.duration_ms);
+    if (was_reported)
+        resume_save(final_pos, final_dur);
     retrohh_video_stop();
+    if (s_stream_opts && s_stream_opts->on_progress && was_reported)
+        s_stream_opts->on_progress(s_stream_opts->cb_ctx, resume_saved_ms, false, true);
+
     FOR_NB_SCREENS(i)
         viewportmanager_theme_undo(i, true);
     if (power_display_off())
@@ -642,6 +697,57 @@ void trimpod_video_play(const char *path)
     button_clear_queue();
     button_touch_activity();
 
-    if (!v.reported)
+    if (!was_reported)
         splash(2 * HZ, ID2P(LANG_TRIMPOD_VIDEO_FAILED));
+}
+
+void trimpod_video_play(const char *path)
+{
+    s_stream_opts = NULL;
+    s_stream_base_ms = 0;
+
+    if (retrohh_video_probe(path, &info) && info.hevc)
+    {
+        splash(2 * HZ, ID2P(LANG_TRIMPOD_VIDEO_HEVC));
+        return;
+    }
+
+    resume_open_ex(path, NULL, 0, false);
+    run_video_common(path);
+}
+
+void trimpod_video_play_stream(const struct trimpod_video_stream_opts *opts)
+{
+    if (!opts || !opts->url || !opts->url[0])
+        return;
+
+    memset(&info, 0, sizeof(info));
+    info.hevc      = false;
+    info.width     = opts->width > 0 ? opts->width : 1024;
+    info.height    = opts->height > 0 ? opts->height : 576;
+    info.ratio_num = opts->ratio_num;
+    info.ratio_den = opts->ratio_den;
+    if (opts->chapter_ms && opts->chapters > 0)
+    {
+        int n = opts->chapters;
+        if (n > RETROHH_VIDEO_MAX_CHAPTERS)
+            n = RETROHH_VIDEO_MAX_CHAPTERS;
+        memcpy(info.chapter_ms, opts->chapter_ms, (size_t)n * sizeof(int));
+        info.chapters = n;
+    }
+
+    /* If playing a local downloaded file without pre-known dimensions, probe it cleanly */
+    if (opts->url[0] == '/' && opts->width <= 0)
+        retrohh_video_probe(opts->url, &info);
+
+    resume_open_ex(opts->url, opts->resume_id, opts->server_resume_ms, opts->force_from_start);
+
+    s_stream_opts = opts;
+    s_stream_base_ms = opts->is_transcoded ? resume_start_ms : 0;
+    if (opts->is_transcoded && opts->on_reopen_at)
+        opts->on_reopen_at(opts->cb_ctx, s_stream_base_ms);
+
+    run_video_common(opts->url);
+    s_stream_opts = NULL;
+    s_stream_base_ms = 0;
 }

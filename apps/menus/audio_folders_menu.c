@@ -28,6 +28,8 @@
 #include "menu.h"
 #include "trimpod_folders.h"
 #include "trimpod_library.h"     /* trimpod_library_reconcile (Rescan) */
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "exported_menus.h"
 
 MENUITEM_FUNCTION(tp_af_music, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_FOLDERS),
@@ -45,7 +47,12 @@ MENUITEM_FUNCTION(tp_af_television, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_TELEVIS
  * the reconcile's own Scanning screen. */
 static int trimpod_library_rescan(void)
 {
-    trimpod_library_reconcile(true);
+    if (trimpod_source_is_navidrome())
+        trimpod_navidrome_sync(true);
+    else if (trimpod_source_is_jellyfin())
+        trimpod_jellyfin_sync(true);
+    else
+        trimpod_library_reconcile(true);
     return 0;
 }
 MENUITEM_FUNCTION(tp_af_rescan, 0, ID2P(LANG_TRIMPOD_RESCAN),

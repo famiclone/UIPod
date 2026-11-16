@@ -44,10 +44,10 @@ void trimpod_eq_draw(struct screen *display, struct viewport *vp)
         return;
 
     int cy  = H / 2;            /* 0 dB baseline */
-    int amp = H / 2 - 1;        /* +/- full-scale pixel amplitude */
+    int amp = H / 2 - 4;        /* +/- full-scale pixel amplitude */
 
     display->set_drawmode(DRMODE_SOLID);
-    display->hline(0, W - 1, cy);              /* 0 dB reference line */
+    display->fillrect(0, cy - 1, W, 3);        /* 0 dB reference line */
 
     int px = -1, py = -1;
     for (int i = 0; i < EQ_NUM_BANDS; i++)
@@ -59,11 +59,14 @@ void trimpod_eq_draw(struct screen *display, struct viewport *vp)
         if (g >  TRIMPOD_EQ_MAX_GAIN) g =  TRIMPOD_EQ_MAX_GAIN;
         if (g < -TRIMPOD_EQ_MAX_GAIN) g = -TRIMPOD_EQ_MAX_GAIN;
         int y = cy - (g * amp) / TRIMPOD_EQ_MAX_GAIN;
-        if (y < 0) y = 0;
-        if (y > H - 1) y = H - 1;
+        if (y < 1) y = 1;
+        if (y > H - 2) y = H - 2;
         if (px >= 0)
-            display->drawline(px, py, x, y);
-        display->fillrect(x - 1, y - 1, 3, 3);  /* node marker */
+        {
+            for (int d = -1; d <= 1; d++)
+                display->drawline(px, py + d, x, y + d);
+        }
+        display->fillrect(x - 4, y - 4, 9, 9);  /* node marker */
         px = x;
         py = y;
     }

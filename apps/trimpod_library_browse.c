@@ -41,6 +41,7 @@
 #include "trimpod_library.h"
 #include "trimpod_library_browse.h"
 #include "trimpod_playlists.h"      /* tap-to-play, the Hold-A menu */
+#include "trimpod_svg.h"
 #include "filetypes.h"              /* FILE_ATTR_AUDIO */
 
 /* ---- growable string list (rows collected from the enumerators) ------- */
@@ -70,12 +71,22 @@ static const char *disp_artist(const char *a)
     return (a && a[0]) ? a : (const char *)str(LANG_TRIMPOD_UNKNOWN_ARTIST);
 }
 
+static const char *disp_genre(const char *g)
+{
+    return (g && g[0]) ? g : (const char *)str(LANG_TRIMPOD_UNKNOWN_GENRE);
+}
+
 /* ---- enumerator callbacks (append one row per DB row) ----------------- */
 
 static void artist_cb(const char *browse_artist, int track_count, void *ctx)
 {
     (void)track_count;
     slist_add((struct slist *)ctx, browse_artist);   /* "" -> Unknown at display */
+}
+static void genre_cb(const char *genre, int track_count, void *ctx)
+{
+    (void)track_count;
+    slist_add((struct slist *)ctx, genre);           /* "" -> Unknown at display */
 }
 static void album_cb(const char *album, int year, void *ctx)
 {
@@ -110,9 +121,9 @@ static void path_collect_cb(const char *title, const char *path, void *ctx)
         slist_add((struct slist *)ctx, path);
 }
 
-/* ---- the page: Artists / Albums / Tracks, one gui_synclist ------------ */
+/* ---- the page: Genres / Artists / Albums / Tracks, one gui_synclist ---- */
 
-enum lib_level { LVL_ARTISTS = 0, LVL_ALBUMS, LVL_TRACKS, LVL_COUNT };
+enum lib_level { LVL_GENRES = 0, LVL_ARTISTS, LVL_ALBUMS, LVL_TRACKS, LVL_COUNT };
 
 struct lib_page
 {
@@ -123,6 +134,7 @@ struct lib_page
     char  *artist;               /* browse_artist filter; NULL = no artist (flat
                                   * Albums/Songs), "" = the Unknown artist. owned */
     char  *album;                /* album filter (owned); NULL/"" when all_songs   */
+    char  *genre;                /* genre filter (owned) when root_level==LVL_GENRES */
     bool   all_songs;            /* Tracks shows the album wildcard (whole artist,
                                   * or -- with artist NULL -- the whole library) */
     struct slist rows;           /* display strings for the current level */
@@ -140,6 +152,7 @@ static struct {
     enum lib_level root_level;   /* which facet played (matched on re-entry) */
     char *artist;                /* NULL = flat Albums/Songs */
     char *album;                 /* NULL == All Songs */
+    char *genre;                 /* non-NULL when root_level == LVL_GENRES */
     int   sel_at[LVL_COUNT];
 } lib_resume;
 
@@ -173,7 +186,25 @@ static const char *lib_get_name(int sel, void *data, char *buf, size_t len)
     }
     if (sel < 0 || sel >= p->rows.n)
         return "";
-    return p->level == LVL_ARTISTS ? disp_artist(p->rows.v[sel]) : p->rows.v[sel];
+    if (p->level == LVL_ARTISTS)
+        return disp_artist(p->rows.v[sel]);
+    if (p->level == LVL_GENRES)
+        return disp_genre(p->rows.v[sel]);
+    return p->rows.v[sel];
+}
+
+static bool lib_get_chevron(int sel, void *data)
+{
+    (void)sel; (void)data;
+    return true;
+}
+
+static const struct trimpod_svg_icon *lib_get_svg_icon(int sel, void *data)
+{
+    struct lib_page *p = data;
+    if (p->level != LVL_TRACKS || sel < 0 || sel >= p->paths.n)
+        return NULL;
+    return trimpod_svg_for_path(p->paths.v[sel], false);
 }
 
 /* (Re)fill rows for the current level, set the title, and restore this level's
@@ -185,6 +216,10 @@ static void lib_load(struct lib_page *p)
     const char *title;
     switch (p->level)
     {
+        case LVL_GENRES:
+            trimpod_library_genres(TP_CAT_MUSIC, genre_cb, &p->rows);
+            title = (const char *)str(LANG_TRIMPOD_GENRES);
+            break;
         case LVL_ALBUMS:
             trimpod_library_albums(TP_CAT_MUSIC, p->artist, album_cb, &p->rows);
             title = p->artist ? disp_artist(p->artist)          /* one artist */
@@ -193,11 +228,20 @@ static void lib_load(struct lib_page *p)
         case LVL_TRACKS:
         {
             struct track_fill tf = { &p->rows, &p->paths };
-            trimpod_library_tracks(TP_CAT_MUSIC, p->artist,
-                                   p->all_songs ? NULL : p->album, track_cb, &tf);
-            title = !p->all_songs ? p->album                    /* an album */
-                  : p->artist     ? (const char *)str(LANG_TRIMPOD_ALL_SONGS)
-                  :                 (const char *)str(LANG_TRIMPOD_SONGS); /* whole library */
+            if (p->root_level == LVL_GENRES)
+            {
+                trimpod_library_genre_tracks(TP_CAT_MUSIC,
+                                             p->genre ? p->genre : "", track_cb, &tf);
+                title = disp_genre(p->genre);
+            }
+            else
+            {
+                trimpod_library_tracks(TP_CAT_MUSIC, p->artist,
+                                       p->all_songs ? NULL : p->album, track_cb, &tf);
+                title = !p->all_songs ? p->album                    /* an album */
+                      : p->artist     ? (const char *)str(LANG_TRIMPOD_ALL_SONGS)
+                      :                 (const char *)str(LANG_TRIMPOD_SONGS); /* whole library */
+            }
             break;
         }
         case LVL_ARTISTS:
@@ -243,13 +287,15 @@ static int lib_poll(struct trimpod_page *self, int timeout)
 /* Stash the position so the return from Now Playing reopens `artist`/`album`'s
  * Tracks list at row `sel` (album NULL == All Songs). */
 static void lib_remember(struct lib_page *p, int sel,
-                         const char *artist, const char *album)
+                         const char *artist, const char *album, const char *genre)
 {
     free(lib_resume.artist);
     free(lib_resume.album);
+    free(lib_resume.genre);
     lib_resume.root_level = p->root_level;
     lib_resume.artist = artist ? strdup(artist) : NULL;
     lib_resume.album  = album ? strdup(album) : NULL;
+    lib_resume.genre  = genre ? strdup(genre) : NULL;
     memcpy(lib_resume.sel_at, p->sel_at, sizeof lib_resume.sel_at);
     lib_resume.sel_at[LVL_TRACKS] = sel;
     lib_resume.pending = true;
@@ -259,17 +305,19 @@ static void lib_remember(struct lib_page *p, int sel,
 static void remember_track(struct lib_page *p, int sel)
 {
     lib_remember(p, sel, p->artist,
-                 p->all_songs ? NULL : (p->album ? p->album : ""));
+                 p->all_songs ? NULL : (p->album ? p->album : ""),
+                 p->root_level == LVL_GENRES ? (p->genre ? p->genre : "") : NULL);
 }
 
-/* Hold-A on an artist/album row: the context menu for `title` over its track
+/* Hold-A on an artist/album/genre row: the context menu for `title` over its track
  * set; a Play makes the set the queue.  Frees `paths`. */
 static bool ctx_play_set(struct lib_page *p, const char *title,
-                         struct slist *paths, const char *artist, const char *album)
+                         struct slist *paths, const char *artist,
+                         const char *album, const char *genre)
 {
     bool started = trimpod_music_context_tracks(title, paths->v, paths->n);
     if (started)
-        lib_remember(p, 0, artist, album);
+        lib_remember(p, 0, artist, album, genre);
     slist_free(paths);
     return started;
 }
@@ -286,7 +334,10 @@ static enum trimpod_page_result lib_on_action(struct trimpod_page *self, int act
             trimpod_transition_arm_back();
             return TRIMPOD_PAGE_DONE;
         }
-        p->level--;
+        if (p->root_level == LVL_GENRES && p->level == LVL_TRACKS)
+            p->level = LVL_GENRES;
+        else
+            p->level--;
         lib_slide(p, TRIMPOD_TRANS_BACK);
         return TRIMPOD_PAGE_STAY;
     }
@@ -295,6 +346,16 @@ static enum trimpod_page_result lib_on_action(struct trimpod_page *self, int act
     {
         switch (p->level)
         {
+            case LVL_GENRES:
+                if (sel < 0 || sel >= p->rows.n)
+                    break;
+                p->sel_at[LVL_GENRES] = sel;
+                set_str(&p->genre, p->rows.v[sel]);
+                p->level = LVL_TRACKS;
+                p->sel_at[LVL_TRACKS] = 0;
+                lib_slide(p, TRIMPOD_TRANS_FORWARD);
+                break;
+
             case LVL_ARTISTS:
                 if (sel < 0 || sel >= p->rows.n)
                     break;
@@ -340,6 +401,22 @@ static enum trimpod_page_result lib_on_action(struct trimpod_page *self, int act
     {
         switch (p->level)
         {
+            case LVL_GENRES:                        /* whole genre */
+            {
+                if (sel < 0 || sel >= p->rows.n)
+                    break;
+                const char *genre = p->rows.v[sel];
+                struct slist paths = {0};
+                trimpod_library_genre_tracks(TP_CAT_MUSIC, genre,
+                                             path_collect_cb, &paths);
+                p->sel_at[LVL_GENRES] = sel;
+                if (ctx_play_set(p, disp_genre(genre), &paths, NULL, NULL, genre))
+                {
+                    p->result = GO_TO_WPS;
+                    return TRIMPOD_PAGE_DONE;
+                }
+                break;
+            }
             case LVL_ARTISTS:                       /* whole artist */
             {
                 if (sel < 0 || sel >= p->rows.n)
@@ -350,7 +427,7 @@ static enum trimpod_page_result lib_on_action(struct trimpod_page *self, int act
                                        path_collect_cb, &paths);
                 p->sel_at[LVL_ARTISTS] = sel;       /* B out of the WPS lands here */
                 p->sel_at[LVL_ALBUMS] = 0;
-                if (ctx_play_set(p, disp_artist(artist), &paths, artist, NULL))
+                if (ctx_play_set(p, disp_artist(artist), &paths, artist, NULL, NULL))
                 {
                     p->result = GO_TO_WPS;
                     return TRIMPOD_PAGE_DONE;
@@ -370,7 +447,7 @@ static enum trimpod_page_result lib_on_action(struct trimpod_page *self, int act
                                        path_collect_cb, &paths);
                 p->sel_at[LVL_ALBUMS] = sel;        /* B out of the WPS lands here */
                 if (ctx_play_set(p, all ? (const char *)str(LANG_TRIMPOD_ALL_SONGS)
-                                        : album, &paths, p->artist, album))
+                                        : album, &paths, p->artist, album, NULL))
                 {
                     p->result = GO_TO_WPS;
                     return TRIMPOD_PAGE_DONE;
@@ -429,6 +506,9 @@ int trimpod_library_browse(void *param)
     };
     switch (mode)                                    /* facet -> starting level */
     {
+        case TP_LIB_GENRES:                          /* Genres -> Tracks */
+            p.level = p.root_level = LVL_GENRES;
+            break;
         case TP_LIB_ALBUMS:                          /* flat Albums -> Tracks */
             p.level = p.root_level = LVL_ALBUMS;
             break;
@@ -453,12 +533,16 @@ int trimpod_library_browse(void *param)
         p.all_songs = (lib_resume.album == NULL);
         if (lib_resume.album)
             set_str(&p.album, lib_resume.album);
+        if (lib_resume.genre)
+            set_str(&p.genre, lib_resume.genre);
         memcpy(p.sel_at, lib_resume.sel_at, sizeof p.sel_at);
     }
     else if (lib_resume.pending)                     /* a different facet -> drop it */
         lib_resume.pending = false;
 
     gui_synclist_init(&p.lists, lib_get_name, &p, false, 1, NULL);
+    gui_synclist_set_chevron_callback(&p.lists, lib_get_chevron);
+    gui_synclist_set_svg_icon_callback(&p.lists, lib_get_svg_icon);
     lib_load(&p);
 
     struct mp3entry *id3 = audio_current_track();   /* land on what's playing */
@@ -487,6 +571,7 @@ int trimpod_library_browse(void *param)
         slist_free(&p.paths);
         free(p.artist);
         free(p.album);
+        free(p.genre);
         trimpod_transition_suppress_next();
         return GO_TO_ROOT;
     }
@@ -499,5 +584,6 @@ int trimpod_library_browse(void *param)
     slist_free(&p.paths);
     free(p.artist);
     free(p.album);
+    free(p.genre);
     return p.base.home ? GO_TO_ROOT : p.result;
 }

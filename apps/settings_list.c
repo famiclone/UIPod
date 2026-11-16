@@ -147,8 +147,8 @@ static const int viz_transition_values[] = { 0, 5, 10, 15, 20, 30, 45, 60, 75, 9
 static const char graphic_numeric[] = "graphic,numeric";
 
 /* Default theme settings */
-#define DEFAULT_WPSNAME  "cabbiev2"
-#define DEFAULT_SBSNAME  "-"
+#define DEFAULT_WPSNAME  "1ST_GEN_REMIX"
+#define DEFAULT_SBSNAME  "1ST_GEN_REMIX"
 #define DEFAULT_FMS_NAME "cabbiev2"
 
 #if LCD_HEIGHT <= 64
@@ -172,7 +172,8 @@ static const char graphic_numeric[] = "graphic,numeric";
 #elif LCD_HEIGHT <= 480 && LCD_WIDTH < 800
   #define DEFAULT_FONT_HEIGHT 27
 #else
-  #define DEFAULT_FONT_HEIGHT 35
+  #define DEFAULT_FONT_HEIGHT 76
+  #define DEFAULT_FONTNAME "76-Geologica"
 #endif
 #ifndef DEFAULT_FONTNAME
 /* ugly expansion needed */
@@ -594,9 +595,9 @@ const struct settings_list settings[] = {
                   NULL, 3, ID2P(LANG_OFF), ID2P(LANG_STATUSBAR_TOP),
                   ID2P(LANG_STATUSBAR_BOTTOM)),
     CHOICE_SETTING(F_THEMESETTING|F_TEMPVAR, scrollbar,
-                  LANG_SCROLL_BAR, SCROLLBAR_DEFAULT, "scrollbar","off,left,right",
+                  LANG_SCROLL_BAR, SCROLLBAR_RIGHT, "scrollbar","off,left,right",
                   NULL, 3, ID2P(LANG_OFF), ID2P(LANG_LEFT), ID2P(LANG_RIGHT)),
-    INT_SETTING(F_THEMESETTING, scrollbar_width, LANG_SCROLLBAR_WIDTH, 6,
+    INT_SETTING(F_THEMESETTING, scrollbar_width, LANG_SCROLLBAR_WIDTH, 40,
                 "scrollbar width",UNIT_INT, 3, MAX(LCD_WIDTH/10,25), 1,
                 NULL, NULL),
 #if LCD_DEPTH > 1
@@ -710,9 +711,9 @@ const struct settings_list settings[] = {
                   false, "Screen Scrolls Out Of View", NULL),
     OFFON_SETTING(0, disable_mainmenu_scrolling, LANG_DISABLE_MAINMENU_SCROLLING,
                   false, "Disable main menu scrolling", NULL),
-    INT_SETTING(F_PADTITLE, scroll_step, LANG_SCROLL_STEP, 6, "scroll step",
+    INT_SETTING(F_PADTITLE, scroll_step, LANG_SCROLL_STEP, 19, "scroll step",
                 UNIT_PIXEL, 1, LCD_WIDTH, 1, NULL, lcd_scroll_step),
-    INT_SETTING(F_PADTITLE, screen_scroll_step, LANG_SCREEN_SCROLL_STEP, 16,
+    INT_SETTING(F_PADTITLE, screen_scroll_step, LANG_SCREEN_SCROLL_STEP, 51,
                 "screen scroll step", UNIT_PIXEL, 1, LCD_WIDTH, 1, NULL, NULL),
     OFFON_SETTING(0,scroll_paginated,LANG_SCROLL_PAGINATED,
                   false,"scroll paginated",NULL),
@@ -1030,6 +1031,9 @@ const struct settings_list settings[] = {
                   NULL, "root menu order",
                   root_menu_load_from_cfg, root_menu_write_to_cfg,
                   root_menu_is_changed, root_menu_set_default),
+
+    OFFON_SETTING(0, mono_album_art, LANG_TRIMPOD_MONO_ALBUM_ART, true,
+                  "mono album art", NULL),
 
 };
 

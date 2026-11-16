@@ -32,6 +32,7 @@
 #include "icon.h"
 #include "statusbar-skinned.h"
 #include "misc.h"
+#include "version.h"
 #include "trimpod_ui.h"
 #include "trimpod_page.h"
 
@@ -89,7 +90,7 @@ void trimpod_centered_message(const char *question, const char *detail,
         if (footer)
             s->getstringsize((const unsigned char *)footer, &fw, &fh);
 
-        int gap = qh / 2 + 2;                     /* a little air between lines */
+        int gap = qh / 2 + 6;                     /* a little air between lines */
         int total = (detail ? dh + gap : 0) + qh + (footer ? gap + fh : 0);
         int y = (vp.height - total) / 2;
         if (y < 0)
@@ -270,8 +271,8 @@ int trimpod_context_menu(const char *title, const char *const *items, int count)
  * caption in flanking hairlines, the name, then its URL in the smaller font
  * (long URLs wrap at '/').  B leaves. ----------------------------------- */
 
-#define ABOUT_SCROLL_PXPS 16                          /* drift speed, px/sec */
-#define ABOUT_URL_FONT    FONT_DIR "/18-ChicagoFLF.fnt"
+#define ABOUT_SCROLL_PXPS 51                          /* drift speed, px/sec */
+#define ABOUT_URL_FONT    FONT_DIR "/58-Geologica.fnt"
 #define ABOUT_MAX_RLINES  48                          /* expanded reel capacity */
 #define ABOUT_SEG_MAX     48                          /* longest wrapped piece */
 
@@ -280,14 +281,15 @@ enum about_kind { AB_TITLE, AB_SUB, AB_CAP, AB_NAME, AB_URL, AB_GAP };
 struct about_line { const char *text; enum about_kind kind; };
 
 static const struct about_line about_lines[] = {
-    { "Trimpod Classic",     AB_TITLE },
-    { "v1.0.15",             AB_SUB   },
+    { "UIPod",               AB_TITLE },
+    { rbversion,             AB_SUB   },
     { NULL,                  AB_GAP   },
-    { "MADE BY",             AB_CAP   },
-    { "Werewolf Camp",       AB_NAME  },
-    { "werewolf.camp",       AB_URL   },
+    { "REPOSITORY",          AB_CAP   },
+    { "github.com/famiclone/UIPod", AB_URL },
     { NULL,                  AB_GAP   },
     { "BASED ON",            AB_CAP   },
+    { "Trimpod Classic",     AB_NAME  },
+    { "Werewolf Camp",       AB_NAME  },
     { "Rockbox",             AB_NAME  },
     { "github.com/Rockbox/rockbox", AB_URL },
     { NULL,                  AB_GAP   },
@@ -392,7 +394,7 @@ static void about_draw(struct trimpod_page *self)
     struct viewport vp = {0};
     const unsigned fg = global_settings.fg_color;
     const unsigned bg = global_settings.bg_color;
-    const int margin = 12;
+    const int margin = 38;
 
     /* draw the themed header once; it then persists in the framebuffer while
      * the reel below repaints (the no_header_refresh animated-page pattern). */
@@ -409,8 +411,8 @@ static void about_draw(struct trimpod_page *self)
     s->setfont(p->url_fid);
     s->getstringsize((const unsigned char *)"Ag", &aw, &url_fh);
 
-    const int ui_line  = ui_fh + 4;
-    const int url_line = url_fh + 2;
+    const int ui_line  = ui_fh + 13;
+    const int url_line = url_fh + 6;
     const int gap_h    = ui_fh / 2;
     const int W = vp.width, H = vp.height;
     const int pad = H / 3;        /* top/bottom air so first/last lines breathe */
@@ -447,13 +449,13 @@ static void about_draw(struct trimpod_page *self)
 
             if (l->kind == AB_CAP)                /* flanking hairlines */
             {
-                const int ly = y + lh / 2;
+                const int ly = y + lh / 2 - 1;
                 s->set_foreground(fg);
                 lcd_set_drawmode(DRMODE_SOLID);
-                if (tx - 8 > margin)
-                    s->fillrect(margin, ly, tx - 8 - margin, 1);
-                if (tx + tw + 8 < W - margin)
-                    s->fillrect(tx + tw + 8, ly, (W - margin) - (tx + tw + 8), 1);
+                if (tx - 26 > margin)
+                    s->fillrect(margin, ly, tx - 26 - margin, 3);
+                if (tx + tw + 26 < W - margin)
+                    s->fillrect(tx + tw + 26, ly, (W - margin) - (tx + tw + 26), 3);
             }
 
             s->set_foreground(fg);
@@ -498,11 +500,11 @@ void trimpod_about(void)
     struct screen *s = &screens[SCREEN_MAIN];
     struct viewport vp = {0};
     /* The only resource the page holds.  font_load is refcounted, so this is
-     * the skin's already-loaded 18-ChicagoFLF with one more ref; freed below.
+     * the skin's already-loaded 58-Geologica with one more ref; freed below.
      * Everything else lives in the stack-allocated `p` (no heap). */
     int fid = font_load(ABOUT_URL_FONT);
     if (fid < 0)
-        fid = FONT_UI;            /* the UI font is ChicagoFLF too */
+        fid = FONT_UI;            /* the UI font is Geologica too */
 
     struct about_page p =
     {
@@ -515,9 +517,9 @@ void trimpod_about(void)
         .url_fid     = fid,
     };
 
-    /* expand the reel once: wrap URLs to the content width in the 18pt font */
+    /* expand the reel once: wrap URLs to the content width in the small font */
     viewport_set_defaults(&vp, s->screen_type);
-    about_build(&p, s, vp.width - 2 * 12);
+    about_build(&p, s, vp.width - 2 * 38);
     s->setfont(FONT_UI);
 
     trimpod_page_run(&p.base);   /* always returns (B / USB); no early exit */
@@ -558,12 +560,12 @@ static void message_draw(struct trimpod_page *self)
         if (w > block) block = w;                 /* the widest row sets the left edge */
     }
 
-    /* 8px leading, shrunk as needed so tall row lists still fit the page */
-    int pad = 8;
+    /* 26px leading, shrunk as needed so tall row lists still fit the page */
+    int pad = 26;
     if (p->nrows * (fh + pad) > vp.height)
     {
         pad = vp.height / p->nrows - fh;
-        if (pad < 2) pad = 2;
+        if (pad < 6) pad = 6;
     }
     const int line = fh + pad;
     int x = (vp.width - block) / 2;
@@ -609,9 +611,11 @@ void trimpod_message_page(const char *title, const char *const *rows, int nrows)
 
 /* Controls: a static reference card for the non-obvious inputs. */
 static const char *const controls_rows[] = {
-    ID2P(LANG_TRIMPOD_CTRL_BACK),
     ID2P(LANG_TRIMPOD_CTRL_PLAY),
+    ID2P(LANG_TRIMPOD_CTRL_BACK),
+    ID2P(LANG_TRIMPOD_CTRL_START),
     ID2P(LANG_TRIMPOD_CTRL_CONTEXT),
+    ID2P(LANG_TRIMPOD_CTRL_BRIGHTNESS),
     ID2P(LANG_TRIMPOD_CTRL_SEEK),
     ID2P(LANG_TRIMPOD_CTRL_CHAPTER),
     ID2P(LANG_TRIMPOD_CTRL_LOCK),

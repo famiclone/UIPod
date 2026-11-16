@@ -21,6 +21,7 @@
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
+#include FT_MULTIPLE_MASTERS_H
 
 #include <stdio.h>
 #ifdef WIN32
@@ -115,6 +116,66 @@ int             trim_da     = 0; /* trim descnet actual  */
 int             trim_ap     = 0; /* trim ascent  precent */
 int             trim_aa     = 0; /* trim ascent  actual  */
 int             ft_load_opts = FT_LOAD_RENDER | FT_LOAD_NO_BITMAP;
+int             use_advance_metrics = 0; /* -A: use OpenType horiAdvance + bitmap_left */
+
+#define MAX_VAR_AXES 16
+struct var_axis_spec {
+    FT_Tag   tag;
+    FT_Fixed value;
+};
+static struct var_axis_spec var_axes[MAX_VAR_AXES];
+static int num_var_axes = 0;
+
+static void panic(const char *message);
+static void arg_panic(const char *message, const char *arg);
+
+static void parse_var_axes(const char *spec)
+{
+    const char *p = spec;
+    while (*p && *p != ' ') {
+        if (num_var_axes >= MAX_VAR_AXES)
+            panic("Too many -V axes");
+        if (!p[0] || !p[1] || !p[2] || !p[3] || p[4] != '=')
+            arg_panic("Invalid -V axis spec (expected TAG=value)", spec);
+        FT_Tag tag = FT_MAKE_TAG(p[0], p[1], p[2], p[3]);
+        p += 5;
+        char *end = NULL;
+        double val = strtod(p, &end);
+        if (end == p)
+            arg_panic("Invalid -V axis value", spec);
+        var_axes[num_var_axes].tag = tag;
+        var_axes[num_var_axes].value = (FT_Fixed)(val * 65536.0);
+        num_var_axes++;
+        p = end;
+        if (*p == ',')
+            p++;
+    }
+}
+
+static void apply_var_axes(FT_Library library, FT_Face face)
+{
+    if (num_var_axes == 0 || !FT_HAS_MULTIPLE_MASTERS(face))
+        return;
+    FT_MM_Var *mm = NULL;
+    if (FT_Get_MM_Var(face, &mm) != 0 || !mm)
+        return;
+    FT_Fixed coords[32];
+    FT_UInt n = mm->num_axis < 32 ? mm->num_axis : 32;
+    for (FT_UInt i = 0; i < n; i++)
+        coords[i] = mm->axis[i].def;
+    for (int j = 0; j < num_var_axes; j++) {
+        for (FT_UInt i = 0; i < n; i++) {
+            if (mm->axis[i].tag == var_axes[j].tag) {
+                FT_Fixed v = var_axes[j].value;
+                if (v < mm->axis[i].minimum) v = mm->axis[i].minimum;
+                if (v > mm->axis[i].maximum) v = mm->axis[i].maximum;
+                coords[i] = v;
+            }
+        }
+    }
+    FT_Set_Var_Design_Coordinates(face, n, coords);
+    FT_Done_MM_Var(library, mm);
+}
 
 struct font_header_struct {
     uint8_t header[4];        /* magic number and version bytes */
@@ -213,6 +274,8 @@ void usage(void)
         "    -ta    Convert all fonts in ttc (ignores outfile option)\n"
         "    -w     Don't try to make digits (0-9) equally wide\n"
         "    -L     Use lighter hinting algorithm\n"
+        "    -V S   Set OpenType variable font axes, e.g. -V wght=680,SHRP=0\n"
+        "    -A     Use true OpenType horiAdvance and left sidebearings\n"
     };
     fprintf(stderr, "%s", help);
     exit( 1 );
@@ -519,17 +582,29 @@ void print_raw_glyph( FT_Face face)
 int glyph_width( FT_Face face, FT_Long code, FT_Long digit_width )
 {
     int width;
+    int pitch = ABS(face->glyph->bitmap.pitch);
 
     if (code >= '0' && code <= '9' && digit_width)
     {
         width = digit_width;
+        if (width < pitch) width = pitch;
+    }
+    else if (use_advance_metrics)
+    {
+        int spacing = (int)(between_chr * 64.0f);
+        int lsb = face->glyph->bitmap_left > 0 ? face->glyph->bitmap_left : 0;
+        int adv = ((int)face->glyph->metrics.horiAdvance + spacing + 32) >> 6;
+        width = adv;
+        if (width < lsb + pitch)
+            width = lsb + pitch;
+        if (width < 1 && pitch == 0 && adv > 0)
+            width = adv;
     }
     else
     {
-        int pitch, h_adv;
+        int h_adv;
         unsigned spacing = (unsigned)(between_chr * (1<<6));/* convert to fixed point */
 
-        pitch = ABS(face->glyph->bitmap.pitch);
         h_adv = face->glyph->metrics.horiAdvance >> 6;
         width = (face->glyph->metrics.width + spacing) >> 6;
 
@@ -544,6 +619,7 @@ FT_Long check_digit_width( FT_Face face )
 {
     FT_Long code;
     FT_Long last_advance = -1;
+    FT_Long max_advance = 0;
 
     for (code='0'; code <= '9'; ++code)
     {
@@ -551,6 +627,14 @@ FT_Long check_digit_width( FT_Face face )
 
         FT_Load_Char(face, code, ft_load_opts);
         metrics = &face->glyph->metrics;
+
+        if (use_advance_metrics)
+        {
+            FT_Long adv = (metrics->horiAdvance + (int)(between_chr * 64.0f) + 32) >> 6;
+            if (adv > max_advance)
+                max_advance = adv;
+            continue;
+        }
 
         if ((last_advance != -1 && last_advance != metrics->horiAdvance) ||
             metrics->horiBearingX < 0)
@@ -561,6 +645,9 @@ FT_Long check_digit_width( FT_Face face )
 
         last_advance = metrics->horiAdvance;
     }
+
+    if (use_advance_metrics)
+        return max_advance;
 
     return last_advance >> 6;
 }
@@ -649,6 +736,7 @@ void convttf(char* path, char* destfile, FT_Long face_index)
 
 
     setcharmap( face );
+    apply_var_axes( library, face );
     /* Set font header data */
 
     export_font.header.header[0] = 'R';
@@ -838,9 +926,16 @@ void convttf(char* path, char* destfile, FT_Long face_index)
 
         err = 0;
         /* insert empty pixels on the left */
-        col_off = w - stride;
-        if (col_off > 1) col_off /= 2;
-        if (col_off < 0) col_off = 0;
+        if (use_advance_metrics && !(code >= '0' && code <= '9' && digit_width))
+        {
+            col_off = slot->bitmap_left > 0 ? slot->bitmap_left : 0;
+        }
+        else
+        {
+            col_off = w - stride;
+            if (col_off > 1) col_off /= 2;
+            if (col_off < 0) col_off = 0;
+        }
 
         for(row=0; row < glyph_height; row++)
         {
@@ -1307,6 +1402,21 @@ void getopts(int *pac, char ***pav)
                 break;
             case 'L':     /* Light rendering algorithm */
                 ft_load_opts |= FT_LOAD_TARGET_LIGHT;
+                break;
+            case 'A':     /* True OpenType advance and left sidebearings */
+                use_advance_metrics = 1;
+                break;
+            case 'V':     /* OpenType Variable Font axes: TAG=val[,TAG=val...] */
+                if (*p) {
+                    parse_var_axes(p);
+                    while (*p && *p != ' ')
+                        p++;
+                }
+                else {
+                    av++; ac--;
+                    if (ac > 0)
+                        parse_var_axes(av[0]);
+                }
                 break;
 
             default:

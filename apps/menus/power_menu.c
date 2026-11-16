@@ -24,13 +24,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>          /* snprintf for the Charge Limit value label */
+#include <string.h>
+#include "string-extra.h"
 #include "config.h"
 #include "lang.h"
+#include "language.h"
 #include "settings.h"
 #include "menu.h"
 #include "screen_access.h" /* screens[].set_background for the bg colour presets */
 #include "viewport.h"       /* viewportmanager_theme_changed: full redraw on colour change */
 #include "exported_menus.h"
+#include "trimpod_mainmenu.h"
+#include "trimpod_ui.h"     /* trimpod_toggle_str */
 
 /* Theme: a named background + ink pair, cycled as one knob.  Backgrounds are
  * the iPod-family colour lineup (iPod mini + nano tones; Apple never published
@@ -53,7 +58,9 @@ struct trimpod_theme
 };
 
 static const struct trimpod_theme trimpod_themes[] = {
-    /* Classic (0xD8DCD0, the mono LCD): Dark is the shipped default look */
+    /* UIPod Classic (ui.figcraft design tokens): shipped default look */
+    { "UIPod Classic",    0xD6D8D5, 0x3C3637 },
+    /* Classic (0xD8DCD0, the mono LCD) */
     { "Classic Dark",     0xD8DCD0, TRIMPOD_INK_DARK  },
     { "Classic Light",    0xD8DCD0, TRIMPOD_INK_LIGHT },
     { "Classic Sepia",    0xD8DCD0, 0x5D4037 },  /* warm book-ink sepia   */
@@ -217,11 +224,74 @@ static void tp_charge_value_cycle(void *ctx, int dir)
 static const struct menu_value_cb trimpod_charge_value =
     { tp_charge_value_get, tp_charge_value_cycle, NULL };
 
-/* The page, in order: Theme, Brightness, Display Poweroff, Idle Poweroff, CPU
- * Frequency, Charge Limit.  Setting rows label from their setting lang_id. */
+static const char *tp_mono_art_value_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return trimpod_toggle_str(global_settings.mono_album_art);
+}
+static void tp_mono_art_value_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    global_settings.mono_album_art = !global_settings.mono_album_art;
+    settings_save();
+}
+static const struct menu_value_cb trimpod_mono_art_value =
+    { tp_mono_art_value_get, tp_mono_art_value_cycle, NULL };
+
+static bool tp_lang_is_ukrainian(void)
+{
+    return strcmp((const char *)global_settings.lang_file, "ukrainian") == 0;
+}
+static const char *tp_lang_value_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return tp_lang_is_ukrainian() ? "Українська" : "English";
+}
+static void tp_lang_value_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    if (tp_lang_is_ukrainian())
+    {
+        global_settings.lang_file[0] = '\0';
+        lang_init(core_language_builtin, language_strings,
+                  LANG_LAST_INDEX_IN_ARRAY);
+    }
+    else
+    {
+        strlcpy((char *)global_settings.lang_file, "ukrainian",
+                sizeof(global_settings.lang_file));
+        if (lang_core_load(LANG_DIR "/ukrainian.lng") != 0)
+        {
+            global_settings.lang_file[0] = '\0';
+            lang_init(core_language_builtin, language_strings,
+                      LANG_LAST_INDEX_IN_ARRAY);
+        }
+    }
+    viewportmanager_theme_changed(THEME_STATUSBAR | THEME_LISTS);
+    settings_save();
+}
+static const struct menu_value_cb trimpod_lang_value =
+    { tp_lang_value_get, tp_lang_value_cycle, NULL };
+
+/* Settings -> Appearance (#1172): Theme, Language, Monochrome Album Art, Main Menu. */
+MENUITEM_VALUE(tp_pw_theme, ID2P(LANG_TRIMPOD_THEME), &trimpod_theme_value, Icon_NOICON);
+MENUITEM_VALUE(tp_app_lang, ID2P(LANG_TRIMPOD_LANGUAGE), &trimpod_lang_value, Icon_NOICON);
+MENUITEM_VALUE(tp_pw_mono_art, ID2P(LANG_TRIMPOD_MONO_ALBUM_ART), &trimpod_mono_art_value, Icon_NOICON);
+MENUITEM_FUNCTION(tp_app_mainmenu, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_MAINMENU),
+                  trimpod_mainmenu_settings, NULL, Icon_NOICON);
+MAKE_MENU(trimpod_appearance_menu, ID2P(LANG_TRIMPOD_APPEARANCE), NULL,
+          Icon_Submenu_Entered,
+          &tp_pw_theme, &tp_app_lang, &tp_pw_mono_art, &tp_app_mainmenu);
+
+int trimpod_appearance_page(void)
+{
+    do_menu(&trimpod_appearance_menu, NULL, NULL, false);
+    return 0;
+}
+
+/* Settings -> Device: Brightness, Display Poweroff, Idle Poweroff, CPU, Charge Limit. */
 MENUITEM_VALUE(tp_pw_cpu, ID2P(LANG_TRIMPOD_CPU), &trimpod_cpu_value, Icon_NOICON);
 MENUITEM_SETTING(tp_pw_brightness, &global_settings.brightness, NULL);
-MENUITEM_VALUE(tp_pw_theme, ID2P(LANG_TRIMPOD_THEME), &trimpod_theme_value, Icon_NOICON);
 MENUITEM_SETTING(tp_pw_screenoff, &global_settings.backlight_timeout, NULL);
 MENUITEM_SETTING(tp_pw_idlepoweroff, &global_settings.poweroff, NULL);
 MENUITEM_VALUE(tp_pw_charge, "Charge Limit", &trimpod_charge_value, Icon_NOICON);
@@ -229,11 +299,11 @@ MENUITEM_VALUE(tp_pw_charge, "Charge Limit", &trimpod_charge_value, Icon_NOICON)
  * charging.  When the Battery Care daemon owns the bit the row is simply absent
  * (the "_nobatt" menu) rather than shown disabled -- see trimpod_power_page. */
 MAKE_MENU(trimpod_power_menu, ID2P(LANG_TRIMPOD_DEVICE), NULL, Icon_Submenu_Entered,
-          &tp_pw_theme, &tp_pw_brightness, &tp_pw_screenoff,
-          &tp_pw_idlepoweroff, &tp_pw_cpu, &tp_pw_charge);
+          &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff,
+          &tp_pw_cpu, &tp_pw_charge);
 MAKE_MENU(trimpod_power_menu_nobatt, ID2P(LANG_TRIMPOD_DEVICE), NULL, Icon_Submenu_Entered,
-          &tp_pw_theme, &tp_pw_brightness, &tp_pw_screenoff,
-          &tp_pw_idlepoweroff, &tp_pw_cpu);
+          &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff,
+          &tp_pw_cpu);
 
 int trimpod_power_page(void)
 {

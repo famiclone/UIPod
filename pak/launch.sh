@@ -22,15 +22,24 @@ else
   RBDEVICE="fallback"; . "$RBDIR/systems/fallback.sys"
 fi
 
+# Ensure EQ presets and AutoEQ directories exist on the SD card before binding.
+mkdir -p "$RBDIR/eqs" "$RBDIR/autoeq"
+
 # The app's data dir is built as /tmp/trimpod, so bind our pak data there.
 if [ ! -f "$RBDIR_BIND/rockbox" ]; then
   mkdir -p "$RBDIR_BIND"
   mount --bind "$RBDIR" "$RBDIR_BIND"
 fi
 
-# Rewrite bundled theme cfgs from the canonical /.rockbox to the live bind path.
+# Rewrite bundled theme cfgs from the canonical /.rockbox to the live bind path,
+# and migrate any pre-HiDPI config.cfg font/scroll references seamlessly.
 for theme in "$RBDIR"/themes/*.cfg; do
-  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/trimpod#g' "$theme"
+  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/trimpod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g' "$theme"
+done
+for cfg in "$RBDIR/config.cfg" "$HOME/.config/rockbox.org/config.cfg"; do
+  if [ -f "$cfg" ]; then
+    sed -i 's/24-ChicagoFLF\.fnt/76-Geologica.fnt/g; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
+  fi
 done
 
 # --- CPU frequency (runtime-only; restored on exit) --------------------------
@@ -139,4 +148,4 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit' INT TERM HUP
 
-"$RBDIR/trimpod" --zoom "$ZOOMVAL" > "$PAK_DIR/trimpod.log" 2>&1
+"$RBDIR/trimpod" --zoom "$ZOOMVAL" > "$PAK_DIR/uipod.log" 2>&1

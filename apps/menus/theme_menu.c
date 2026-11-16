@@ -40,6 +40,8 @@ int browse_folder(void *param)
         .root = info->dir,
     };
 
+    if (!dir_exists(info->dir))
+        mkdir(info->dir);
     if (!dir_exists(info->dir)) {
         splash(HZ, ID2P(LANG_PLAYLIST_DIRECTORY_ACCESS_ERROR));
         return GO_TO_PREVIOUS;

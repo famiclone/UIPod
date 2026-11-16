@@ -18,4 +18,4 @@ export MTP_GADGET="/sys/kernel/config/usb_gadget/g1"
 export UDC_STATE="/sys/class/udc/5100000.udc-controller/state"
 export UDC_IRQ="sunxi_usb_udc"
 # Zoom value
-ZOOMVAL="3.2"
+ZOOMVAL="1"

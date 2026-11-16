@@ -48,25 +48,32 @@ static const struct button_mapping button_context_standard[]  = {
     { ACTION_STD_OK,            BUTTON_A|BUTTON_REL,        BUTTON_A },
     { ACTION_STD_CANCEL,        BUTTON_B|BUTTON_REL,        BUTTON_B },
     { ACTION_STD_MENU,          BUTTON_Y|BUTTON_REL,        BUTTON_Y },
-    { ACTION_STD_CONTEXT,       BUTTON_START|BUTTON_REL,    BUTTON_START },
+    { ACTION_STD_CONTEXT,       BUTTON_MENU|BUTTON_REL,     BUTTON_MENU },
+    { ACTION_STD_CONTEXT,       BUTTON_MENU|BUTTON_REL,     BUTTON_MENU|BUTTON_REPEAT },
 
     LAST_ITEM_IN_LIST
 }; /* button_context_standard */
 
-/* Trimpod: simplified iPod-style Now Playing controls.
- *   A            = play / pause + Now Playing menu (incl. Start Visualizer)
- *   D-pad <- ->  = previous / next track
- *   L1 / R1      = seek -10s / +10s in the current track
+/* UIPod: simplified iPod-style Now Playing controls.
+ *   A / START    = play / pause
+ *   MENU / Hold A= Now Playing menu (incl. Start Visualizer)
+ *   D-pad <- ->  = previous / next track (hold = rewind / fast-forward)
  *   L2 / R2      = previous / next chapter (m4b audiobooks)
- *   Volume +/-   = volume (dedicated hardware rocker)
+ *   Volume +/-   = volume (SELECT + Volume +/- = brightness)
  *   B            = back to the browser (hold >1s = main menu / home)
  * All other buttons intentionally do nothing on this screen. */
 static const struct button_mapping button_context_wps[]  = {
     { ACTION_WPS_PLAY,      BUTTON_A|BUTTON_REL,            BUTTON_A },
+    { ACTION_WPS_PLAY,      BUTTON_START|BUTTON_REL,        BUTTON_START },
+    { ACTION_WPS_PLAY,      BUTTON_START|BUTTON_REL,        BUTTON_START|BUTTON_REPEAT },
+    { ACTION_STD_CONTEXT,   BUTTON_MENU|BUTTON_REL,         BUTTON_MENU },
+    { ACTION_STD_CONTEXT,   BUTTON_MENU|BUTTON_REL,         BUTTON_MENU|BUTTON_REPEAT },
     { ACTION_WPS_SKIPPREV,  BUTTON_LEFT|BUTTON_REL,         BUTTON_LEFT },
     { ACTION_WPS_SKIPNEXT,  BUTTON_RIGHT|BUTTON_REL,        BUTTON_RIGHT },
-    { ACTION_WPS_SEEKBACK,  BUTTON_L|BUTTON_REL,            BUTTON_L },
-    { ACTION_WPS_SEEKFWD,   BUTTON_R|BUTTON_REL,            BUTTON_R },
+    { ACTION_WPS_SEEKBACK,  BUTTON_LEFT|BUTTON_REPEAT,      BUTTON_NONE },
+    { ACTION_WPS_SEEKFWD,   BUTTON_RIGHT|BUTTON_REPEAT,     BUTTON_NONE },
+    { ACTION_WPS_STOPSEEK,  BUTTON_LEFT|BUTTON_REL,         BUTTON_LEFT|BUTTON_REPEAT },
+    { ACTION_WPS_STOPSEEK,  BUTTON_RIGHT|BUTTON_REL,        BUTTON_RIGHT|BUTTON_REPEAT },
     { ACTION_TP_CHAP_PREV,  BUTTON_L2|BUTTON_REL,           BUTTON_L2 },
     { ACTION_TP_CHAP_NEXT,  BUTTON_R2|BUTTON_REL,           BUTTON_R2 },
     /* the volume rocker is consumed globally (global_volume_action) */
@@ -74,16 +81,16 @@ static const struct button_mapping button_context_wps[]  = {
     LAST_ITEM_IN_LIST
 }; /* button_context_wps */
 
-/* Trimpod: video playback (trimpod_video.c). */
+/* UIPod: video playback (trimpod_video.c). */
 static const struct button_mapping button_context_video[] = {
     { ACTION_WPS_PLAY,        BUTTON_A|BUTTON_REL,        BUTTON_A },
+    { ACTION_WPS_PLAY,        BUTTON_START|BUTTON_REL,    BUTTON_START },
+    { ACTION_WPS_PLAY,        BUTTON_START|BUTTON_REL,    BUTTON_START|BUTTON_REPEAT },
     { ACTION_WPS_BROWSE,      BUTTON_B|BUTTON_REL,        BUTTON_B },
     { ACTION_WPS_SEEKBACK,    BUTTON_LEFT,                BUTTON_NONE },
     { ACTION_WPS_SEEKBACK,    BUTTON_LEFT|BUTTON_REPEAT,  BUTTON_NONE },
     { ACTION_WPS_SEEKFWD,     BUTTON_RIGHT,               BUTTON_NONE },
     { ACTION_WPS_SEEKFWD,     BUTTON_RIGHT|BUTTON_REPEAT, BUTTON_NONE },
-    { ACTION_WPS_SEEKBACK,    BUTTON_L|BUTTON_REL,        BUTTON_L },
-    { ACTION_WPS_SEEKFWD,     BUTTON_R|BUTTON_REL,        BUTTON_R },
     { ACTION_TP_CHAP_PREV,    BUTTON_L2|BUTTON_REL,       BUTTON_L2 },
     { ACTION_TP_CHAP_NEXT,    BUTTON_R2|BUTTON_REL,       BUTTON_R2 },
     { ACTION_TP_VIDEO_ASPECT, BUTTON_X|BUTTON_REL,        BUTTON_X },
@@ -91,8 +98,6 @@ static const struct button_mapping button_context_video[] = {
 }; /* button_context_video */
 
 static const struct button_mapping button_context_list[] = {
-    { ACTION_LIST_VOLUP,      BUTTON_SELECT|BUTTON_A,                  BUTTON_NONE },
-    { ACTION_LIST_VOLDOWN,    BUTTON_SELECT|BUTTON_Y,                  BUTTON_NONE },
     /* D-pad L/R and the L1/R1 shoulder buttons each page the list one screen */
     { ACTION_LISTTREE_PGUP,   BUTTON_LEFT,                             BUTTON_NONE },
     { ACTION_LISTTREE_PGDOWN, BUTTON_RIGHT,                            BUTTON_NONE },
@@ -196,7 +201,6 @@ static const struct button_mapping button_context_keyboard[]  = {
     { ACTION_KBD_SELECT,       BUTTON_A,                       BUTTON_NONE },
     { ACTION_KBD_BACKSPACE,    BUTTON_Y|BUTTON_REL,            BUTTON_Y },
     { ACTION_KBD_PAGE_FLIP,    BUTTON_X,                       BUTTON_NONE },
-    { ACTION_KBD_DONE,         BUTTON_START|BUTTON_REL,        BUTTON_START },
     { ACTION_KBD_ABORT,        BUTTON_B|BUTTON_REL,            BUTTON_B },
 
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)

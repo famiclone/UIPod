@@ -48,6 +48,7 @@
 #include "appevents.h"
 
 #include "root_menu.h"
+#include "trimpod_svg.h"
 #include "trimpod_transition.h"   /* slide the browser in/out */
 #include "trimpod_page.h"         /* trimpod_home_pending (hold-BACK -> root) */
 
@@ -134,6 +135,20 @@ static const char* tree_get_filename(int selected_item, void *data,
         return(strip_extension(buffer, buffer_len, name));
     }
     return(name);
+}
+
+static const struct trimpod_svg_icon *tree_get_svg_icon(int selected_item, void *data)
+{
+    struct tree_context *local_tc = (struct tree_context *)data;
+    struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
+    return trimpod_svg_for_path(entry->name, (entry->attr & ATTR_DIRECTORY) != 0);
+}
+
+static bool tree_get_chevron(int selected_item, void *data)
+{
+    struct tree_context *local_tc = (struct tree_context *)data;
+    struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
+    return (entry->attr & ATTR_DIRECTORY) != 0;
 }
 
 #ifdef HAVE_LCD_COLOR
@@ -225,6 +240,8 @@ static int update_dir(void)
 
     /* Ensure that list is initialized before update_dir returns */
     gui_synclist_init(list, &tree_get_filename, &tc, false, 1, NULL);
+    gui_synclist_set_svg_icon_callback(list, &tree_get_svg_icon);
+    gui_synclist_set_chevron_callback(list, &tree_get_chevron);
 
     {
         tc.sort_dir = TP_SORT_DIR;

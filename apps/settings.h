@@ -527,6 +527,7 @@ struct user_settings
     int pbe_precut;
 
     int afr_enabled;
+    bool mono_album_art;
 
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \

@@ -1,0 +1,1670 @@
+# UIPod Mini / Trimpod Ukrainian localization (synced with ui.figcraft mode2 = "ua")
+<phrase>
+  id: LANG_ROCKBOX_TITLE
+  desc: main menu title
+  user: core
+  <source>
+    *: "UIPod Mini"
+  </source>
+  <dest>
+    *: "UIPod Mini"
+  </dest>
+  <voice>
+    *: "UIPod Mini"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_CANCEL
+  desc: Visual confirmation of canceling a changed setting
+  user: core
+  <source>
+    *: "Cancelled"
+  </source>
+  <dest>
+    *: "Скасовано"
+  </dest>
+  <voice>
+    *: "Скасовано"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_ARE_YOU_SURE
+  desc: confirm action
+  user: core
+  <source>
+    *: "Are You Sure?"
+  </source>
+  <dest>
+    *: "Ви впевнені?"
+  </dest>
+  <voice>
+    *: "Ви впевнені?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_NOW_PLAYING
+  desc: in the main menu
+  user: core
+  <source>
+    *: "Now Playing"
+  </source>
+  <dest>
+    *: "Програється"
+  </dest>
+  <voice>
+    *: "Програється"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_RESUME_PLAYBACK
+  desc: in the main menu
+  user: core
+  <source>
+    *: "Resume Playback"
+  </source>
+  <dest>
+    *: "Програється"
+  </dest>
+  <voice>
+    *: "Програється"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_SETTINGS
+  desc:  in main menu and visual confirmation after settings reset
+  user: core
+  <source>
+    *: "Settings"
+  </source>
+  <dest>
+    *: "Налаштування"
+  </dest>
+  <voice>
+    *: "Налаштування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_PLAYLISTS
+  desc: in the main menu and Playlist settings menu
+  user: core
+  <source>
+    *: "Playlists"
+  </source>
+  <dest>
+    *: "Плейлисти"
+  </dest>
+  <voice>
+    *: "Плейлисти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_SOUND_SETTINGS
+  desc: in the main menu
+  user: core
+  <source>
+    *: "Audio"
+  </source>
+  <dest>
+    *: "Звук"
+  </dest>
+  <voice>
+    *: "Звук"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_EQUALIZER
+  desc: in the sound settings menu
+  user: core
+  <source>
+    *: "Equalizer"
+  </source>
+  <dest>
+    *: "Еквалайзер"
+  </dest>
+  <voice>
+    *: "Еквалайзер"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BRIGHTNESS
+  desc: in settings_menu
+  user: core
+  <source>
+    *: none
+    backlight_brightness: "Brightness"
+  </source>
+  <dest>
+    *: none
+    backlight_brightness: "Яскравість"
+  </dest>
+  <voice>
+    *: none
+    backlight_brightness: "Яскравість"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_POWEROFF_IDLE
+  desc: in settings_menu
+  user: core
+  <source>
+    *: "Idle Poweroff"
+  </source>
+  <dest>
+    *: "Автовимкнення"
+  </dest>
+  <voice>
+    *: "Автовимкнення"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_RESET
+  desc: in system_settings_menu()
+  user: core
+  <source>
+    *: "Reset Settings"
+  </source>
+  <dest>
+    *: "Скинути налаштування"
+  </dest>
+  <voice>
+    *: "Скинути налаштування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_NOTHING_TO_RESUME
+  desc: Error message displayed when resume button pressed but no playlist
+  user: core
+  <source>
+    *: "Nothing to resume"
+  </source>
+  <dest>
+    *: "Немає відтворення"
+  </dest>
+  <voice>
+    *: "Немає відтворення"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_FILE_NOT_FOUND
+  desc: When file does not exist
+  user: core
+  <source>
+    *: "File not found"
+  </source>
+  <dest>
+    *: "Теку не знайдено"
+  </dest>
+  <voice>
+    *: "Теку не знайдено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_EXIT
+  desc: Trimpod root menu entry to quit the app
+  user: core
+  <source>
+    *: "Exit"
+  </source>
+  <dest>
+    *: "Вихід"
+  </dest>
+  <voice>
+    *: "Вихід"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_BROWSE
+  desc: Trimpod root menu entry for the file browser
+  user: core
+  <source>
+    *: "Browse"
+  </source>
+  <dest>
+    *: "Огляд"
+  </dest>
+  <voice>
+    *: "Огляд"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CONTROLS
+  desc: Trimpod Controls submenu (in Settings)
+  user: core
+  <source>
+    *: "Controls"
+  </source>
+  <dest>
+    *: "Керування"
+  </dest>
+  <voice>
+    *: "Керування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ABOUT
+  desc: Trimpod About submenu (in Settings)
+  user: core
+  <source>
+    *: "About"
+  </source>
+  <dest>
+    *: "Про програму"
+  </dest>
+  <voice>
+    *: "Про програму"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_THEME
+  desc: Trimpod Power > Theme entry (background + ink colour pairs)
+  user: core
+  <source>
+    *: "Theme"
+  </source>
+  <dest>
+    *: "Тема"
+  </dest>
+  <voice>
+    *: "Тема"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CPU
+  desc: Trimpod Settings > CPU Setting (CPU frequency slider)
+  user: core
+  <source>
+    *: "CPU Frequency"
+  </source>
+  <dest>
+    *: "Частота CPU"
+  </dest>
+  <voice>
+    *: "Частота CPU"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_VISUALIZERS
+  desc: Trimpod Settings > Audio Visualizer > Visualization Presets (Milkdrop preset list)
+  user: core
+  <source>
+    *: "Visualization Presets"
+  </source>
+  <dest>
+    *: "Пресети візуалізації"
+  </dest>
+  <voice>
+    *: "Пресети візуалізації"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUDIO_VISUALIZER
+  desc: Trimpod Settings > Visualizer Settings
+  user: core
+  <source>
+    *: "Visualizers"
+  </source>
+  <dest>
+    *: "Візуалізатори"
+  </dest>
+  <voice>
+    *: "Візуалізатори"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_VIZ_TRANSITION
+  desc: Trimpod Settings > Visualizer Effects > seconds per preset before switching
+  user: core
+  <source>
+    *: "Visualization Transition"
+  </source>
+  <dest>
+    *: "Зміна пресету"
+  </dest>
+  <voice>
+    *: "Зміна пресету"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_VIZ_ACTIVATE_AFTER
+  desc: Trimpod Settings > Visualizer Settings > activation delay selector
+  user: core
+  <source>
+    *: "Start Visualizer After"
+  </source>
+  <dest>
+    *: "Запуск візуалізатора"
+  </dest>
+  <voice>
+    *: "Запуск візуалізатора"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_FOLDERS
+  desc: Trimpod Settings > Music Folders (music folder list)
+  user: core
+  <source>
+    *: "Music Folders"
+  </source>
+  <dest>
+    *: "Теки музики"
+  </dest>
+  <voice>
+    *: "Теки музики"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MAINMENU
+  desc: Trimpod Settings > Menu Settings (toggle which entries show)
+  user: core
+  <source>
+    *: "Main menu"
+  </source>
+  <dest>
+    *: "Головне меню"
+  </dest>
+  <voice>
+    *: "Головне меню"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DEVICE
+  desc: Trimpod Settings > Power Settings (Brightness, Colour, Display Poweroff, CPU, Idle Power Off)
+  user: core
+  <source>
+    *: "Power"
+  </source>
+  <dest>
+    *: "Живлення"
+  </dest>
+  <voice>
+    *: "Живлення"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTO_SCREEN_OFF
+  desc: Trimpod Settings > Power > Display Poweroff (backlight timeout; 0 = Never)
+  user: core
+  <source>
+    *: "Display Poweroff"
+  </source>
+  <dest>
+    *: "Вимкнення екрана"
+  </dest>
+  <voice>
+    *: "Вимкнення екрана"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MUSIC
+  desc: Trimpod root menu Music entry (browse configured folders)
+  user: core
+  <source>
+    *: "Music"
+  </source>
+  <dest>
+    *: "Музика"
+  </dest>
+  <voice>
+    *: "Музика"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PODCASTS
+  desc: Trimpod root menu Podcasts entry (browse configured folders)
+  user: core
+  <source>
+    *: "Podcasts"
+  </source>
+  <dest>
+    *: "Подкасти"
+  </dest>
+  <voice>
+    *: "Подкасти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUDIOBOOKS
+  desc: Trimpod root menu Audiobooks entry (browse configured folders)
+  user: core
+  <source>
+    *: "Audiobooks"
+  </source>
+  <dest>
+    *: "Аудіокниги"
+  </dest>
+  <voice>
+    *: "Аудіокниги"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PODCAST_FOLDERS
+  desc: Trimpod Settings > Podcast Folders (podcast folder list)
+  user: core
+  <source>
+    *: "Podcast Folders"
+  </source>
+  <dest>
+    *: "Теки подкастів"
+  </dest>
+  <voice>
+    *: "Теки подкастів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUDIOBOOK_FOLDERS
+  desc: Trimpod Settings > Audiobook Folders (audiobook folder list)
+  user: core
+  <source>
+    *: "Audiobook Folders"
+  </source>
+  <dest>
+    *: "Теки аудіокниг"
+  </dest>
+  <voice>
+    *: "Теки аудіокниг"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NO_MUSIC
+  desc: Trimpod splash when Shuffle Songs finds no playable tracks
+  user: core
+  <source>
+    *: "No music found"
+  </source>
+  <dest>
+    *: "Музику не знайдено"
+  </dest>
+  <voice>
+    *: "Музику не знайдено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_LIBRARY
+  desc: Trimpod Settings > Library submenu (folder lists + Rescan Library)
+  user: core
+  <source>
+    *: "Library"
+  </source>
+  <dest>
+    *: "Бібліотека"
+  </dest>
+  <voice>
+    *: "Бібліотека"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ARTISTS
+  desc: Trimpod Library entry / screen title listing artists
+  user: core
+  <source>
+    *: "Artists"
+  </source>
+  <dest>
+    *: "Артисти"
+  </dest>
+  <voice>
+    *: "Артисти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ALL_SONGS
+  desc: Trimpod Library Albums screen row that plays every track by the artist
+  user: core
+  <source>
+    *: "All Songs"
+  </source>
+  <dest>
+    *: "Усі пісні"
+  </dest>
+  <voice>
+    *: "Усі пісні"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ALBUMS
+  desc: Trimpod Library root entry / screen title listing all albums
+  user: core
+  <source>
+    *: "Albums"
+  </source>
+  <dest>
+    *: "Альбоми"
+  </dest>
+  <voice>
+    *: "Альбоми"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SONGS
+  desc: Trimpod Library root entry / screen title listing all songs
+  user: core
+  <source>
+    *: "Songs"
+  </source>
+  <dest>
+    *: "Пісні"
+  </dest>
+  <voice>
+    *: "Пісні"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SHUFFLE_ALL
+  desc: Trimpod root-menu action that shuffles and plays the whole Music library
+  user: core
+  <source>
+    *: "Shuffle All"
+  </source>
+  <dest>
+    *: "Перемішати все"
+  </dest>
+  <voice>
+    *: "Перемішати все"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_RESCAN
+  desc: Trimpod Library menu row that rebuilds the SQLite index from disk
+  user: core
+  <source>
+    *: "Rescan Library"
+  </source>
+  <dest>
+    *: "Оновити бібліотеку"
+  </dest>
+  <voice>
+    *: "Оновити бібліотеку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SCANNING
+  desc: Trimpod screen held while the library index parses files; code appends the percent done
+  user: core
+  <source>
+    *: "Scanning Library"
+  </source>
+  <dest>
+    *: "Сканування бібліотеки"
+  </dest>
+  <voice>
+    *: "Сканування бібліотеки"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_UNKNOWN_ARTIST
+  desc: Trimpod Library label for tracks with no artist tag
+  user: core
+  <source>
+    *: "Unknown Artist"
+  </source>
+  <dest>
+    *: "Невідомий артист"
+  </dest>
+  <voice>
+    *: "Невідомий артист"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_TO_PLAY_QUEUE
+  desc: Trimpod context menu: append to the live queue
+  user: core
+  <source>
+    *: "Add to Play Queue"
+  </source>
+  <dest>
+    *: "Додати в чергу"
+  </dest>
+  <voice>
+    *: "Додати в чергу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_TO_PLAYLIST
+  desc: Trimpod context menu item and picker title
+  user: core
+  <source>
+    *: "Add to Playlist"
+  </source>
+  <dest>
+    *: "Додати у плейлист"
+  </dest>
+  <voice>
+    *: "Додати у плейлист"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_REMOVE_FROM_PLAYLIST
+  desc: Trimpod playlist editor / viewer context menu
+  user: core
+  <source>
+    *: "Remove from Playlist"
+  </source>
+  <dest>
+    *: "Видалити з плейлиста"
+  </dest>
+  <voice>
+    *: "Видалити з плейлиста"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_REMOVE_FOLDER_Q
+  desc: Trimpod confirm: remove a library folder
+  user: core
+  <source>
+    *: "Remove this folder?"
+  </source>
+  <dest>
+    *: "Видалити цю теку?"
+  </dest>
+  <voice>
+    *: "Видалити цю теку?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CONFIRM_LEGEND
+  desc: Trimpod confirm page button line
+  user: core
+  <source>
+    *: "Cancel (B)      OK (A)"
+  </source>
+  <dest>
+    *: "Скасувати (B)   OK (A)"
+  </dest>
+  <voice>
+    *: "Скасувати або підтвердити"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_FOLDER
+  desc: Trimpod folder picker title
+  user: core
+  <source>
+    *: "Add Folder"
+  </source>
+  <dest>
+    *: "Додати теку"
+  </dest>
+  <voice>
+    *: "Додати теку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_FOLDER_ROW
+  desc: Trimpod folders settings page: last row
+  user: core
+  <source>
+    *: "+ Add Folder"
+  </source>
+  <dest>
+    *: "Додати теку"
+  </dest>
+  <voice>
+    *: "Додати теку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_PLAYLIST_ROW
+  desc: Trimpod playlists page: last row
+  user: core
+  <source>
+    *: "+ Add Playlist"
+  </source>
+  <dest>
+    *: "+ Додати плейлист"
+  </dest>
+  <voice>
+    *: "Додати плейлист"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_HOLD_A_TO_ADD
+  desc: Trimpod folder picker header legend
+  user: core
+  <source>
+    *: "MENU to add"
+  </source>
+  <dest>
+    *: "MENU — додати"
+  </dest>
+  <voice>
+    *: "Натисніть MENU, щоб додати"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PLAY_SHUFFLED
+  desc: Trimpod context menu: replace the queue with the selection, shuffled
+  user: core
+  <source>
+    *: "Play Shuffled"
+  </source>
+  <dest>
+    *: "Грати випадково"
+  </dest>
+  <voice>
+    *: "Грати випадково"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MOVIES
+  desc: Trimpod root menu Movies entry (browse configured folders)
+  user: core
+  <source>
+    *: "Movies"
+  </source>
+  <dest>
+    *: "Фільми"
+  </dest>
+  <voice>
+    *: "Фільми"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_TELEVISION
+  desc: Trimpod root menu Television entry (browse configured folders)
+  user: core
+  <source>
+    *: "Television"
+  </source>
+  <dest>
+    *: "Серіали"
+  </dest>
+  <voice>
+    *: "Серіали"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MOVIE_FOLDERS
+  desc: Trimpod Settings > Movie Folders (movie folder list)
+  user: core
+  <source>
+    *: "Movie Folders"
+  </source>
+  <dest>
+    *: "Теки відео"
+  </dest>
+  <voice>
+    *: "Теки відео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_TELEVISION_FOLDERS
+  desc: Trimpod Settings > Television Folders (television folder list)
+  user: core
+  <source>
+    *: "Television Folders"
+  </source>
+  <dest>
+    *: "Теки серіалів"
+  </dest>
+  <voice>
+    *: "Теки серіалів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MONO_ALBUM_ART
+  desc: Trimpod setting: display album art in black and white
+  user: core
+  <source>
+    *: "Monochrome album art"
+  </source>
+  <dest>
+    *: "Монохромна обкладинка"
+  </dest>
+  <voice>
+    *: "Монохромна обкладинка"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_FILES
+  desc: ui.figcraft FILES variable
+  user: core
+  <source>
+    *: "Files"
+  </source>
+  <dest>
+    *: "Файли"
+  </dest>
+  <voice>
+    *: "Файли"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_DIRECTORY
+  desc: ui.figcraft ADD_DIR variable
+  user: core
+  <source>
+    *: "Add directory"
+  </source>
+  <dest>
+    *: "Додати теку"
+  </dest>
+  <voice>
+    *: "Додати теку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_REMOVE_DIRECTORY
+  desc: Remove configured directory from Files list
+  user: core
+  <source>
+    *: "Remove directory"
+  </source>
+  <dest>
+    *: "Видалити теку"
+  </dest>
+  <voice>
+    *: "Видалити теку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_EXTRAS
+  desc: ui.figcraft EXTRAS variable
+  user: core
+  <source>
+    *: "Extras"
+  </source>
+  <dest>
+    *: "Екстра"
+  </dest>
+  <voice>
+    *: "Екстра"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_VIDEOS
+  desc: ui.figcraft VIDEOS variable
+  user: core
+  <source>
+    *: "Videos"
+  </source>
+  <dest>
+    *: "Відео"
+  </dest>
+  <voice>
+    *: "Відео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_GENRES
+  desc: ui.figcraft GENRES variable
+  user: core
+  <source>
+    *: "Genres"
+  </source>
+  <dest>
+    *: "Жанри"
+  </dest>
+  <voice>
+    *: "Жанри"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_UNKNOWN_GENRE
+  desc: Fallback label for tracks with no genre tag
+  user: core
+  <source>
+    *: "Unknown Genre"
+  </source>
+  <dest>
+    *: "Невідомий жанр"
+  </dest>
+  <voice>
+    *: "Невідомий жанр"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_APPEARANCE
+  desc: ui.figcraft APPEARANCE variable
+  user: core
+  <source>
+    *: "Display"
+  </source>
+  <dest>
+    *: "Вигляд"
+  </dest>
+  <voice>
+    *: "Вигляд"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOUND
+  desc: ui.figcraft SOUND variable
+  user: core
+  <source>
+    *: "Sound"
+  </source>
+  <dest>
+    *: "Звук"
+  </dest>
+  <voice>
+    *: "Звук"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_TYPE
+  desc: ui.figcraft SOURCE _TYPE variable
+  user: core
+  <source>
+    *: "Source type"
+  </source>
+  <dest>
+    *: "Джерело"
+  </dest>
+  <voice>
+    *: "Джерело"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_LOCAL
+  desc: Source screen Local option
+  user: core
+  <source>
+    *: "Local"
+  </source>
+  <dest>
+    *: "Local"
+  </dest>
+  <voice>
+    *: "Local"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_NAVIDROME
+  desc: Source screen Navidrome option
+  user: core
+  <source>
+    *: "Navidrome"
+  </source>
+  <dest>
+    *: "Navidrome"
+  </dest>
+  <voice>
+    *: "Navidrome"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAVIDROME_SOON
+  desc: Placeholder splash until Navidrome streaming client is connected
+  user: core
+  <source>
+    *: "Navidrome: coming soon"
+  </source>
+  <dest>
+    *: "Navidrome: незабаром"
+  </dest>
+  <voice>
+    *: "Navidrome незабаром"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_LANGUAGE
+  desc: Language selector row in Appearance settings
+  user: core
+  <source>
+    *: "Language"
+  </source>
+  <dest>
+    *: "Мова"
+  </dest>
+  <voice>
+    *: "Мова"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SERVER_URL
+  desc: Navidrome settings Server URL row
+  user: core
+  <source>
+    *: "Server URL"
+  </source>
+  <dest>
+    *: "URL сервера"
+  </dest>
+  <voice>
+    *: "URL сервера"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_USERNAME
+  desc: Navidrome settings Username row
+  user: core
+  <source>
+    *: "Username"
+  </source>
+  <dest>
+    *: "Логін"
+  </dest>
+  <voice>
+    *: "Логін"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_PASSWORD
+  desc: Navidrome settings Password row
+  user: core
+  <source>
+    *: "Password"
+  </source>
+  <dest>
+    *: "Пароль"
+  </dest>
+  <voice>
+    *: "Пароль"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUALITY
+  desc: Navidrome settings Audio Quality row
+  user: core
+  <source>
+    *: "Audio Quality"
+  </source>
+  <dest>
+    *: "Якість аудіо"
+  </dest>
+  <voice>
+    *: "Якість аудіо"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_ORIGINAL
+  desc: Navidrome Original Lossless audio quality
+  user: core
+  <source>
+    *: "Original"
+  </source>
+  <dest>
+    *: "Оригінал"
+  </dest>
+  <voice>
+    *: "Оригінал"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_320
+  desc: Navidrome MP3 320 kbps audio quality
+  user: core
+  <source>
+    *: "MP3 320 kbps"
+  </source>
+  <dest>
+    *: "MP3 320 кбіт/с"
+  </dest>
+  <voice>
+    *: "MP3 320"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_192
+  desc: Navidrome MP3 192 kbps audio quality
+  user: core
+  <source>
+    *: "MP3 192 kbps"
+  </source>
+  <dest>
+    *: "MP3 192 кбіт/с"
+  </dest>
+  <voice>
+    *: "MP3 192"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CACHE_LIMIT
+  desc: Navidrome SD cache size limit row
+  user: core
+  <source>
+    *: "Cache Limit"
+  </source>
+  <dest>
+    *: "Ліміт кешу"
+  </dest>
+  <voice>
+    *: "Ліміт кешу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_UNLIMITED
+  desc: Navidrome unlimited cache option
+  user: core
+  <source>
+    *: "Unlimited"
+  </source>
+  <dest>
+    *: "Без ліміту"
+  </dest>
+  <voice>
+    *: "Без ліміту"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SELF_SIGNED
+  desc: Navidrome allow self-signed TLS toggle
+  user: core
+  <source>
+    *: "Self-Signed TLS"
+  </source>
+  <dest>
+    *: "Самопідписаний TLS"
+  </dest>
+  <voice>
+    *: "Самопідписаний TLS"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNC
+  desc: Navidrome Connect and Sync action row
+  user: core
+  <source>
+    *: "Connect & Sync"
+  </source>
+  <dest>
+    *: "З'єднати й синхр."
+  </dest>
+  <voice>
+    *: "З'єднати й синхронізувати"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CLEAR_CACHE
+  desc: Navidrome Clear Cache action row
+  user: core
+  <source>
+    *: "Clear Cache"
+  </source>
+  <dest>
+    *: "Очистити кеш"
+  </dest>
+  <voice>
+    *: "Очистити кеш"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CLEAR_CACHE_Q
+  desc: Navidrome Clear Cache confirmation prompt
+  user: core
+  <source>
+    *: "Clear cached audio & covers?"
+  </source>
+  <dest>
+    *: "Очистити кеш аудіо й обкладинок?"
+  </dest>
+  <voice>
+    *: "Очистити кеш аудіо й обкладинок?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CACHE_CLEARED
+  desc: Navidrome Cache cleared splash
+  user: core
+  <source>
+    *: "Cache cleared"
+  </source>
+  <dest>
+    *: "Кеш очищено"
+  </dest>
+  <voice>
+    *: "Кеш очищено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_NOT_SET
+  desc: Navidrome unset field indicator
+  user: core
+  <source>
+    *: "Not set"
+  </source>
+  <dest>
+    *: "Не задано"
+  </dest>
+  <voice>
+    *: "Не задано"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CONNECTING
+  desc: Navidrome connecting fullscreen message
+  user: core
+  <source>
+    *: "Connecting..."
+  </source>
+  <dest>
+    *: "З'єднання..."
+  </dest>
+  <voice>
+    *: "З'єднання"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNCING
+  desc: Navidrome syncing library fullscreen message
+  user: core
+  <source>
+    *: "Syncing Library"
+  </source>
+  <dest>
+    *: "Синхронізація"
+  </dest>
+  <voice>
+    *: "Синхронізація"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNCED_FMT
+  desc: Navidrome sync completion splash format
+  user: core
+  <source>
+    *: "Synced %d tracks"
+  </source>
+  <dest>
+    *: "Синхронізовано: %d"
+  </dest>
+  <voice>
+    *: "Синхронізовано"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_BUFFERING
+  desc: Navidrome buffering fullscreen message
+  user: core
+  <source>
+    *: "Buffering..."
+  </source>
+  <dest>
+    *: "Буферизація..."
+  </dest>
+  <voice>
+    *: "Буферизація"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CONFIG_NEEDED
+  desc: Navidrome missing credentials splash
+  user: core
+  <source>
+    *: "Set URL, username & password"
+  </source>
+  <dest>
+    *: "Вкажіть URL, логін і пароль"
+  </dest>
+  <voice>
+    *: "Вкажіть URL, логін і пароль"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOAD
+  desc: Hold-A context menu action to download Navidrome track/album/folder to SD card
+  user: core
+  <source>
+    *: "Download"
+  </source>
+  <dest>
+    *: "Завантажити"
+  </dest>
+  <voice>
+    *: "Завантажити"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADING
+  desc: Fullscreen progress message while downloading a single Navidrome track
+  user: core
+  <source>
+    *: "Downloading..."
+  </source>
+  <dest>
+    *: "Завантаження..."
+  </dest>
+  <voice>
+    *: "Завантаження"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADING_FMT
+  desc: Fullscreen progress message while downloading multiple Navidrome tracks
+  user: core
+  <source>
+    *: "Downloading %d/%d"
+  </source>
+  <dest>
+    *: "Завантаження %d/%d"
+  </dest>
+  <voice>
+    *: "Завантаження"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_ONE
+  desc: Splash shown when a single track finishes downloading
+  user: core
+  <source>
+    *: "Downloaded"
+  </source>
+  <dest>
+    *: "Завантажено"
+  </dest>
+  <voice>
+    *: "Завантажено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_FMT
+  desc: Splash shown when multiple tracks finish downloading
+  user: core
+  <source>
+    *: "Downloaded %d tracks"
+  </source>
+  <dest>
+    *: "Завантажено: %d"
+  </dest>
+  <voice>
+    *: "Завантажено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PLAYLIST_EMPTY_HINT1
+  desc: Trimpod empty-playlist page, line 2
+  user: core
+  <source>
+    *: "Press MENU on any song"
+  </source>
+  <dest>
+    *: "Натисніть MENU на пісні,"
+  </dest>
+  <voice>
+    *: "Натисніть MENU на пісні"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PLAYLIST_EMPTY_HINT2
+  desc: Trimpod empty-playlist page, line 3
+  user: core
+  <source>
+    *: "to add it to a playlist"
+  </source>
+  <dest>
+    *: "щоб додати у плейлист"
+  </dest>
+  <voice>
+    *: "щоб додати у плейлист"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_BACK
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "B - Back (Hold: Home)"
+  </source>
+  <dest>
+    *: "B - Назад (утр.: Меню)"
+  </dest>
+  <voice>
+    *: "B - Назад"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_PLAY
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "A - Select / Enter"
+  </source>
+  <dest>
+    *: "A - Вибір / Відкрити"
+  </dest>
+  <voice>
+    *: "A - Вибір"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_START
+  desc: UIPod controls page: START play/pause
+  user: core
+  <source>
+    *: "START - Play / Pause"
+  </source>
+  <dest>
+    *: "START - Плей / Пауза"
+  </dest>
+  <voice>
+    *: "START - Плей або Пауза"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_CONTEXT
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "MENU - Context / Settings"
+  </source>
+  <dest>
+    *: "MENU - Меню / Налашт."
+  </dest>
+  <voice>
+    *: "MENU - Меню та Налаштування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_BRIGHTNESS
+  desc: UIPod controls page: SELECT + Volume brightness
+  user: core
+  <source>
+    *: "SELECT + Vol - Brightness"
+  </source>
+  <dest>
+    *: "SELECT + Vol - Яскравість"
+  </dest>
+  <voice>
+    *: "SELECT плюс гучність - Яскравість"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_SEEK
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "Hold Left/Right - Seek"
+  </source>
+  <dest>
+    *: "Утр. Вліво/Вправо - Перем."
+  </dest>
+  <voice>
+    *: "Утримання вліво або вправо - Перемотка"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_CHAPTER
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "L2/R2 - Chapter Skip"
+  </source>
+  <dest>
+    *: "L2/R2 - Розділи"
+  </dest>
+  <voice>
+    *: "L2 R2 - Розділи"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_LOCK
+  desc: Trimpod controls page
+  user: core
+  <source>
+    *: "Side Switch - Lock"
+  </source>
+  <dest>
+    *: "Перемикач - Блокування"
+  </dest>
+  <voice>
+    *: "Бічний перемикач - Блокування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_JELLYFIN
+  desc: Source type option and settings item for Jellyfin
+  user: core
+  <source>
+    *: "Jellyfin"
+  </source>
+  <dest>
+    *: "Jellyfin"
+  </dest>
+  <voice>
+    *: "Jellyfin"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VIDEO_QUALITY
+  desc: Jellyfin Video Quality row label
+  user: core
+  <source>
+    *: "Video Quality"
+  </source>
+  <dest>
+    *: "Якість відео"
+  </dest>
+  <voice>
+    *: "Якість відео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_AUTO
+  desc: Jellyfin Video Quality Auto (720p)
+  user: core
+  <source>
+    *: "Auto (720p)"
+  </source>
+  <dest>
+    *: "Авто (720p)"
+  </dest>
+  <voice>
+    *: "Авто 720p"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_720P
+  desc: Jellyfin Video Quality 720p 4 Mbps
+  user: core
+  <source>
+    *: "720p (4 Mbps)"
+  </source>
+  <dest>
+    *: "720p (4 Мбіт/с)"
+  </dest>
+  <voice>
+    *: "720p 4 мегабіти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_480P
+  desc: Jellyfin Video Quality 480p 2 Mbps
+  user: core
+  <source>
+    *: "480p (2 Mbps)"
+  </source>
+  <dest>
+    *: "480p (2 Мбіт/с)"
+  </dest>
+  <voice>
+    *: "480p 2 мегабіти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_ORIGINAL
+  desc: Jellyfin Video Quality 1080p / Original
+  user: core
+  <source>
+    *: "1080p / Original"
+  </source>
+  <dest>
+    *: "1080p / Оригінал"
+  </dest>
+  <voice>
+    *: "1080p Оригінал"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_SYNCED_FMT
+  desc: Jellyfin sync completion splash format
+  user: core
+  <source>
+    *: "Synced %d videos, %d tracks"
+  </source>
+  <dest>
+    *: "Синхр.: %d відео, %d треків"
+  </dest>
+  <voice>
+    *: "Бібліотеку синхронізовано"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_CLEAR_CACHE_Q
+  desc: Jellyfin Clear Cache confirmation prompt
+  user: core
+  <source>
+    *: "Clear cached media & downloads?"
+  </source>
+  <dest>
+    *: "Очистити кеш і завантаження?"
+  </dest>
+  <voice>
+    *: "Очистити кеш і завантаження?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PLAY_FROM_START
+  desc: Video context menu action to play from 0:00
+  user: core
+  <source>
+    *: "Play from beginning"
+  </source>
+  <dest>
+    *: "Відтворити спочатку"
+  </dest>
+  <voice>
+    *: "Відтворити спочатку"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DELETE_DOWNLOAD
+  desc: Video context menu action to remove offline SD download
+  user: core
+  <source>
+    *: "Delete download"
+  </source>
+  <dest>
+    *: "Видалити завантажене"
+  </dest>
+  <voice>
+    *: "Видалити завантажене"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DELETED
+  desc: Splash shown when offline download is deleted
+  user: core
+  <source>
+    *: "Deleted"
+  </source>
+  <dest>
+    *: "Видалено"
+  </dest>
+  <voice>
+    *: "Видалено"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_VIDEOS_FMT
+  desc: Splash shown when multiple videos finish downloading
+  user: core
+  <source>
+    *: "Downloaded %d videos"
+  </source>
+  <dest>
+    *: "Завантажено відео: %d"
+  </dest>
+  <voice>
+    *: "Завантажено відео"
+  </voice>
+</phrase>

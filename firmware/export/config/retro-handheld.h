@@ -34,11 +34,14 @@
  * user-facing maintenance complexity. Leaving the tag database disabled removes
  * the Database menu, its settings, the scanner and tagcache/tagtree sources. */
 
-/* LCD dimensions */
-#define LCD_WIDTH  320
-#define LCD_HEIGHT 240
+/* LCD dimensions (native 1:1 HiDPI on TrimUI Brick 1024x768) */
+#define LCD_WIDTH  1024
+#define LCD_HEIGHT 768
 #define LCD_DEPTH  24
 #define LCD_PIXELFORMAT RGB888
+
+/* Large vector-rasterized anti-aliased .fnt files at 1024x768 */
+#define MAX_FONT_SIZE 0x200000
 
 /* define this to indicate your device's keypad */
 #define HAVE_BUTTON_DATA

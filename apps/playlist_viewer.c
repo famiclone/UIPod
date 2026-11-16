@@ -53,6 +53,9 @@
 #include "trimpod_ui.h"           /* the Hold-A context menu */
 #include "trimpod_visualizer.h"   /* idle auto-start while music plays */
 #include "trimpod_playlists.h"    /* trimpod_resume_if_current */
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
+#include "trimpod_svg.h"
 
 
 
@@ -287,10 +290,27 @@ static bool retrieve_id3_tags(const int index, const char* name, struct mp3entry
         id3_retrieval_successful = true;
     }
 
+    if (!id3_retrieval_successful &&
+        trimpod_navidrome_is_track_path(name) &&
+        !file_exists(name))
+    {
+        id3_retrieval_successful = trimpod_navidrome_fill_id3(name, id3);
+    }
+    if (!id3_retrieval_successful &&
+        trimpod_jellyfin_is_track_path(name) &&
+        !file_exists(name))
+    {
+        id3_retrieval_successful = trimpod_jellyfin_fill_id3(name, id3);
+    }
+
     if (!id3_retrieval_successful)
     {
         /* Read from disk: retrieves frequency, file size, and codec */
         id3_retrieval_successful = get_metadata_ex(id3, -1, name, flags);
+        if (id3_retrieval_successful && trimpod_navidrome_is_track_path(name))
+            trimpod_navidrome_enrich_id3(id3);
+        else if (id3_retrieval_successful && trimpod_jellyfin_is_track_path(name))
+            trimpod_jellyfin_enrich_id3(id3);
     }
     return id3_retrieval_successful;
 }
@@ -603,9 +623,15 @@ static enum pv_context_result context_menu(int index)
 
     char name[MAX_PATH];
     format_name(name, current_track->name, sizeof(name));
+    bool is_nav = trimpod_source_is_navidrome() &&
+                  trimpod_navidrome_is_track_path(current_track->name);
+    bool is_jf  = trimpod_source_is_jellyfin() &&
+                  trimpod_jellyfin_is_track_path(current_track->name);
+    bool can_dl = is_nav || is_jf;
     static const char *const opts[] =
-        { ID2P(LANG_TRIMPOD_REMOVE_FROM_PLAYLIST), ID2P(LANG_MOVE) };
-    int sel = trimpod_context_menu(name, opts, 2);
+        { ID2P(LANG_TRIMPOD_REMOVE_FROM_PLAYLIST), ID2P(LANG_MOVE),
+          ID2P(LANG_TRIMPOD_DOWNLOAD) };
+    int sel = trimpod_context_menu(name, opts, can_dl ? 3 : 2);
     if (sel >= 0)
     {
         /* Abort current move */
@@ -620,6 +646,12 @@ static enum pv_context_result context_menu(int index)
                 /* move track: A on the destination row drops it */
                 viewer.moving_track = index;
                 viewer.moving_playlist_index = current_track->index;
+                return PV_CONTEXT_UNCHANGED;
+            case 2:
+                if (is_jf)
+                    trimpod_jellyfin_download_track(current_track->name);
+                else
+                    trimpod_navidrome_download_track(current_track->name);
                 return PV_CONTEXT_UNCHANGED;
         }
     }
@@ -667,12 +699,23 @@ static const char* playlist_callback_name(int selected_item,
     return(buffer);
 }
 
+static const struct trimpod_svg_icon *playlist_callback_svg_icon(int selected_item,
+                                                                 void *data)
+{
+    struct playlist_entry *track = pv_get_track(data, selected_item);
+    return track ? trimpod_svg_for_path(track->name, false) : NULL;
+}
+
 
 static void update_gui(struct gui_synclist * playlist_lists, bool init)
 {
     if (init)
+    {
         gui_synclist_init(playlist_lists, playlist_callback_name,
                           &viewer, false, 1, NULL);
+        gui_synclist_set_svg_icon_callback(playlist_lists,
+                                           playlist_callback_svg_icon);
+    }
     gui_synclist_set_nb_items(playlist_lists, viewer.num_tracks);
     gui_synclist_set_title(playlist_lists, viewer.title, Icon_Playlist);
     gui_synclist_select_item(playlist_lists, viewer.selected_track);
@@ -975,12 +1018,17 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                     trimpod_idle_to_wps();   /* the loop-top home check exits */
                 break;
             default:
-                if(default_event_handler(button) == SYS_USB_CONNECTED)
+            {
+                long handled = default_event_handler(button);
+                if (handled == SYS_USB_CONNECTED)
                 {
                     ret = PLAYLIST_VIEWER_USB;
                     goto exit;
                 }
+                else if (handled == SYS_MEDIA_KEY)
+                    gui_synclist_draw(&playlist_lists);
                 break;
+            }
         }
     }
 

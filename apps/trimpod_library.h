@@ -49,4 +49,10 @@ void trimpod_library_tracks(int category, const char *browse_artist,
         const char *album,
         void (*cb)(const char *title, const char *path, void *ctx), void *ctx);
 
+/* Genres facet: distinct genres ("" for untagged) and tracks within one genre. */
+void trimpod_library_genres(int category,
+        void (*cb)(const char *genre, int track_count, void *ctx), void *ctx);
+void trimpod_library_genre_tracks(int category, const char *genre,
+        void (*cb)(const char *title, const char *path, void *ctx), void *ctx);
+
 #endif /* _TRIMPOD_LIBRARY_H */

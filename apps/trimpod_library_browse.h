@@ -16,6 +16,7 @@ enum trimpod_library_mode
     TP_LIB_ARTISTS = 0,   /* Artists -> Albums -> Tracks */
     TP_LIB_ALBUMS,        /* every Album -> Tracks       */
     TP_LIB_SONGS,         /* every Song (one flat list)  */
+    TP_LIB_GENRES,        /* Genres -> Tracks            */
 };
 
 /* Root-menu handler (items[] signature).  `param` is an enum trimpod_library_mode

@@ -1,5 +1,5 @@
 # Theme: 1ST_GEN_REMIX
-# Version 1.0
+# Version 1.0 (1024x768 HiDPI)
 # Last Update: 01/26/2026
 # License: CC-BY-SA 3.0
 # By: Monica G.
@@ -17,8 +17,8 @@
 %?Lt<|>
 
 # Preload Fonts
-%Fl(2,18-ChicagoFLF.fnt)
-%Fl(3,20-ChicagoFLF.fnt)
+%Fl(2,58-Geologica.fnt)
+%Fl(3,67-Geologica.fnt)
 
 #Preload Images
 %xl(sad_mac,sad_mac.bmp,0,0)
@@ -28,91 +28,46 @@
 %xl(battery,battery.bmp,0,0,5)
 %xl(lock,lock.bmp,0,0)
 
-# Display Viewports
-%?if(%cs, =, 21)<%VI(clearScreen)%Vd(usbScreen)|%Vd(mainMenu)<%VI(mainMenu)%Vd(mainMenu)>>
-
-# Header button-legend (the standard): when a page sets a legend (%Tl non-empty)
-# overlay it on the header.  Conditionally DISPLAYED (like usbScreen), not a
-# content-conditional, so when hidden it doesn't clear over the header -- the
-# normal header (centred TrimPod) is left exactly as it is.
-%?Tl<%Vd(legend)|>
+# Display Viewports (Header is rendered by the Rust GPU UI engine; only USB screen uses skin viewports)
+%?if(%cs, =, 21)<%VI(clearScreen)%Vd(usbScreen)|%VI(mainMenu)>
 
 # Clear Screen
 %Vi(clearScreen,0,0,1,1,-)
 
 ## Main Menu ##
 
-# Main Menu UI Viewport (font slot 1 = user-selected font, so the Font setting applies)
-%Vi(mainMenu,5,45,310,170,1)
-
-# Play/Pause Icons
-%Vl(mainMenu,10,7,22,22,-)
-%?if(%mp, >, 1)<%xd(playmodes,%mp)|>
-
-# Title (shared status bar): Now Playing (%cs=2) shows the playlist name; otherwise
-# the current screen's title (%Lt) -- "TrimPod" on the main menu, "Settings"/etc
-# elsewhere, falling back to TrimPod if unset.  Hold is shown by the lock icon (left
-# of the battery), not the title.  Viewport centred (x 65..255) so %ac is centred.
-# y=8: the font is 21px tall, so its centre (8+10.5) matches the icons' (18 --
-# play icon y7 h22, battery y9 h18).
-%Vl(mainMenu,65,8,190,24,3)
-%?if(%cs, =, 2)<%ac%s%?pn<%t(5)Now Playing;%t(5)%pn|%acNow Playing>|%?Lt<%ac%s%Lt|%acTrimPod>>
-
-# Battery
-%Vl(mainMenu,274,9,40,18,2)
-%?if(%bl, >, 75)<%xd(battery,5)|%?if(%bl, >, 50)<%xd(battery,4)|%?if(%bl, >, 25)<%xd(battery,3)|%?if(%bl, >, 10)<%xd(battery,2)|%xd(battery,1)>>>>
-
-# Hold lock: a padlock (lock.bmp) shown just left of the battery while the side
-# switch is engaged (%mh).
-%Vl(mainMenu,256,9,14,18,-)
-%?mh<%xd(lock)|>
-
-# Line
-%Vl(mainMenu,5,36,310,2,-)
-%dr(0,0,310,2)
-
-# Now Playing (bottom scroller on menu screens; hidden on the WPS, which draws
-# its own track info/times there).  18px tall: fullwidth CJK glyphs fill the
-# 18px font's whole em -- a shorter band clips them.
-%Vl(mainMenu,5,218,310,18,2)
-%?if(%cs, =, 2)<|%ac%?mp<|%s%?it<%it|%fn>%?ia< - %ia>|>>
-
-## Header Button-Legend (overlay, displayed via %Vd when a page sets %Tl) ##
-
-# Left-aligned button labels over the header; TrimPod is covered while shown.
-# y=8: same vertical centring as the title it covers.
-%Vl(legend,10,8,245,24,3)
-%Tl
+# Main Menu UI Viewport (y=144..736 matches Rust GPU Header + 8-row content band)
+%Vi(mainMenu,32,144,960,592,1)
 
 ## USB Screen ##
 
 # USB Screen Viewport
-%Vl(usbScreen,0,0,320,240,-)
+%Vl(usbScreen,0,0,1024,768,-)
 
 # Time / Battery (numerical)
-%Vl(usbScreen,40,10,240,25,3)
+%Vl(usbScreen,128,30,740,76,3)
 %t(10)%ac%?cf<%ac%cH|%cl>:%cM%?cf<| %cP>;%t(10)%acBattery: %bl%%
 
 # Battery
-%Vl(usbScreen,274,9,40,18,2)
+%Vl(usbScreen,885,30,120,54,2)
 %?if(%bl, >, 75)<%xd(battery,5)|%?if(%bl, >, 50)<%xd(battery,4)|%?if(%bl, >, 25)<%xd(battery,3)|%?if(%bl, >, 10)<%xd(battery,2)|%xd(battery,1)>>>>
 
 # Line
-%Vl(usbScreen,5,36,310,2,-)
-%dr(0,0,310,2)
+%Vl(usbScreen,16,115,992,6,-)
+%dr(0,0,992,6)
 
-# USB Mac Icon
-%Vl(usbScreen,220,75,95,120,-)
+# USB Mac Icon (285x360)
+%Vl(usbScreen,714,248,285,360,-)
 %xd(sad_mac)
 
 # USB Text
-%Vl(usbScreen,5,95,210,27,3)
+%Vl(usbScreen,16,304,672,86,3)
 %acUSB CONNECTED%Vs(invert)
 
 # USB Eject Box
-%Vl(usbScreen,5,130,210,27,-)
-%dr(0,0,210,1)%dr(0,0,1,26)%dr(209,0,1,26)%dr(0,26,210,1)
+%Vl(usbScreen,16,416,672,86,-)
+%dr(0,0,672,3)%dr(0,0,3,86)%dr(669,0,3,86)%dr(0,83,672,3)
 
 # Eject Warning
-%Vl(usbScreen,6,138,205,18,2)
+%Vl(usbScreen,19,430,666,58,2)
 %ac%t(1)! EJECT BEFORE DISCONNECTING !;%t(.1)%ac

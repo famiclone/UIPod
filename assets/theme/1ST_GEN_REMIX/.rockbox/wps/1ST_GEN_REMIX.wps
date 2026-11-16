@@ -1,11 +1,12 @@
 # Theme: 1ST_GEN_REMIX
-# Version 1.0
+# Version 1.0 (1024x768 HiDPI)
 # Last Update: 01/26/2026
 # License: CC-BY-SA 3.0
 # By: Monica G.
 # Description: Theme based on the iPod classic 1st generation's UI with some added features.
 # Icons & viewers based on Susan Kare's classic Macintosh icons.
 # Code based on: BACKBONE and Pixel Computer by me! which are based on SNARTY by Simon Anden and BONES by Chuck Largo!
+# Hold screen is stripped back from the WPS to make room for album art.
 
 ## WPS File ##
 
@@ -17,8 +18,8 @@
 %V(0,0,-,-,-)
 
 # Preload Fonts
-%Fl(2,18-ChicagoFLF.fnt)
-%Fl(3,20-ChicagoFLF.fnt)
+%Fl(2,58-Geologica.fnt)
+%Fl(3,67-Geologica.fnt)
 
 # Preload Images
 %xl(PB,pb.bmp,0,0)
@@ -30,31 +31,31 @@
 ## Main Display ##
 
 # Clear Screen
-%Vl(mainDisplay,0,39,320,201,-)
+%Vl(mainDisplay,0,125,1024,643,-)
 
 # Status bar is the shared SBS (enabled via %we above).
 
 # Playlist Number (wide enough for "999999 of 999999" without clipping)
-%Vl(mainDisplay,8,46,240,20,2)
+%Vl(mainDisplay,26,140,768,60,2)
 %?if(%pp, =, %pe)<%pp %Sx(of) %pe|%pp %Sx(of) %pe|%pp %Sx(of) %pe|%pp %Sx(of) %pe|%pp %Sx(of) %pe>
 
 # Track Title
-%Vl(mainDisplay,10,62,300,30,1)
+%Vl(mainDisplay,32,206,960,84,1)
 %ac%s%?it<%s%it|%fn>
 
 # Artist
-%Vl(mainDisplay,10,91,300,30,1)
+%Vl(mainDisplay,32,294,960,84,1)
 %ac%s%?ia<%ia>
 
 # Album
-%Vl(mainDisplay,10,119,300,30,1)
+%Vl(mainDisplay,32,382,960,84,1)
 %ac%s%?id<%id>
 
 # Spectrum analyzer (%pm renders FFT bars on this target)
-%Vl(mainDisplay,20,152,280,36,-)
+%Vl(mainDisplay,64,482,896,118,-)
 %pm
 
-## --- Bottom strip: swappable panels (y=190..235) -------------------------
+## --- Bottom strip: swappable panels (y=608..752) -------------------------
 ## Exactly ONE self-contained panel occupies this strip at a time.  Each panel
 ## below is its own group of %Vl(<label>,...) viewports; this dispatch enables
 ## one group's label and the skin engine hides + clears the others.
@@ -66,21 +67,21 @@
 %V(0,0,1,1,-)
 %?mv(2)<%Vd(npVolume)|%Vd(npProgress)>
 
-# Panel: PROGRESS -- playback position (shown when idle).  The bar (y 192,
-# h 14) sits equidistant between the spectrum's bottom edge (188) and the
-# times line's top (210): 4px of air on each side.
-%Vl(npProgress,20,192,280,14,-)%Vf(-)%Vb(-)
-%pb(0,0,-,14,PBB,backdrop,PB)
-%Vl(npProgress,20,210,120,25,1)
+# Panel: PROGRESS -- playback position (shown when idle).  The bar (y 616,
+# h 42) sits equidistant between the spectrum's bottom edge (601) and the
+# times line's top (672): ~14px of air on each side.
+%Vl(npProgress,64,616,896,42,-)%Vf(-)%Vb(-)
+%pb(0,0,-,42,PBB,backdrop,PB)
+%Vl(npProgress,64,672,384,80,1)
 %al%pc
-%Vl(npProgress,180,210,120,25,1)
+%Vl(npProgress,576,672,384,80,1)
 %ar-%pr
 
 # Panel: VOLUME -- shown ~1s after a volume change (%mv).  Perceptual dial
 # (40 even loudness steps): empty = silence, full = max.  The label under the
 # bar is the dial position, "Volume <notch>/<total>" (%vv); no dB (the scale
 # isn't user-facing).  Bar spacing mirrors the progress panel.
-%Vl(npVolume,20,192,280,14,-)%Vf(-)%Vb(-)
-%pv(0,0,-,14,PBB,backdrop,PB)
-%Vl(npVolume,20,210,280,25,1)
+%Vl(npVolume,64,616,896,42,-)%Vf(-)%Vb(-)
+%pv(0,0,-,42,PBB,backdrop,PB)
+%Vl(npVolume,64,672,896,80,1)
 %acVolume %vv

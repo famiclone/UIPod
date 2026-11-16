@@ -11,4 +11,4 @@ export SYSFS_BL_START="/sys/kernel/debug/dispdbg/start"
 export BL_COMMAND="setbl"
 export BL_NAME="lcd0"
 # Zoom value
-ZOOMVAL="3"
+ZOOMVAL="0.9375"

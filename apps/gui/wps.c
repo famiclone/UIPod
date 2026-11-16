@@ -60,6 +60,8 @@
 #include "playlist_viewer.h"
 #include "wps.h"
 #include "trimpod_visualizer.h"
+#include "trimpod_nowplaying.h"
+#include "trimpod_ui.h"
 #include "statusbar-skinned.h"
 #include "skin_engine/wps_internals.h"
 
@@ -93,10 +95,12 @@ char* wps_default_skin(enum screen_type screen)
     return skin_buf[screen];
 }
 
+static bool s_wps_theme_disabled = false;
+
 static void update_non_static(void)
 {
-    FOR_NB_SCREENS(i)
-        skin_update(WPS, i, SKIN_REFRESH_NON_STATIC);
+    if (s_wps_theme_disabled)
+        trimpod_nowplaying_draw();
 }
 
 void wps_do_action(enum wps_do_action_type action, bool updatewps)
@@ -176,9 +180,8 @@ static bool ffwd_rew(int button, bool seek_from_end)
         switch ( button )
         {
             case ACTION_WPS_SEEKFWD:
-                 direction = 1;
-                 /* Fallthrough */
             case ACTION_WPS_SEEKBACK:
+                direction = (button == ACTION_WPS_SEEKFWD) ? 1 : -1;
                 if (ff_rewind)
                 {
                     if (direction == 1)
@@ -219,9 +222,13 @@ static bool ffwd_rew(int button, bool seek_from_end)
                         ff_rewind = true;
 
                         step = 1000 * global_settings.ff_rewind_min_step;
+                        ff_rewind_count += step * direction;
                     }
                     else
+                    {
+                        exit = true;
                         break;
+                    }
                 }
 
                 if (direction > 0) {
@@ -237,38 +244,45 @@ static bool ffwd_rew(int button, bool seek_from_end)
                    displays corectly */
                 gstate->ff_rewind_count = ff_rewind_count;
 
-                FOR_NB_SCREENS(i)
-                {
-                    skin_update(WPS, i,
-                                SKIN_REFRESH_PLAYER_PROGRESS |
-                                SKIN_REFRESH_DYNAMIC);
-                }
+                trimpod_nowplaying_draw();
 
                 break;
 
             case ACTION_WPS_STOPSEEK:
-                id3->elapsed = id3->elapsed + ff_rewind_count;
-                audio_ff_rewind(id3->elapsed);
+                if (ff_rewind && id3)
+                {
+                    id3->elapsed = id3->elapsed + ff_rewind_count;
+                    audio_ff_rewind(id3->elapsed);
+                }
                 gstate->ff_rewind_count = 0;
                 ff_rewind = false;
                 status_set_ffmode(0);
+                trimpod_nowplaying_draw();
                 exit = true;
                 break;
 
             default:
-                if(default_event_handler(button) == SYS_USB_CONNECTED) {
+            {
+                int handled = default_event_handler(button);
+                if (handled == SYS_USB_CONNECTED ||
+                    handled == SYS_POWEROFF || handled == SYS_REBOOT)
+                {
+                    if (ff_rewind)
+                        audio_ff_rewind(id3 ? id3->elapsed : 0);
+                    gstate->ff_rewind_count = 0;
                     status_set_ffmode(0);
-                    usb = true;
+                    usb = (handled == SYS_USB_CONNECTED);
                     exit = true;
                 }
                 break;
+            }
         }
         if (!exit)
         {
-            button = get_action(CONTEXT_WPS|ALLOW_SOFTLOCK,TIMEOUT_BLOCK);
+            button = get_action(CONTEXT_WPS|ALLOW_SOFTLOCK, HZ);
             if (button != ACTION_WPS_SEEKFWD
                 && button != ACTION_WPS_SEEKBACK
-                && button != 0 && !IS_SYSEVENT(button))
+                && !IS_SYSEVENT(button))
                 button = ACTION_WPS_STOPSEEK;
         }
     }
@@ -370,74 +384,37 @@ static void play_hop(int direction)
 
 static void gwps_leave_wps(void)
 {
-    FOR_NB_SCREENS(i)
+    if (s_wps_theme_disabled)
     {
-        struct gui_wps *gwps = skin_get_gwps(WPS, i);
-        gwps->display->scroll_stop();
-#ifdef HAVE_BACKDROP_IMAGE
-        skin_backdrop_show(sb_get_backdrop(i));
-
-        /* The following is supposed to erase any traces of %VB
-           viewports drawn by the WPS. May need further thought... */
-        struct wps_data *sbs = skin_get_gwps(CUSTOM_STATUSBAR, i)->data;
-        if (gwps->data->use_extra_framebuffer && sbs->use_extra_framebuffer)
-            skin_update(CUSTOM_STATUSBAR, i, SKIN_REFRESH_ALL);
-#endif
-        viewportmanager_theme_undo(i, skin_has_sbs(gwps));
+        s_wps_theme_disabled = false;
+        lcd_set_update_suppressed(true);
+        FOR_NB_SCREENS(i)
+        {
+            screens[i].scroll_stop();
+            viewportmanager_theme_undo(i, false);
+        }
+        lcd_set_update_suppressed(false);
     }
 
     /* unhandle statusbar update delay */
     sb_skin_set_update_delay(DEFAULT_UPDATE_DELAY);
 }
 
-static void restore_theme(void)
-{
-    FOR_NB_SCREENS(i)
-    {
-        struct gui_wps *gwps = skin_get_gwps(WPS, i);
-        struct screen *display = gwps->display;
-        display->scroll_stop();
-        viewportmanager_theme_enable(i, skin_has_sbs(gwps), NULL);
-    }
-}
-
 /*
  * display the wps on entering or restoring */
 static void gwps_enter_wps(void)
 {
-    struct gui_wps *gwps;
-    struct screen *display;
-    restore_theme();
-    FOR_NB_SCREENS(i)
+    if (!s_wps_theme_disabled)
     {
-        gwps = skin_get_gwps(WPS, i);
-        display = gwps->display;
-        display->scroll_stop();
-        sb_set_title_text(NULL, Icon_NOICON, i);
-        /* Update the values in the first (default) viewport - in case the user
-           has modified the statusbar or colour settings */
-#if LCD_DEPTH > 1
-        if (display->depth > 1)
+        FOR_NB_SCREENS(i)
         {
-            struct skin_viewport *svp = skin_find_item(VP_DEFAULT_LABEL_STRING,
-                                                       SKIN_FIND_VP, gwps->data);
-            if (svp)
-            {
-                struct viewport *vp = &svp->vp;
-                vp->fg_pattern = display->get_foreground();
-                vp->bg_pattern = display->get_background();
-            }
+            screens[i].scroll_stop();
+            sb_set_title_text(NULL, Icon_NOICON, i);
+            viewportmanager_theme_enable(i, false, NULL);
         }
-#endif
-        /* make the backdrop actually take effect */
-#ifdef HAVE_BACKDROP_IMAGE
-        skin_backdrop_show(gwps->data->backdrop_id);
-#endif
-        display->clear_display();
-        skin_update(WPS, i, SKIN_REFRESH_ALL);
+        s_wps_theme_disabled = true;
     }
-     /* Screen was cleared, so redraw SBS if enabled, and update screen */
-    send_event(GUI_EVENT_ACTIONUPDATE, (void*)1);
+    trimpod_nowplaying_draw();
 }
 
 static long do_wps_exit(void)
@@ -498,33 +475,14 @@ static void wps_page_draw(struct trimpod_page *p)
     if (w->restore)
     {
         w->restore = false;
-    /* we remove the update delay since it's not very usable in the wps,
-     * e.g. during volume changing or ffwd/rewind */
         sb_skin_set_update_delay(0);
-        skin_request_full_update(WPS);
         w->update = true;
         gwps_enter_wps();
     }
     else
     {
         gwps_caption_backlight(state);
-
-        FOR_NB_SCREENS(i)
-        {
-            {
-                /* Refresh dynamic content every tick, as stock Rockbox does:
-                 * the progress bar / time counters advance and the %mv volume
-                 * conditional re-evaluates -- which is how the volume bar reverts
-                 * to the progress bar on its own ~1s after the last change.
-                 * skin_update() only draws into the framebuffer (it never
-                 * presents -- the peak-meter loop owns presents) and only tokens
-                 * whose value changed actually repaint, so this is cheap.  Do
-                 * not gate this on "changed" -- that freezes the %mv swap.
-                 * skin_update() promotes to a full render itself when one is
-                 * pending, atomically: clear, body, SBS, one present. */
-                skin_update(WPS, i, SKIN_REFRESH_NON_STATIC);
-            }
-        }
+        trimpod_nowplaying_draw();
         w->update = false;
     }
 }
@@ -532,17 +490,13 @@ static void wps_page_draw(struct trimpod_page *p)
 static int wps_page_poll(struct trimpod_page *p, int timeout)
 {
     struct wps_page *w = (struct wps_page *)p;
-    (void)timeout;   /* the WPS sets its own cadence (peak-meter fast path) */
+    (void)timeout;
 
     if (w->button && !IS_SYSEVENT(w->button) )
         storage_spin();
 
-    /* 5Hz keeps the counters/progress bar live on screen; while the panel is
-     * dark drop to 1Hz -- each pass redraws the whole WPS (art, spectrum, text)
-     * into the framebuffer, and nobody is looking.  A button still returns
-     * immediately, and 1s-stale content on wake is imperceptible. */
-    long button = skin_wait_for_action(WPS, CONTEXT_WPS|ALLOW_SOFTLOCK,
-                                       lcd_panel_is_dark() ? HZ : HZ/5);
+    long button = get_action(CONTEXT_WPS|ALLOW_SOFTLOCK,
+                             lcd_panel_is_dark() ? HZ : HZ/5);
 
     /* Exit if audio has stopped playing. This happens e.g. at end of
        playlist or if using the sleep timer. */
@@ -616,8 +570,23 @@ static void np_pause_cycle(void *ctx, int dir)
 }
 static const struct menu_value_cb np_pause_value =
     { np_pause_get, np_pause_cycle, NULL };
+static const char *np_mono_art_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return trimpod_toggle_str(global_settings.mono_album_art);
+}
+static void np_mono_art_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    global_settings.mono_album_art = !global_settings.mono_album_art;
+    settings_save();
+}
+static const struct menu_value_cb np_mono_art_value =
+    { np_mono_art_get, np_mono_art_cycle, NULL };
+
 MENUITEM_VALUE(np_pause, "", &np_pause_value, Icon_NOICON);
 MENUITEM_VALUE(np_sleeptimer, ID2P(LANG_SLEEP_TIMER), &np_sleep_value, Icon_NOICON);
+MENUITEM_VALUE(np_mono_art, ID2P(LANG_TRIMPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
 /* Shuffle: an action, not a mode -- every pick reshuffles the live queue. */
 MENUITEM_RETURNVALUE(np_shuffle, ID2P(LANG_SHUFFLE), NP_SHUFFLE,
                      NULL, Icon_NOICON);
@@ -628,7 +597,7 @@ MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_TRIMPOD_START_VISUALIZER), NP_START_VIZ, 
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
-          &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_addpl, &np_viz);
+          &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_mono_art, &np_addpl, &np_viz);
 
 static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                                                    int button)
@@ -686,27 +655,18 @@ static enum trimpod_page_result wps_page_on_action(struct trimpod_page *p,
                     adjust_volume(-1);
 
                 setvol();
-                FOR_NB_SCREENS(i)
-                {
-                    skin_update(WPS, i, SKIN_REFRESH_NON_STATIC);
-                }
+                trimpod_nowplaying_draw();
                 w->update = false;
                 break;
-            /* L1 / R1: jump -10s / +10s within the current track. */
+            /* Hold D-pad Left / Right: smooth accelerating rewind / fast-forward. */
             case ACTION_WPS_SEEKFWD:
             case ACTION_WPS_SEEKBACK:
-                if ((audio_status() & AUDIO_STATUS_PLAY) && state->id3
-                    && state->id3->length)
+                if (ffwd_rew(button, false))
                 {
-                    long pos = (long)state->id3->elapsed +
-                               (button == ACTION_WPS_SEEKFWD ? 10000 : -10000);
-                    if (pos < 0) pos = 0;
-                    if (pos > (long)state->id3->length)
-                        pos = state->id3->length;
-                    audio_pre_ff_rewind();
-                    audio_ff_rewind(pos);
-                    w->update = true;
+                    w->result = GO_TO_ROOT;
+                    return TRIMPOD_PAGE_DONE;
                 }
+                w->update = false;
                 break;
 
                 /* prev / restart */

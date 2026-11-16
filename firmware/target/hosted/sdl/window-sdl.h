@@ -45,6 +45,8 @@ extern volatile bool trimpod_viz_active; /* visualizer owns the window/context *
 void sdl_gl_make_current(void);
 /* The GLES context used for both the LCD presentation and the visualizer. */
 SDL_GLContext sdl_gl_get_context(void);
+/* Resolve GLES 3.0 entry points via SDL2 for the Rust GPU UI engine. */
+const void *sdl_gl_get_proc_address(const char *name);
 /* Present the current LCD framebuffer faded toward black (1=normal, 0=black). */
 void sdl_gl_present_lcd_fade(float fade);
 /* Let a video show through the window, keeping the bottom overlay_rows LCD rows. */

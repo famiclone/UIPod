@@ -6,9 +6,9 @@
 G="$MTP_GADGET"
 BIN="$(dirname "$0")/trimpod"
 FFS=/dev/usb-ffs/mtp
-PIDF=/tmp/trimpod-umtprd.pid
+PIDF=/tmp/uipod-umtprd.pid
 [ -n "$G" ] && [ -x "$BIN/umtprd" ] || exit 0
-exec 9> /tmp/trimpod-mtp.lock
+exec 9> /tmp/uipod-mtp.lock
 flock 9
 
 stop() {
@@ -31,7 +31,7 @@ start() {
   # write is ignored), so relink both, then bind once umtprd has written its
   # descriptors.
   for l in "$G"/configs/c.1/*; do [ -L "$l" ] && rm -f "$l"; done
-  echo "Trimpod Classic" > "$G/strings/0x409/product"
+  echo "UIPod" > "$G/strings/0x409/product"
   mkdir -p "$G/functions/ffs.mtp" "$FFS"
   mount -t functionfs mtp "$FFS"
   ln -s "$G/functions/ffs.mtp" "$G/configs/c.1/ffs.mtp"

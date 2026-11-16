@@ -37,6 +37,8 @@
 #include "splash.h"
 #include "settings.h"
 #include "misc.h"
+#include "audio.h"
+#include "gui/wps.h"
 
 
 #include "backlight.h"
@@ -976,40 +978,124 @@ void action_wait_for_release(void)
     button_clear_pressed();
 }
 
+static bool s_last_action_from_menu = false;
+
+bool action_from_menu_key(void)
+{
+    return s_last_action_from_menu;
+}
+
 #if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
-/* Trimpod: the hardware volume rocker adjusts volume GLOBALLY -- on any screen,
- * regardless of context -- and is consumed (returns ACTION_NONE) so no screen
- * sees it as a context action or double-adjusts.  One handler, not per-keymap. */
+static bool s_vol_brightness_chord = false;
+
+/* UIPod: the hardware volume rocker adjusts volume GLOBALLY on any screen,
+ * while holding SELECT + Volume Up/Down adjusts display brightness globally.
+ * Every edge (press, repeat, release) is consumed (returns ACTION_NONE) so no
+ * screen sees it as an exit/context action or double-adjusts. */
 static int global_volume_action(int button, int action)
 {
+    if (button & SYS_EVENT)
+        return action;
+
     int btn = button & ~(BUTTON_REPEAT | BUTTON_REL);
+
+#if defined(BUTTON_SELECT) && defined(HAVE_BACKLIGHT_BRIGHTNESS)
+    if (btn == BUTTON_SELECT)
+        return ACTION_NONE;
+
+    if ((btn == (BUTTON_SELECT | BUTTON_VOL_UP)) ||
+        (btn == (BUTTON_SELECT | BUTTON_VOL_DOWN)))
+    {
+        s_vol_brightness_chord = true;
+        if (!(button & BUTTON_REL))
+            adjust_brightness((btn & BUTTON_VOL_UP) ? 1 : -1);
+        return ACTION_NONE;
+    }
+#endif
+
     if (btn != BUTTON_VOL_UP && btn != BUTTON_VOL_DOWN)
         return action;                 /* not the rocker -> leave untouched */
 
-    /* The rocker: fully consume every edge (press, repeat AND release) so no
-     * screen ever sees it as an action -- e.g. the visualizer must NOT exit
-     * when the user changes volume.  Adjust only on press/repeat, not release. */
-    if (!(button & BUTTON_REL))
-        adjust_volume(btn == BUTTON_VOL_UP ? 1 : -1);
+    if (button & BUTTON_REL)
+    {
+        if (!(button_status() & (BUTTON_VOL_UP | BUTTON_VOL_DOWN)))
+            s_vol_brightness_chord = false;
+        return ACTION_NONE;
+    }
+
+    if (s_vol_brightness_chord)
+    {
+        /* SELECT was released while Vol +/- remained held: swallow trailing
+         * repeats until the rocker is released so volume never jumps. */
+        if (!(button & BUTTON_REPEAT))
+            s_vol_brightness_chord = false;
+        else
+            return ACTION_NONE;
+    }
+
+    adjust_volume(btn == BUTTON_VOL_UP ? 1 : -1);
     return ACTION_NONE;
 }
 #endif
 
-/* Trimpod: tap vs. hold on the BACK/SELECT buttons.
- *
- * A quick tap runs the primary action on release (back / select).  Holding the
- * button for 650 ms runs the *secondary* action WHILE STILL HELD -- fired once
- * off the auto-repeat the button driver emits for any held button -- and the
- * eventual release is then swallowed so it does not also run the primary.
- *
- * Doing it here (not with per-keymap BUTTON_REPEAT entries) makes every screen
- * behave identically.  BUTTON_B -> ACTION_TP_HOME (home); BUTTON_A ->
- * ACTION_STD_CONTEXT (that screen's context menu).  Context-gated: B stays plain
- * "abort" in the keyboard; A is rewritten only on screens that actually have a
- * context menu -- the list-style screens, and Now Playing (tap = play/pause,
- * hold = the Now Playing menu). */
 #define TP_HOLD_TICKS   (65*HZ/100)  /* a "hold" is 650 ms */
 #define TP_CTX_BASE(c)  ((c) & 0x00ffffff)   /* context minus the flag bits */
+
+#ifdef BUTTON_START
+static bool s_start_solo = false;
+
+/* UIPod: START toggles Play / Pause globally across all screens (and resumes
+ * the saved playlist if playback is currently stopped).  On WPS and Video
+ * screens, keymap entries already produce ACTION_WPS_PLAY on START release. */
+static int global_playpause_action(int context, int button, int action)
+{
+    if (button & SYS_EVENT)
+        return action;
+
+    int base = TP_CTX_BASE(context);
+    if (base == CONTEXT_WPS || base == CONTEXT_TP_VIDEO)
+        return action;
+
+    int btn = button & ~(BUTTON_REPEAT | BUTTON_REL);
+    if (!(button & BUTTON_REL))
+    {
+        if (btn == BUTTON_START)
+        {
+            if (!(button & BUTTON_REPEAT))
+                s_start_solo = true;
+            return ACTION_NONE;
+        }
+        if (btn != 0)
+            s_start_solo = false;
+        return action;
+    }
+
+    if (btn == BUTTON_START)
+    {
+        bool fire = s_start_solo;
+        s_start_solo = false;
+        if (!fire)
+            return ACTION_NONE;
+
+        int status = audio_status();
+        if (status & AUDIO_STATUS_PLAY)
+        {
+            if (status & AUDIO_STATUS_PAUSE)
+                unpause_action(true);
+            else
+                pause_action(true);
+            send_event(GUI_EVENT_ACTIONUPDATE, (void *)1);
+        }
+        else if (global_status.resume_index != -1)
+        {
+            button_queue_post(SYS_MEDIA_KEY, MEDIA_KEY_PLAYPAUSE);
+        }
+        return ACTION_NONE;
+    }
+
+    return action;
+}
+#endif
 
 /* Shared tap/hold engine.  `btn` is the bare button (BUTTON_A/BUTTON_B); returns
  * the (possibly rewritten) action.  The tick and fired pointers hold this
@@ -1068,6 +1154,27 @@ static int global_context_action(int context, int button, int action)
                    &ctx_fired);
 }
 
+static int apply_global_actions(const action_cur_t *current, int action)
+{
+#ifdef BUTTON_MENU
+    s_last_action_from_menu =
+        !(current->button & SYS_EVENT) &&
+        ((current->button & ~(BUTTON_REPEAT | BUTTON_REL)) == BUTTON_MENU);
+#else
+    s_last_action_from_menu = false;
+#endif
+
+#if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
+    action = global_volume_action(current->button, action);
+#endif
+#ifdef BUTTON_START
+    action = global_playpause_action(current->context, current->button, action);
+#endif
+    action = global_home_action(current->context, current->button, action);
+    action = global_context_action(current->context, current->button, action);
+    return action;
+}
+
 int get_action(int context, int timeout)
 {
     action_cur_t current;
@@ -1075,14 +1182,8 @@ int get_action(int context, int timeout)
 
     int action = get_action_worker(&action_last, &current);
 
-
     action = do_backlight(&action_last, &current, action);
-
-#if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
-    action = global_volume_action(current.button, action);
-#endif
-    action = global_home_action(current.context, current.button, action);
-    action = global_context_action(current.context, current.button, action);
+    action = apply_global_actions(&current, action);
 
     return action;
 }
@@ -1182,12 +1283,7 @@ int get_custom_action(int context,int timeout,
     int action = get_action_worker(&action_last, &current);
 
     action = do_backlight(&action_last, &current, action);
-
-#if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
-    action = global_volume_action(current.button, action);
-#endif
-    action = global_home_action(current.context, current.button, action);
-    action = global_context_action(current.context, current.button, action);
+    action = apply_global_actions(&current, action);
 
     return action;
 }

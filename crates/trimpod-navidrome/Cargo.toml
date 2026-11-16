@@ -1,0 +1,11 @@
+[package]
+name = "trimpod-navidrome"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust Subsonic/Navidrome client, virtual folder tree, LRU stream cache, and background prefetcher for Trimpod"
+
+[lib]
+name = "trimpod_navidrome"
+crate-type = ["rlib"]
+
+[dependencies]

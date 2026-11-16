@@ -46,8 +46,10 @@
 #include "screens.h"
 #include "ctype.h"
 #include "file.h"
+#include "dir.h"
 #include "system.h"
 #include "general.h"
+#include "trimpod_keyboard.h"
 #include "misc.h"
 #include "icons.h"
 #include "font.h"
@@ -716,18 +718,24 @@ bool settings_save_config(int options)
             namebase = "config";
             break;
     }
+    if (!dir_exists(folder))
+        mkdir(folder);
+
     create_numbered_filename(filename, folder, namebase, ".cfg", 2
                              IF_CNFN_NUM_(, NULL));
 
-    /* allow user to modify filename */
-    while (true) {
-        if (!kbd_input(filename, sizeof(filename), NULL)) {
-            break;
-        }
-        else {
-            return false;
-        }
-    }
+    /* allow user to modify the bare preset name via Trimpod's HiDPI keyboard */
+    char stem[MAX_PATH];
+    const char *slash = strrchr(filename, '/');
+    strlcpy(stem, slash ? slash + 1 : filename, sizeof(stem));
+    size_t slen = strlen(stem);
+    if (slen > 4 && strcasecmp(stem + slen - 4, ".cfg") == 0)
+        stem[slen - 4] = '\0';
+
+    if (trimpod_kbd_input(stem, sizeof(stem)) != 0 || stem[0] == '\0')
+        return false;
+
+    snprintf(filename, sizeof(filename), "%s/%s.cfg", folder, stem);
 
     if (settings_write_config(filename, options))
         splash(HZ, ID2P(LANG_SETTINGS_SAVED));

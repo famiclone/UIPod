@@ -4,7 +4,7 @@
 # Re-execs from /tmp so the SD card can be unmounted under it.
 case "$0" in
   /tmp/*) ;;
-  *) cp "$0" /tmp/trimpod-shutdown.sh && exec sh /tmp/trimpod-shutdown.sh ;;
+  *) cp "$0" /tmp/uipod-shutdown.sh && exec sh /tmp/uipod-shutdown.sh ;;
 esac
 AXP=/sys/class/axp/axp_reg
 [ -w "$AXP" ] || exit 1

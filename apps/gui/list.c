@@ -97,6 +97,13 @@ bool list_display_title(struct gui_synclist *list, enum screen_type screen)
 
 int list_get_nb_lines(struct gui_synclist *list, enum screen_type screen)
 {
+    if (screen == SCREEN_MAIN && list->callback_draw_item == NULL &&
+        list->parent[screen] &&
+        list->parent[screen]->width >= 800 &&
+        list->parent[screen]->height >= 500)
+    {
+        return 8; /* TRIMPOD_RS_LIST_VISIBLE_ROWS */
+    }
     int lines = skinlist_get_line_count(screen, list);
     if (lines < 0)
     {
@@ -117,9 +124,9 @@ void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
 static void gui_synclist_init_display_settings(struct gui_synclist * list)
 {
     struct user_settings *gs = &global_settings;
-    /* Trimpod: list scrollbar is always off -- the single point all list
-     * scrollbar drawing derives from (bitmap/list.c reads list->scrollbar). */
-    list->scrollbar = SCROLLBAR_OFF;
+    /* Trimpod: classic iPod right-hand scrollbar on overflowing lists -- the
+     * single point all list scrollbar drawing derives from. */
+    list->scrollbar = SCROLLBAR_RIGHT;
     list->scroll_paginated = gs->scroll_paginated;
     list->keyclick = TP_KEYCLICK;
     list->wraparound = gs->list_wraparound;
@@ -146,6 +153,7 @@ void gui_synclist_init(struct gui_synclist * gui_list,
 {
     gui_list->callback_get_item_chevron = NULL;
     gui_list->callback_get_item_indicator = NULL;
+    gui_list->callback_get_item_svg_icon = NULL;
     gui_list->callback_get_item_name = callback_get_item_name;
     gui_list->callback_draw_item = NULL;
     gui_list->nb_items = 0;
@@ -394,6 +402,12 @@ void gui_synclist_set_indicator_callback(struct gui_synclist * lists,
     lists->callback_get_item_indicator = indicator_callback;
 }
 
+void gui_synclist_set_svg_icon_callback(struct gui_synclist * lists,
+                                        list_get_svg_icon svg_icon_callback)
+{
+    lists->callback_get_item_svg_icon = svg_icon_callback;
+}
+
 void gui_synclist_set_viewport_defaults(struct viewport *vp,
                                         enum screen_type screen)
 {
@@ -459,8 +473,8 @@ static void gui_synclist_scroll_right(struct gui_synclist * lists)
         * callback function to find the longest item on the list in pixels,
         * to stop the list from scrolling past that point */
         lists->offset_position[i] += global_settings.screen_scroll_step;
-        if (lists->offset_position[i] > 1000)
-            lists->offset_position[i] = 1000;
+        if (lists->offset_position[i] > 3200)
+            lists->offset_position[i] = 3200;
     }
 }
 

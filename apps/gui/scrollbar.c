@@ -20,6 +20,7 @@
 
 #include "scrollbar.h"
 #include "config.h"
+#include <stdint.h>
 #include "limits.h"
 #include "bmp.h"
 
@@ -61,9 +62,10 @@ static void scrollbar_helper(int min_shown, int max_shown, int items,
     /* calc start and end of the knob */
     if (items > 0 && items > range) {
         *size = inner_len * range / items;
-        if (*size == 0) { /* width of knob is null */
-            *size = 1;
-            *start = (inner_len - 1) * min / items;
+        int min_knob = (inner_len >= 6) ? 3 : 1;
+        if (*size < min_knob) { /* width of knob is too thin */
+            *size = min_knob;
+            *start = (inner_len - min_knob) * min / items;
         } else {
             *start = (inner_len - *size) * min / (items - range);
         }
@@ -92,6 +94,8 @@ void gui_scrollbar_draw(struct screen * screen, int x, int y,
         max_shown = items;
     }
 
+    const int bw = (width >= 12 && height >= 12) ? 3 : 1;
+
     if (flags & BORDER_NOFILL)
     {
         inner_x  = x;
@@ -101,10 +105,10 @@ void gui_scrollbar_draw(struct screen * screen, int x, int y,
     }
     else
     {
-        inner_x  = x + 1;
-        inner_y  = y + 1;
-        inner_wd = width  - 2;
-        inner_ht = height - 2;
+        inner_x  = x + bw;
+        inner_y  = y + bw;
+        inner_wd = width  - 2 * bw;
+        inner_ht = height - 2 * bw;
     }
     /* Boundary check to make sure that height is reasonable, otherwise nothing
      *  to do 
@@ -124,12 +128,13 @@ void gui_scrollbar_draw(struct screen * screen, int x, int y,
     {
 #ifdef HAVE_LCD_COLOR
         /* must avoid corners if case of (flags & FOREGROUND) */
-        screen->hline(inner_x, x + inner_wd, y);
-        screen->hline(inner_x, x + inner_wd, y + height - 1);
-        screen->vline(x, inner_y, y + inner_ht);
-        screen->vline(x + width - 1, inner_y, y + inner_ht);
+        screen->fillrect(inner_x, y, inner_wd, bw);
+        screen->fillrect(inner_x, y + height - bw, inner_wd, bw);
+        screen->fillrect(x, inner_y, bw, inner_ht);
+        screen->fillrect(x + width - bw, inner_y, bw, inner_ht);
 #else
-        screen->drawrect(x, y, width, height);
+        for (int b = 0; b < bw; b++)
+            screen->drawrect(x + b, y + b, width - 2 * b, height - 2 * b);
 #endif
     }
     screen->set_drawmode(DRMODE_SOLID | DRMODE_INVERSEVID);
@@ -141,10 +146,10 @@ void gui_scrollbar_draw(struct screen * screen, int x, int y,
     {
 #endif
         /* clear corner pixels */
-        screen->drawpixel(x, y);
-        screen->drawpixel(x + width - 1, y);
-        screen->drawpixel(x, y + height - 1);
-        screen->drawpixel(x + width - 1, y + height - 1);
+        screen->fillrect(x, y, bw, bw);
+        screen->fillrect(x + width - bw, y, bw, bw);
+        screen->fillrect(x, y + height - bw, bw, bw);
+        screen->fillrect(x + width - bw, y + height - bw, bw, bw);
 
 #ifdef HAVE_LCD_COLOR
         if (infill != INNER_BGFILL)
@@ -186,6 +191,61 @@ void gui_scrollbar_draw(struct screen * screen, int x, int y,
     }
 
     screen->fillrect(inner_x, inner_y, inner_wd, inner_ht);
+}
+
+/* Classic iPod (1G-4G / Mini) vertical list scrollbar:
+ * closed square-cornered frame with an inner background margin around the
+ * solid foreground thumb on all four sides. */
+void gui_ipod_scrollbar_draw(struct screen *screen, int x, int y,
+                             int width, int height, int items,
+                             int min_shown, int max_shown)
+{
+    const int bw  = 4;  /* frame border thickness (matches 76px HiDPI strokes) */
+    const int pad = 4;  /* inner gap between frame border and thumb */
+
+    if (width <= 2 * (bw + pad) || height <= 2 * (bw + pad))
+        return;
+
+    int min = (min_shown < max_shown) ? min_shown : max_shown;
+    int max = (min_shown < max_shown) ? max_shown : min_shown;
+    if (min < 0) min = 0;
+    if (min > items) min = items;
+    if (max < 0) max = 0;
+    if (max > items) max = items;
+    int range = max - min;
+
+    /* Clear interior to background colour */
+    screen->set_drawmode(DRMODE_SOLID | DRMODE_INVERSEVID);
+    screen->fillrect(x + bw, y + bw, width - 2 * bw, height - 2 * bw);
+
+    /* Closed square-cornered outer frame */
+    screen->set_drawmode(DRMODE_SOLID);
+    screen->fillrect(x, y, width, bw);
+    screen->fillrect(x, y + height - bw, width, bw);
+    screen->fillrect(x, y + bw, bw, height - 2 * bw);
+    screen->fillrect(x + width - bw, y + bw, bw, height - 2 * bw);
+
+    /* Inner thumb channel */
+    int tx = x + bw + pad;
+    int ty = y + bw + pad;
+    int tw = width  - 2 * (bw + pad);
+    int th = height - 2 * (bw + pad);
+
+    int knob_h = th;
+    int knob_off = 0;
+    if (items > 0 && items > range)
+    {
+        int min_knob = (th >= 24) ? 24 : th;
+        knob_h = (int)((int64_t)th * range / items);
+        if (knob_h < min_knob)
+            knob_h = min_knob;
+        if (knob_h > th)
+            knob_h = th;
+        knob_off = (int)(((int64_t)(th - knob_h) * min + (items - range) / 2) /
+                         (items - range));
+    }
+
+    screen->fillrect(tx, ty + knob_off, tw, knob_h);
 }
 
 void gui_bitmap_scrollbar_draw(struct screen * screen, struct bitmap *bm, int x, int y,

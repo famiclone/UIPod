@@ -33,6 +33,11 @@ extern const struct menu_item_ex
 
 /* Trimpod sub-menu page openers (each in its own per-menu file). */
 int trimpod_settings_page(void);        /* main_menu.c */
+int trimpod_extras_page(void);          /* main_menu.c */
+int trimpod_source_page(void);          /* main_menu.c */
+int trimpod_source_boot_page(void);     /* main_menu.c */
+bool trimpod_source_is_configured(void);/* main_menu.c */
+int trimpod_appearance_page(void);      /* power_menu.c */
 int trimpod_power_page(void);           /* power_menu.c */
 int trimpod_audio_folders_page(void);   /* audio_folders_menu.c */
 int trimpod_av_page(void);              /* visualizer_menu.c */

@@ -76,6 +76,8 @@
 #include "string-extra.h"
 #include "playlist.h"
 #include "trimpod_m4b.h"
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include "ata_idle_notify.h"
 #include "file.h"
 #include "fs_attr.h"
@@ -3418,6 +3420,21 @@ void playlist_start(int start_index, unsigned long elapsed,
     sync_control_unlocked(playlist);
 
     playlist_write_unlock(playlist);
+
+    {
+        char nav_path[MAX_PATH];
+        const char *p = playlist_peek(0, nav_path, sizeof(nav_path));
+        if (p && trimpod_navidrome_is_track_path(p))
+        {
+            if (!trimpod_navidrome_prepare_track(p, true))
+                return;
+        }
+        else if (p && trimpod_jellyfin_is_track_path(p))
+        {
+            if (!trimpod_jellyfin_prepare_track(p, true))
+                return;
+        }
+    }
 
     audio_play(elapsed, offset);
     audio_resume();

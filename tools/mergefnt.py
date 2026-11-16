@@ -16,16 +16,17 @@ per tools/convttf.c writer / firmware/font.c font_load_header: 36-byte header,
 4-bit AA pixel data (2 px/byte, low nibble first, 0xF=blank), byte-aligned per
 glyph, then the offset table (u16, or u32 when nbits >= 0xFFDB) and width table.
 
-Shipped-font recipe (PixelMplus12 ADD rasters that were merged into the
-ChicagoFLF bases; convttf args are atoi — DECIMAL ONLY):
-    24px:  convttf -p 24 -X 72 -Ta 2 -Td 1 -e 32 -s 12288 -l 65518
-    20px:  convttf -p 20 -Ta 1 -e 24 -s 12288 -l 65518
-    18px:  convttf -p 18 -Ta 1 -Td 1 -e 16 -s 12288 -l 65518
--X 72 gives true 24ppem (exact 2x of the 12px pixel font); trims map hhea
-27/22 to cell 24/20.  Embolden (-e, units of 1/64 px) puts edges at sub-pixel
-positions so FreeType antialiases them like ChicagoFLF and thickens toward
-Chicago's weight; keep the values as listed — raising them clogs dense kanji,
-dropping them reads as un-antialiased.  Do NOT pass --quantize-add for
+Shipped-font recipe (1024x768 HiDPI Geologica Variable Font bases at
+wght=680,SHRP=0,CRSV=0 + PixelMplus12 ADD rasters; convttf args are decimal):
+    76px base: convttf -A -w -L -X 72 -s 32 -p 57 -Ta -4 -Td 0 -V wght=680,SHRP=0,CRSV=0
+    67px base: convttf -A -w -L -X 72 -s 32 -p 50 -Ta -4 -Td 0 -V wght=680,SHRP=0,CRSV=0
+    58px base: convttf -A -w -L -X 72 -s 32 -p 43 -Ta -4 -Td 0 -V wght=680,SHRP=0,CRSV=0
+    76px CJK:  convttf -X 72 -p 72 -Ta 4 -Td -1 -e 102 -s 12288 -l 65518
+    67px CJK:  convttf -X 72 -p 60 -Ta 1 -Td -2 -e 76  -s 12288 -l 65518
+    58px CJK:  convttf -X 72 -p 48 -Ta -3 -Td -2 -e 56 -s 12288 -l 65518
+-X 72 gives true 48/60/72ppem (exact 4x/5x/6x of the 12px pixel font).  Embolden
+(-e, units of 1/64 px) puts edges at sub-pixel positions so FreeType antialiases
+them like Geologica and thickens toward wght=680; do NOT pass --quantize-add for
 emboldened rasters (shades are real); BASE bytes stay verbatim either way.
 """
 import struct

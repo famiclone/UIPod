@@ -35,7 +35,7 @@
 
 static long progress_next_tick;
 
-#define MAXLINES  (LCD_HEIGHT/6)
+#define MAXLINES  MIN(64, LCD_HEIGHT/6)
 
 
 #if MEMORYSIZE > 8
@@ -44,7 +44,7 @@ static long progress_next_tick;
     #define MAXBUFFER MAX(512, (LCD_WIDTH/SYSFONT_WIDTH) * MAXLINES + 1)
 #endif
 
-#define RECT_SPACING 3
+#define RECT_SPACING 12
 #define SPLASH_MEMORY_INTERVAL (HZ)
 
 /* splash_internal does the actual drawing of the splash box and text
@@ -311,7 +311,8 @@ static bool splash_internal(struct screen * screen, const char *fmt, va_list ap,
 #endif
         vp->drawmode = DRMODE_SOLID;
 
-    screen->draw_border_viewport();
+    for (int b = 0; b < 3 && vp->width > 2 * b && vp->height > 2 * b; b++)
+        screen->drawrect(b, b, vp->width - 2 * b, vp->height - 2 * b);
 
     /* center y within the available splash box */
     if (y < maxh)

@@ -48,6 +48,7 @@
 #include "pcmbuf.h"
 #include "option_select.h"
 #include "string-extra.h"
+#include "trimpod_autoeq.h"
 
 static void eq_apply(void);
 
@@ -385,9 +386,9 @@ static int draw_eq_slider(struct screen * screen, int x, int y,
         break;
     }
 
-    /* Start two pixels in, one for border, one for margin */
-    x1 = x + 2;
-    y1 = y + 2;
+    /* Start six pixels in, three for border, three for margin */
+    x1 = x + 6;
+    y1 = y + 6;
 
     /* Print out the band label */
     if (band == 0) {
@@ -428,7 +429,7 @@ static int draw_eq_slider(struct screen * screen, int x, int y,
     snprintf(buf, sizeof(buf), "%d.%d%s", q / EQ_USER_DIVISOR,
              q % EQ_USER_DIVISOR, screen->lcdwidth >= 160 ? " Q" : "");
     w = screen->getstringsize(buf, NULL, NULL);
-    x2 = x + width - w - 2;
+    x2 = x + width - w - 6;
     screen->putsxy(x2, y1, buf);
 
     /* Print out cutoff part of status line (center between gain & Q) */
@@ -444,14 +445,15 @@ static int draw_eq_slider(struct screen * screen, int x, int y,
     screen->putsxy(x1, y1, buf);
 
     /* Draw selection box */
-    total_height = 3 + h + 1 + scrollbar_size + 3;
+    total_height = 10 + h + 4 + scrollbar_size + 10;
     screen->set_drawmode(DRMODE_SOLID);
     if (selected) {
-        screen->drawrect(x, y, width, total_height);
+        for (int b = 0; b < 3; b++)
+            screen->drawrect(x + b, y + b, width - 2 * b, total_height - 2 * b);
     }
 
     /* Draw horizontal slider. Reuse scrollbar for this */
-    gui_scrollbar_draw(screen, x + 3, y1 + h + 1, width - 6, scrollbar_size,
+    gui_scrollbar_draw(screen, x + 10, y1 + h + 4, width - 20, scrollbar_size,
                        steps, min_item, max_item, HORIZONTAL);
 
     return total_height;
@@ -476,16 +478,16 @@ static void draw_eq_sliders(struct screen * screen, int x, int y,
             break;
 
         if (i >= start_item) {
-            height += draw_eq_slider(screen, x, height, screen->lcdwidth - x - 1,
+            height += draw_eq_slider(screen, x, height, screen->lcdwidth - x - 3,
                                      cutoff, q, gain, i == current_band, mode,
                                      i, scrollbar_size);
             /* add a margin */
-            height++;
+            height += 3;
         }
     }
 
     if (nb_eq_sliders != EQ_NUM_BANDS)
-        gui_scrollbar_draw(screen, 0, y, scrollbar_size - 1,
+        gui_scrollbar_draw(screen, 0, y, scrollbar_size - 3,
                            screen->lcdheight - y, EQ_NUM_BANDS,
                            start_item, start_item + nb_eq_sliders,
                            VERTICAL);
@@ -515,15 +517,15 @@ int eq_menu_graphical(void)
         /* Figure out how many sliders can be drawn on the screen */
         h = screens[i].getcharheight();
         scrollbar_size[i] = h * 3 / 4;
-        if (scrollbar_size[i] < 6)
-            scrollbar_size[i] = 6;
+        if (scrollbar_size[i] < 19)
+            scrollbar_size[i] = 19;
 
-        /* Total height includes margins (1), text, slider, and line selector (1) */
-        height = 3 + h + 1 + scrollbar_size[i] + 3;
+        /* Total height includes margins, text, slider, and line selector */
+        height = 10 + h + 4 + scrollbar_size[i] + 10 + 3;
         nb_eq_sliders[i] = screens[i].lcdheight / height;
 
         /* Make sure the "Edit Mode" text fits too */
-        height = nb_eq_sliders[i]*height + h + 2;
+        height = nb_eq_sliders[i]*height + h + 6;
         if (height > screens[i].lcdheight)
             nb_eq_sliders[i]--;
 
@@ -531,7 +533,7 @@ int eq_menu_graphical(void)
             nb_eq_sliders[i] = EQ_NUM_BANDS;
     }
 
-    y = h + 1;
+    y = h + 4;
 
     /* Start off editing gain on the first band */
     mode = GAIN;
@@ -590,7 +592,7 @@ int eq_menu_graphical(void)
                 }
                 x = scrollbar_size[i];
             } else {
-                x = 1;
+                x = 3;
                 start_item = 0;
             }
             /* Draw equalizer band details */
@@ -693,8 +695,6 @@ static int eq_save_preset(void)
 
     return (result) ? 1 : 0;
 }
-/* Allows browsing of preset files */
-static struct browse_folder_info eqs = { EQS_DIR, SHOW_CFG };
 
 static void eq_reset_defaults(void)
 {
@@ -706,16 +706,17 @@ static void eq_reset_defaults(void)
     eq_apply();
 }
 
-MENUITEM_FUNCTION(eq_graphical, 0, ID2P(LANG_EQUALIZER_GRAPHICAL),
+MENUITEM_FUNCTION(eq_autoeq, MENU_SHOW_CHEVRON, ID2P(LANG_TRIMPOD_AUTOEQ),
+                  trimpod_autoeq_page, lowlatency_callback, Icon_NOICON);
+MENUITEM_FUNCTION(eq_graphical, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_GRAPHICAL),
                   eq_menu_graphical, lowlatency_callback, Icon_EQ);
 MENUITEM_FUNCTION(eq_save, 0, ID2P(LANG_EQUALIZER_SAVE),
                   eq_save_preset, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(eq_reset, 0, ID2P(LANG_RESET_EQUALIZER),
                   eq_reset_defaults, NULL, Icon_NOICON);
-MENUITEM_FUNCTION_W_PARAM(eq_browse, 0, ID2P(LANG_EQUALIZER_BROWSE),
-                          browse_folder, (void*)&eqs,
-                          lowlatency_callback, Icon_NOICON);
+MENUITEM_FUNCTION(eq_browse, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_BROWSE),
+                  trimpod_eq_presets_page, lowlatency_callback, Icon_NOICON);
 
 MAKE_MENU(equalizer_menu, ID2P(LANG_EQUALIZER), NULL, Icon_EQ,
-        &eq_enable, &eq_graphical, &eq_precut, &gain_menu,
-        &advanced_menu, &eq_save, &eq_browse, &eq_reset);
+        &eq_enable, &eq_autoeq, &eq_browse, &eq_graphical, &eq_precut,
+        &gain_menu, &advanced_menu, &eq_save, &eq_reset);

@@ -162,6 +162,9 @@ int get_normalized_volume(void);
 int get_normalized_volume_steps(void);  /* highest notch (total on the dial) */
 void adjust_volume(int steps);
 void adjust_volume_ex(int steps, enum volume_adjust_mode mode);
+#ifdef HAVE_BACKLIGHT_BRIGHTNESS
+void adjust_brightness(int steps);
+#endif
 
 #ifdef HAVE_LCD_COLOR
 int hex_to_rgb(const char* hex, int* color);

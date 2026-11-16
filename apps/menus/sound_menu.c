@@ -186,7 +186,7 @@ MENUITEM_SETTING(replaygain_preamp,
 MAKE_MENU(replaygain_settings_menu,ID2P(LANG_REPLAYGAIN),0, Icon_NOICON,
           &replaygain_type, &replaygain_noclip, &replaygain_preamp);
 
-MAKE_MENU(sound_settings, ID2P(LANG_SOUND_SETTINGS), NULL, Icon_Audio,
+MAKE_MENU(sound_settings, ID2P(LANG_TRIMPOD_SOUND), NULL, Icon_Audio,
           /* sub-pages first (entries that open their own page) */
           &crossfeed_menu, &equalizer_menu,
 #ifdef AUDIOHW_HAVE_EQ

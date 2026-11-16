@@ -28,7 +28,7 @@
 /* colour definitions are R, G, B */
 
 #if   defined(APPLICATION)
-#define UI_TITLE                    "Rockbox"
+#define UI_TITLE                    "UIPod"
 #define UI_LCD_POSX                 0
 #define UI_LCD_POSY                 0
 #define UI_WIDTH                    LCD_WIDTH

@@ -27,8 +27,8 @@
 
 /* Trimpod renders through an OpenGL ES 2/3 context (not an SDL_Renderer) so the
  * Milkdrop visualizer (projectM) can draw into the same window. In normal UI
- * mode we upload the 320x240 LCD surface to a texture and draw it as a
- * full-window quad (nearest-filtered 3.2x upscale). */
+ * mode we upload the 1024x768 LCD surface to a texture and draw it as a
+ * full-window quad (1:1 nearest-filtered on TrimUI Brick, linear when downscaled). */
 #include <GLES2/gl2.h>
 
 extern SDL_Surface *lcd_surface;
@@ -134,6 +134,11 @@ SDL_GLContext sdl_gl_get_context(void)
     return gl_ctx;
 }
 
+const void *sdl_gl_get_proc_address(const char *name)
+{
+    return SDL_GL_GetProcAddress(name);
+}
+
 /* Upload an LCD surface and draw it to fill the window (fade 1=normal, 0=black),
  * then swap. */
 static void gl_present_lcd_fade(SDL_Surface *src, float fade)
@@ -162,6 +167,8 @@ static void gl_present_lcd_fade(SDL_Surface *src, float fade)
     glUniform1f(gl_u_fade, fade);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, gl_lcd_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    (w < src->w || h < src->h) ? GL_LINEAR : GL_NEAREST);
     /* The LCD surface is 24bpp RGB888 -- byte order R,G,B, exactly what
      * GL_RGB/GL_UNSIGNED_BYTE expects -- so it uploads verbatim: no conversion
      * pass, and a quarter less data than RGBA.  SDL pads surface rows to 4 bytes
@@ -271,9 +278,6 @@ void sdl_window_setup(void)
     int depth = LCD_DEPTH < 8 ? 16 : LCD_DEPTH;
     Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
 
-    if (display_zoom == 1)
-        flags |= SDL_WINDOW_RESIZABLE;
-
     /* No window-background bitmap on this target: the LCD fills the window.
      * (`background` defaults to true, so it must be cleared here.) */
     background = false;
@@ -286,6 +290,7 @@ void sdl_window_setup(void)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);   /* video shows through alpha 0 */
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); /* femtovg path stencil buffer */
     flags |= SDL_WINDOW_OPENGL;
 
     if ((sdlWindow = SDL_CreateWindow(UI_TITLE, SDL_WINDOWPOS_CENTERED,

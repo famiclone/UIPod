@@ -13,17 +13,19 @@
 
 enum trimpod_mainmenu_id
 {
-    TRIMPOD_MM_MUSIC = 0,
-    TRIMPOD_MM_PODCASTS,
-    TRIMPOD_MM_AUDIOBOOKS,
-    TRIMPOD_MM_ARTISTS,
-    TRIMPOD_MM_ALBUMS,
+    TRIMPOD_MM_MUSIC = 0,       /* Files */
+    TRIMPOD_MM_EXTRAS,          /* Extras */
+    TRIMPOD_MM_ARTISTS,         /* Artists */
+    TRIMPOD_MM_ALBUMS,          /* Albums */
+    TRIMPOD_MM_GENRES,          /* Genres */
+    TRIMPOD_MM_MOVIES,          /* Videos */
     TRIMPOD_MM_SONGS,
     TRIMPOD_MM_PLAYLISTS,
+    TRIMPOD_MM_PODCASTS,
+    TRIMPOD_MM_AUDIOBOOKS,
+    TRIMPOD_MM_TELEVISION,
     TRIMPOD_MM_BROWSE,
     TRIMPOD_MM_SHUFFLE,
-    TRIMPOD_MM_MOVIES,
-    TRIMPOD_MM_TELEVISION,
     TRIMPOD_MM_COUNT,
 };
 

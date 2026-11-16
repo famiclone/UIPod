@@ -92,13 +92,13 @@
   desc: main menu title
   user: core
   <source>
-    *: "Trimpod Classic"
+    *: "UIPod Mini"
   </source>
   <dest>
-    *: "Trimpod Classic"
+    *: "UIPod Mini"
   </dest>
   <voice>
-    *: "Trimpod Classic"
+    *: "UIPod Mini"
   </voice>
 </phrase>
 <phrase>
@@ -11647,13 +11647,13 @@
   desc: Trimpod Settings > Menu Settings (toggle which entries show)
   user: core
   <source>
-    *: "Menu"
+    *: "Main menu"
   </source>
   <dest>
-    *: "Menu"
+    *: "Main menu"
   </dest>
   <voice>
-    *: "Menu"
+    *: "Main menu"
   </voice>
 </phrase>
 <phrase>
@@ -17551,13 +17551,13 @@
   desc: Trimpod empty-playlist page, line 2
   user: core
   <source>
-    *: "Hold A on any song"
+    *: "Press MENU on any song"
   </source>
   <dest>
-    *: "Hold A on any song"
+    *: "Press MENU on any song"
   </dest>
   <voice>
-    *: "Hold A on any song"
+    *: "Press MENU on any song"
   </voice>
 </phrase>
 <phrase>
@@ -17635,13 +17635,13 @@
   desc: Trimpod folder picker header legend
   user: core
   <source>
-    *: "Hold A to add"
+    *: "MENU to add"
   </source>
   <dest>
-    *: "Hold A to add"
+    *: "MENU to add"
   </dest>
   <voice>
-    *: "Hold A to add"
+    *: "MENU to add"
   </voice>
 </phrase>
 <phrase>
@@ -17677,13 +17677,13 @@
   desc: Trimpod controls page
   user: core
   <source>
-    *: "B - Back/Cancel"
+    *: "B - Back (Hold: Home)"
   </source>
   <dest>
-    *: "B - Back/Cancel"
+    *: "B - Back (Hold: Home)"
   </dest>
   <voice>
-    *: "B - Back/Cancel"
+    *: "B - Back"
   </voice>
 </phrase>
 <phrase>
@@ -17691,13 +17691,27 @@
   desc: Trimpod controls page
   user: core
   <source>
-    *: "A - Play/Enter"
+    *: "A - Select / Enter"
   </source>
   <dest>
-    *: "A - Play/Enter"
+    *: "A - Select / Enter"
   </dest>
   <voice>
-    *: "A - Play/Enter"
+    *: "A - Select"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_START
+  desc: UIPod controls page: START play/pause
+  user: core
+  <source>
+    *: "START - Play / Pause"
+  </source>
+  <dest>
+    *: "START - Play / Pause"
+  </dest>
+  <voice>
+    *: "START - Play or Pause"
   </voice>
 </phrase>
 <phrase>
@@ -17705,13 +17719,27 @@
   desc: Trimpod controls page
   user: core
   <source>
-    *: "Hold A - Context Menus"
+    *: "MENU - Context / Settings"
   </source>
   <dest>
-    *: "Hold A - Context Menus"
+    *: "MENU - Context / Settings"
   </dest>
   <voice>
-    *: "Hold A - Context Menus"
+    *: "MENU - Context Menus and Settings"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_CTRL_BRIGHTNESS
+  desc: UIPod controls page: SELECT + Volume brightness
+  user: core
+  <source>
+    *: "SELECT + Vol - Brightness"
+  </source>
+  <dest>
+    *: "SELECT + Vol - Brightness"
+  </dest>
+  <voice>
+    *: "SELECT plus Volume - Brightness"
   </voice>
 </phrase>
 <phrase>
@@ -17719,13 +17747,13 @@
   desc: Trimpod controls page
   user: core
   <source>
-    *: "L1/R1 - Seek 10s"
+    *: "Hold Left/Right - Seek"
   </source>
   <dest>
-    *: "L1/R1 - Seek 10s"
+    *: "Hold Left/Right - Seek"
   </dest>
   <voice>
-    *: "L1/R1 - Seek 10s"
+    *: "Hold Left/Right - Seek"
   </voice>
 </phrase>
 <phrase>
@@ -17747,10 +17775,10 @@
   desc: Trimpod controls page
   user: core
   <source>
-    *: "Side Switch - Lock Buttons"
+    *: "Side Switch - Lock"
   </source>
   <dest>
-    *: "Side Switch - Lock Buttons"
+    *: "Side Switch - Lock"
   </dest>
   <voice>
     *: "Side Switch - Lock Buttons"
@@ -17894,5 +17922,901 @@
   </dest>
   <voice>
     *: "Stretch"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ
+  desc: Trimpod Equalizer menu AutoEQ entry
+  user: core
+  <source>
+    *: "AutoEQ"
+  </source>
+  <dest>
+    *: "AutoEQ"
+  </dest>
+  <voice>
+    *: "AutoEQ"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_SEARCH
+  desc: Trimpod AutoEQ search row
+  user: core
+  <source>
+    *: "Search..."
+  </source>
+  <dest>
+    *: "Search..."
+  </dest>
+  <voice>
+    *: "Search"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_UPDATE
+  desc: Trimpod AutoEQ update index row
+  user: core
+  <source>
+    *: "Update AutoEQ Database"
+  </source>
+  <dest>
+    *: "Update AutoEQ Database"
+  </dest>
+  <voice>
+    *: "Update AutoEQ Database"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_DOWNLOADING
+  desc: Trimpod AutoEQ downloading splash
+  user: core
+  <source>
+    *: "Downloading..."
+  </source>
+  <dest>
+    *: "Downloading..."
+  </dest>
+  <voice>
+    *: "Downloading"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_SAVED_APPLIED
+  desc: Trimpod AutoEQ preset saved and applied splash
+  user: core
+  <source>
+    *: "Saved & Applied"
+  </source>
+  <dest>
+    *: "Saved & Applied"
+  </dest>
+  <voice>
+    *: "Saved and Applied"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_DOWNLOAD_FAILED
+  desc: Trimpod AutoEQ download failed splash
+  user: core
+  <source>
+    *: "Download failed (check Wi-Fi)"
+  </source>
+  <dest>
+    *: "Download failed (check Wi-Fi)"
+  </dest>
+  <voice>
+    *: "Download failed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_UPDATED
+  desc: Trimpod AutoEQ index updated splash
+  user: core
+  <source>
+    *: "AutoEQ Database Updated"
+  </source>
+  <dest>
+    *: "AutoEQ Database Updated"
+  </dest>
+  <voice>
+    *: "AutoEQ Database Updated"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_NO_MATCHES
+  desc: Trimpod AutoEQ empty search placeholder
+  user: core
+  <source>
+    *: "(No matches)"
+  </source>
+  <dest>
+    *: "(No matches)"
+  </dest>
+  <voice>
+    *: "No matches"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_APPLY
+  desc: Trimpod AutoEQ context menu: download, save, and apply
+  user: core
+  <source>
+    *: "Download & Apply"
+  </source>
+  <dest>
+    *: "Download & Apply"
+  </dest>
+  <voice>
+    *: "Download and Apply"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_AUTOEQ_SAVE_ONLY
+  desc: Trimpod AutoEQ context menu: download and save without applying
+  user: core
+  <source>
+    *: "Save Preset Only"
+  </source>
+  <dest>
+    *: "Save Preset Only"
+  </dest>
+  <voice>
+    *: "Save Preset Only"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_APPLY_PRESET
+  desc: Trimpod EQ presets context menu: apply preset
+  user: core
+  <source>
+    *: "Apply Preset"
+  </source>
+  <dest>
+    *: "Apply Preset"
+  </dest>
+  <voice>
+    *: "Apply Preset"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DELETE_PRESET_Q
+  desc: Trimpod EQ presets delete confirmation
+  user: core
+  <source>
+    *: "Delete this preset?"
+  </source>
+  <dest>
+    *: "Delete this preset?"
+  </dest>
+  <voice>
+    *: "Delete this preset?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_MONO_ALBUM_ART
+  desc: Trimpod setting: display album art in black and white
+  user: core
+  <source>
+    *: "Monochrome album art"
+  </source>
+  <dest>
+    *: "Monochrome album art"
+  </dest>
+  <voice>
+    *: "Monochrome album art"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_FILES
+  desc: ui.figcraft FILES variable
+  user: core
+  <source>
+    *: "Files"
+  </source>
+  <dest>
+    *: "Files"
+  </dest>
+  <voice>
+    *: "Files"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_ADD_DIRECTORY
+  desc: ui.figcraft ADD_DIR variable
+  user: core
+  <source>
+    *: "Add directory"
+  </source>
+  <dest>
+    *: "Add directory"
+  </dest>
+  <voice>
+    *: "Add directory"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_REMOVE_DIRECTORY
+  desc: Remove configured directory from Files list
+  user: core
+  <source>
+    *: "Remove directory"
+  </source>
+  <dest>
+    *: "Remove directory"
+  </dest>
+  <voice>
+    *: "Remove directory"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_EXTRAS
+  desc: ui.figcraft EXTRAS variable
+  user: core
+  <source>
+    *: "Extras"
+  </source>
+  <dest>
+    *: "Extras"
+  </dest>
+  <voice>
+    *: "Extras"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_VIDEOS
+  desc: ui.figcraft VIDEOS variable
+  user: core
+  <source>
+    *: "Videos"
+  </source>
+  <dest>
+    *: "Videos"
+  </dest>
+  <voice>
+    *: "Videos"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_GENRES
+  desc: ui.figcraft GENRES variable
+  user: core
+  <source>
+    *: "Genres"
+  </source>
+  <dest>
+    *: "Genres"
+  </dest>
+  <voice>
+    *: "Genres"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_UNKNOWN_GENRE
+  desc: Fallback label for tracks with no genre tag
+  user: core
+  <source>
+    *: "Unknown Genre"
+  </source>
+  <dest>
+    *: "Unknown Genre"
+  </dest>
+  <voice>
+    *: "Unknown Genre"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_APPEARANCE
+  desc: ui.figcraft APPEARANCE variable
+  user: core
+  <source>
+    *: "Display"
+  </source>
+  <dest>
+    *: "Display"
+  </dest>
+  <voice>
+    *: "Display"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOUND
+  desc: ui.figcraft SOUND variable
+  user: core
+  <source>
+    *: "Sound"
+  </source>
+  <dest>
+    *: "Sound"
+  </dest>
+  <voice>
+    *: "Sound"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_TYPE
+  desc: ui.figcraft SOURCE _TYPE variable
+  user: core
+  <source>
+    *: "Source type"
+  </source>
+  <dest>
+    *: "Source type"
+  </dest>
+  <voice>
+    *: "Source type"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_LOCAL
+  desc: Source screen Local option
+  user: core
+  <source>
+    *: "Local"
+  </source>
+  <dest>
+    *: "Local"
+  </dest>
+  <voice>
+    *: "Local"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_NAVIDROME
+  desc: Source screen Navidrome option
+  user: core
+  <source>
+    *: "Navidrome"
+  </source>
+  <dest>
+    *: "Navidrome"
+  </dest>
+  <voice>
+    *: "Navidrome"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAVIDROME_SOON
+  desc: Placeholder splash until Navidrome streaming client is connected
+  user: core
+  <source>
+    *: "Navidrome: coming soon"
+  </source>
+  <dest>
+    *: "Navidrome: coming soon"
+  </dest>
+  <voice>
+    *: "Navidrome coming soon"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_LANGUAGE
+  desc: Language selector row in Appearance settings
+  user: core
+  <source>
+    *: "Language"
+  </source>
+  <dest>
+    *: "Language"
+  </dest>
+  <voice>
+    *: "Language"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SERVER_URL
+  desc: Navidrome settings Server URL row
+  user: core
+  <source>
+    *: "Server URL"
+  </source>
+  <dest>
+    *: "Server URL"
+  </dest>
+  <voice>
+    *: "Server URL"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_USERNAME
+  desc: Navidrome settings Username row
+  user: core
+  <source>
+    *: "Username"
+  </source>
+  <dest>
+    *: "Username"
+  </dest>
+  <voice>
+    *: "Username"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_PASSWORD
+  desc: Navidrome settings Password row
+  user: core
+  <source>
+    *: "Password"
+  </source>
+  <dest>
+    *: "Password"
+  </dest>
+  <voice>
+    *: "Password"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUALITY
+  desc: Navidrome settings Audio Quality row
+  user: core
+  <source>
+    *: "Audio Quality"
+  </source>
+  <dest>
+    *: "Audio Quality"
+  </dest>
+  <voice>
+    *: "Audio Quality"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_ORIGINAL
+  desc: Navidrome Original Lossless audio quality
+  user: core
+  <source>
+    *: "Original"
+  </source>
+  <dest>
+    *: "Original"
+  </dest>
+  <voice>
+    *: "Original"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_320
+  desc: Navidrome MP3 320 kbps audio quality
+  user: core
+  <source>
+    *: "MP3 320 kbps"
+  </source>
+  <dest>
+    *: "MP3 320 kbps"
+  </dest>
+  <voice>
+    *: "MP3 320"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_QUAL_192
+  desc: Navidrome MP3 192 kbps audio quality
+  user: core
+  <source>
+    *: "MP3 192 kbps"
+  </source>
+  <dest>
+    *: "MP3 192 kbps"
+  </dest>
+  <voice>
+    *: "MP3 192"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CACHE_LIMIT
+  desc: Navidrome SD cache size limit row
+  user: core
+  <source>
+    *: "Cache Limit"
+  </source>
+  <dest>
+    *: "Cache Limit"
+  </dest>
+  <voice>
+    *: "Cache Limit"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_UNLIMITED
+  desc: Navidrome unlimited cache option
+  user: core
+  <source>
+    *: "Unlimited"
+  </source>
+  <dest>
+    *: "Unlimited"
+  </dest>
+  <voice>
+    *: "Unlimited"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SELF_SIGNED
+  desc: Navidrome allow self-signed TLS toggle
+  user: core
+  <source>
+    *: "Self-Signed TLS"
+  </source>
+  <dest>
+    *: "Self-Signed TLS"
+  </dest>
+  <voice>
+    *: "Self-Signed TLS"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNC
+  desc: Navidrome Connect and Sync action row
+  user: core
+  <source>
+    *: "Connect & Sync"
+  </source>
+  <dest>
+    *: "Connect & Sync"
+  </dest>
+  <voice>
+    *: "Connect and Sync"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CLEAR_CACHE
+  desc: Navidrome Clear Cache action row
+  user: core
+  <source>
+    *: "Clear Cache"
+  </source>
+  <dest>
+    *: "Clear Cache"
+  </dest>
+  <voice>
+    *: "Clear Cache"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CLEAR_CACHE_Q
+  desc: Navidrome Clear Cache confirmation prompt
+  user: core
+  <source>
+    *: "Clear cached audio & covers?"
+  </source>
+  <dest>
+    *: "Clear cached audio & covers?"
+  </dest>
+  <voice>
+    *: "Clear cached audio and covers?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CACHE_CLEARED
+  desc: Navidrome Cache cleared splash
+  user: core
+  <source>
+    *: "Cache cleared"
+  </source>
+  <dest>
+    *: "Cache cleared"
+  </dest>
+  <voice>
+    *: "Cache cleared"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_NOT_SET
+  desc: Navidrome unset field indicator
+  user: core
+  <source>
+    *: "Not set"
+  </source>
+  <dest>
+    *: "Not set"
+  </dest>
+  <voice>
+    *: "Not set"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CONNECTING
+  desc: Navidrome connecting fullscreen message
+  user: core
+  <source>
+    *: "Connecting..."
+  </source>
+  <dest>
+    *: "Connecting..."
+  </dest>
+  <voice>
+    *: "Connecting"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNCING
+  desc: Navidrome syncing library fullscreen message
+  user: core
+  <source>
+    *: "Syncing Library"
+  </source>
+  <dest>
+    *: "Syncing Library"
+  </dest>
+  <voice>
+    *: "Syncing Library"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_SYNCED_FMT
+  desc: Navidrome sync completion splash format
+  user: core
+  <source>
+    *: "Synced %d tracks"
+  </source>
+  <dest>
+    *: "Synced %d tracks"
+  </dest>
+  <voice>
+    *: "Synced tracks"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_BUFFERING
+  desc: Navidrome buffering fullscreen message
+  user: core
+  <source>
+    *: "Buffering..."
+  </source>
+  <dest>
+    *: "Buffering..."
+  </dest>
+  <voice>
+    *: "Buffering"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_NAV_CONFIG_NEEDED
+  desc: Navidrome missing credentials splash
+  user: core
+  <source>
+    *: "Set URL, username & password"
+  </source>
+  <dest>
+    *: "Set URL, username & password"
+  </dest>
+  <voice>
+    *: "Set URL, username and password"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOAD
+  desc: Hold-A context menu action to download Navidrome track/album/folder to SD card
+  user: core
+  <source>
+    *: "Download"
+  </source>
+  <dest>
+    *: "Download"
+  </dest>
+  <voice>
+    *: "Download"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADING
+  desc: Fullscreen progress message while downloading a single Navidrome track
+  user: core
+  <source>
+    *: "Downloading..."
+  </source>
+  <dest>
+    *: "Downloading..."
+  </dest>
+  <voice>
+    *: "Downloading"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADING_FMT
+  desc: Fullscreen progress message while downloading multiple Navidrome tracks
+  user: core
+  <source>
+    *: "Downloading %d/%d"
+  </source>
+  <dest>
+    *: "Downloading %d/%d"
+  </dest>
+  <voice>
+    *: "Downloading"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_ONE
+  desc: Splash shown when a single track finishes downloading
+  user: core
+  <source>
+    *: "Downloaded"
+  </source>
+  <dest>
+    *: "Downloaded"
+  </dest>
+  <voice>
+    *: "Downloaded"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_FMT
+  desc: Splash shown when multiple tracks finish downloading
+  user: core
+  <source>
+    *: "Downloaded %d tracks"
+  </source>
+  <dest>
+    *: "Downloaded %d tracks"
+  </dest>
+  <voice>
+    *: "Downloaded tracks"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_SOURCE_JELLYFIN
+  desc: Source type option and settings item for Jellyfin
+  user: core
+  <source>
+    *: "Jellyfin"
+  </source>
+  <dest>
+    *: "Jellyfin"
+  </dest>
+  <voice>
+    *: "Jellyfin"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VIDEO_QUALITY
+  desc: Jellyfin Video Quality row label
+  user: core
+  <source>
+    *: "Video Quality"
+  </source>
+  <dest>
+    *: "Video Quality"
+  </dest>
+  <voice>
+    *: "Video Quality"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_AUTO
+  desc: Jellyfin Video Quality Auto (720p)
+  user: core
+  <source>
+    *: "Auto (720p)"
+  </source>
+  <dest>
+    *: "Auto (720p)"
+  </dest>
+  <voice>
+    *: "Auto 720p"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_720P
+  desc: Jellyfin Video Quality 720p 4 Mbps
+  user: core
+  <source>
+    *: "720p (4 Mbps)"
+  </source>
+  <dest>
+    *: "720p (4 Mbps)"
+  </dest>
+  <voice>
+    *: "720p 4 megabits"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_480P
+  desc: Jellyfin Video Quality 480p 2 Mbps
+  user: core
+  <source>
+    *: "480p (2 Mbps)"
+  </source>
+  <dest>
+    *: "480p (2 Mbps)"
+  </dest>
+  <voice>
+    *: "480p 2 megabits"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_VQ_ORIGINAL
+  desc: Jellyfin Video Quality 1080p / Original
+  user: core
+  <source>
+    *: "1080p / Original"
+  </source>
+  <dest>
+    *: "1080p / Original"
+  </dest>
+  <voice>
+    *: "1080p Original"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_SYNCED_FMT
+  desc: Jellyfin sync completion splash format
+  user: core
+  <source>
+    *: "Synced %d videos, %d tracks"
+  </source>
+  <dest>
+    *: "Synced %d videos, %d tracks"
+  </dest>
+  <voice>
+    *: "Synced library"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_JF_CLEAR_CACHE_Q
+  desc: Jellyfin Clear Cache confirmation prompt
+  user: core
+  <source>
+    *: "Clear cached media & downloads?"
+  </source>
+  <dest>
+    *: "Clear cached media & downloads?"
+  </dest>
+  <voice>
+    *: "Clear cached media and downloads?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_PLAY_FROM_START
+  desc: Video context menu action to play from 0:00
+  user: core
+  <source>
+    *: "Play from beginning"
+  </source>
+  <dest>
+    *: "Play from beginning"
+  </dest>
+  <voice>
+    *: "Play from beginning"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DELETE_DOWNLOAD
+  desc: Video context menu action to remove offline SD download
+  user: core
+  <source>
+    *: "Delete download"
+  </source>
+  <dest>
+    *: "Delete download"
+  </dest>
+  <voice>
+    *: "Delete download"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DELETED
+  desc: Splash shown when offline download is deleted
+  user: core
+  <source>
+    *: "Deleted"
+  </source>
+  <dest>
+    *: "Deleted"
+  </dest>
+  <voice>
+    *: "Deleted"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_TRIMPOD_DOWNLOADED_VIDEOS_FMT
+  desc: Splash shown when multiple videos finish downloading
+  user: core
+  <source>
+    *: "Downloaded %d videos"
+  </source>
+  <dest>
+    *: "Downloaded %d videos"
+  </dest>
+  <voice>
+    *: "Downloaded videos"
   </voice>
 </phrase>

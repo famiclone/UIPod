@@ -1,44 +1,133 @@
-# Builds the pak in the public tg5040 toolchain and publishes the Pak Store
-# release asset (Trimpod.pak.zip) whenever a v* tag is pushed.
+# Builds UIPod for TrimUI Brick (tg5040 / NextUI) and publishes a versioned
+# GitHub Release with:
+#   - UIPod.pak.zip              (NextUI Pak Store format, matches pak.json release_filename)
+#   - UIPod-<tag>-brick.zip      (ready-to-extract UIPod.pak/ folder for /mnt/SDCARD/Tools/tg5040/)
 #
-# The NextUI Pak Store pulls the asset named release_filename in pak.json from
-# the GitHub release whose tag matches the pak.json "version", so this workflow
-# enforces that the tag and pak.json version agree before publishing.
+# Triggered either by:
+#   1) Pushing any `v*` tag (`git tag v0.2.0 && git push origin v0.2.0`), OR
+#   2) Clicking "Run workflow" in GitHub Actions (auto-bumps VERSION + pak.json,
+#      creates the tag on `main`, builds the pak, and publishes the Release).
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (used when explicit tag is empty)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      tag:
+        description: 'Explicit version tag override (e.g. v0.2.0)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
-  contents: write          # create the GitHub release + upload the asset
+  contents: write
 
 jobs:
   release:
+    name: Release UIPod.pak (TrimUI Brick / tg5040)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # pak.json "version" must equal the pushed tag (Pak Store requirement).
-      - name: Check pak.json version matches the tag
+      - name: Resolve or bump release version
+        id: ver
+        env:
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          ver=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' pak.json \
-                | grep -oE 'v[0-9][^"]*')
-          echo "pak.json version: $ver   tag: ${GITHUB_REF_NAME}"
-          [ "$ver" = "${GITHUB_REF_NAME}" ] || {
-            echo "::error::pak.json version ($ver) != tag (${GITHUB_REF_NAME})"; exit 1; }
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            TARGET="${INPUT_TAG:-$INPUT_BUMP}"
+            chmod +x ./scripts/bump-version.sh
+            ./scripts/bump-version.sh "$TARGET"
+            RELEASE_TAG="$(tr -d '[:space:]' < VERSION)"
+            git add VERSION pak.json
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(release): ${RELEASE_TAG}"
+              git push origin HEAD:main
+            fi
+            if ! git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+              git tag -a "$RELEASE_TAG" -m "UIPod ${RELEASE_TAG}"
+              git push origin "$RELEASE_TAG"
+            fi
+          else
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo ">> Building release version: ${RELEASE_TAG}"
 
-      - name: Build (Docker tg5040 toolchain)
-        run: ./build.sh clean
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Package pak + Pak Store zip
-        run: ./package.sh
+      - name: Build & cache tg5040 + Rust toolchain image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.trimpod
+          tags: trimpod-toolchain:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Publish GitHub release with the Pak Store asset
+      - name: Run Rust workspace unit tests
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD":/build -w /build trimpod-toolchain:latest \
+            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --offline --workspace"
+
+      - name: Build & package UIPod for TrimUI Brick
+        env:
+          UIPOD_VERSION: ${{ steps.ver.outputs.tag }}
+        run: |
+          ./build.sh clean
+          ./package.sh
+
+      - name: Verify stamped pak.json version matches tag
+        env:
+          EXPECTED_TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          python3 - "$EXPECTED_TAG" <<'PY'
+          import json, sys, zipfile
+          expected = sys.argv[1]
+          with zipfile.ZipFile("dist/UIPod.pak.zip") as zf:
+              meta = json.loads(zf.read("pak.json").decode("utf-8"))
+          actual = meta.get("version")
+          print(f"pak.json version={actual!r}, tag={expected!r}, release_filename={meta.get('release_filename')!r}")
+          assert actual == expected, f"pak.json version ({actual}) != tag ({expected})"
+          assert meta.get("release_filename") == "UIPod.pak.zip"
+          PY
+
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/Trimpod.pak.zip \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          SAFE_VER="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._+-' '-')"
+          BRICK_ZIP="dist/UIPod-${SAFE_VER}-brick.zip"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              dist/UIPod.pak.zip \
+              "$BRICK_ZIP" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/UIPod.pak.zip \
+              "$BRICK_ZIP" \
+              --title "UIPod ${RELEASE_TAG}" \
+              --generate-notes
+          fi

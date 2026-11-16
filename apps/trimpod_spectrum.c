@@ -102,7 +102,7 @@ void trimpod_spectrum_draw(struct screen *display, struct viewport *vp)
 
     int W = vp->width;
     int H = vp->height;
-    int gap = (W >= 2 * SPEC_BARS) ? 1 : 0;
+    int gap = (W >= 4 * SPEC_BARS) ? 3 : 0;
     int bw = (W - (SPEC_BARS - 1) * gap) / SPEC_BARS;
     if (bw < 1)
         bw = 1;
@@ -138,8 +138,8 @@ void trimpod_spectrum_draw(struct screen *display, struct viewport *vp)
             spec_level[b] = spec_level[b] * 0.72f + v * 0.28f; /* decay */
 
         int bh = (int)(spec_level[b] * (H - 1) + 0.5f);
-        if (bh < 1 && spec_level[b] > 0.02f)
-            bh = 1;
+        if (bh < 3 && spec_level[b] > 0.02f)
+            bh = 3;
 
         if (bh > 0)
         {

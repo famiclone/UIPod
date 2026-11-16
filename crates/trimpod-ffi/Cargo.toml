@@ -1,0 +1,15 @@
+[package]
+name = "trimpod-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Unified staticlib FFI archive bundling all pure-Rust Trimpod crates into a single libstd link unit"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "trimpod_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+trimpod-ui = { path = "../trimpod-ui" }
+trimpod-navidrome = { path = "../trimpod-navidrome" }
+trimpod-jellyfin = { path = "../trimpod-jellyfin" }

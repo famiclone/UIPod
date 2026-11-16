@@ -44,6 +44,8 @@
 #include "audiohw.h"
 #include "general.h"
 #include "iap-usb.h"
+#include "trimpod_navidrome.h"
+#include "trimpod_jellyfin.h"
 #include <stdio.h>
 
 
@@ -1122,6 +1124,8 @@ static void audio_playlist_track_finish(void)
     playlist_update_resume_info(filling == STATE_ENDED ? NULL : id3);
     if (id3)
     {
+        trimpod_navidrome_on_track_finish(id3);
+        trimpod_jellyfin_on_track_finish(id3);
         send_track_event(PLAYBACK_EVENT_TRACK_FINISH,
                          track_event_flags, id3);
     }
@@ -1134,6 +1138,10 @@ static void audio_playlist_track_change(void)
 
     if (id3)
     {
+        trimpod_navidrome_enrich_id3(id3);
+        trimpod_jellyfin_enrich_id3(id3);
+        trimpod_navidrome_on_track_change(id3->path);
+        trimpod_jellyfin_on_track_change(id3->path);
         send_track_event(PLAYBACK_EVENT_TRACK_CHANGE,
                          track_event_flags, id3);
         iap_on_track_playback_index(playlist_get_display_index() - 1, false);
@@ -1596,6 +1604,11 @@ static int audio_load_track(void)
         if (!path)
             break;
 
+        if (trimpod_navidrome_is_track_path(path))
+            trimpod_navidrome_prepare_track(path, false);
+        else if (trimpod_jellyfin_is_track_path(path))
+            trimpod_jellyfin_prepare_track(path, false);
+
         /* Test for broken playlists by probing for the files */
         if (file_exists(path))
         {
@@ -1660,6 +1673,10 @@ static int audio_load_track(void)
         {
             id3_mutex_lock();
             get_metadata(ub_id3, fd, path);
+            if (trimpod_navidrome_is_track_path(path))
+                trimpod_navidrome_enrich_id3(ub_id3);
+            else if (trimpod_jellyfin_is_track_path(path))
+                trimpod_jellyfin_enrich_id3(ub_id3);
             id3_mutex_unlock();
         }
 
