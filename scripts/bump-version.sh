@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Bump UIPod semantic version across VERSION and pak.json (and optionally commit + tag).
+# Bump UIPod semantic version across VERSION and pak.json (and optionally commit + tag),
+# generating a concise bullet changelog from git commits since the previous v* tag.
 #
 # Usage:
-#   ./scripts/bump-version.sh patch            # v0.1.0 -> v0.1.1
-#   ./scripts/bump-version.sh minor            # v0.1.0 -> v0.2.0
-#   ./scripts/bump-version.sh major            # v0.1.0 -> v1.0.0
+#   ./scripts/bump-version.sh patch            # v0.1.1 -> v0.1.2
+#   ./scripts/bump-version.sh minor            # v0.1.1 -> v0.2.0
+#   ./scripts/bump-version.sh major            # v0.1.1 -> v1.0.0
 #   ./scripts/bump-version.sh v0.2.0           # explicit version
 #   ./scripts/bump-version.sh patch --tag      # also git commit + git tag vX.Y.Z
 set -euo pipefail
@@ -54,20 +55,60 @@ PY
 
 printf '%s\n' "$NEW_VER" > "$VERSION_FILE"
 
-python3 - "$PAK_JSON" "$NEW_VER" <<'PY'
-import json, sys
+python3 - "$ROOT" "$PAK_JSON" "$NEW_VER" <<'PY'
+import json, re, subprocess, sys
 
-path, ver = sys.argv[1], sys.argv[2]
+root, path, ver = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)
+
+def short_git_changelog() -> str:
+    try:
+        prev_tag = subprocess.check_output(
+            ["git", "-C", root, "describe", "--tags", "--abbrev=0", "--match", "v*"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        rev_range = f"{prev_tag}..HEAD"
+    except Exception:
+        rev_range = "-n 8"
+
+    cmd = ["git", "-C", root, "log", "--no-merges", "--pretty=format:%s"]
+    cmd.extend(rev_range.split())
+    try:
+        raw_lines = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).splitlines()
+    except Exception:
+        raw_lines = []
+
+    bullets = []
+    seen = set()
+    for line in raw_lines:
+        s = line.strip()
+        if not s or re.match(r"^chore\(release\):", s, re.I):
+            continue
+        s = re.sub(r"^[a-z]+(\([^)]+\))?!?:\s*", "", s, flags=re.I)
+        s = re.sub(r"\s*\(v\d+\.\d+\.\d+\)\s*$", "", s)
+        if not s:
+            continue
+        s = s[0].upper() + s[1:]
+        key = s.lower()
+        if key not in seen:
+            seen.add(key)
+            bullets.append(f"- {s}")
+        if len(bullets) >= 6:
+            break
+
+    return "\n".join(bullets) if bullets else f"- Maintenance and stability updates ({ver})"
 
 data["version"] = ver
 changelog = data.get("changelog")
 if not isinstance(changelog, dict):
     changelog = {}
-if ver not in changelog:
-    merged = {ver: f"Release {ver}"}
-    merged.update(changelog)
+if ver not in changelog or not str(changelog[ver]).strip() or str(changelog[ver]).startswith("Release "):
+    merged = {ver: short_git_changelog()}
+    for k, v in changelog.items():
+        if k != ver:
+            merged[k] = v
     data["changelog"] = merged
 
 with open(path, "w", encoding="utf-8") as f:

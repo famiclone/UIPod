@@ -114,6 +114,57 @@ jobs:
           assert meta.get("release_filename") == "UIPod.pak.zip"
           PY
 
+      - name: Generate concise release changelog
+        env:
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          python3 - "$RELEASE_TAG" "/tmp/release-notes.md" <<'PY'
+          import json, re, subprocess, sys
+
+          tag, out_path = sys.argv[1], sys.argv[2]
+          notes = ""
+          try:
+              with open("pak.json", "r", encoding="utf-8") as f:
+                  meta = json.load(f)
+              entry = (meta.get("changelog") or {}).get(tag, "").strip()
+              if entry and not entry.startswith("Release "):
+                  notes = entry
+          except Exception:
+              pass
+
+          if not notes:
+              tags = subprocess.check_output(
+                  ["git", "tag", "--sort=-creatordate", "-l", "v*"],
+                  text=True,
+              ).splitlines()
+              prev = next((t.strip() for t in tags if t.strip() and t.strip() != tag), "")
+              cmd = ["git", "log", "--no-merges", "--pretty=format:%s"]
+              cmd.append(f"{prev}..{tag}" if prev else "-n")
+              if not prev:
+                  cmd.append("6")
+              raw = subprocess.check_output(cmd, text=True).splitlines()
+              bullets = []
+              seen = set()
+              for line in raw:
+                  s = line.strip()
+                  if not s or re.match(r"^chore\(release\):", s, re.I):
+                      continue
+                  s = re.sub(r"^[a-z]+(\([^)]+\))?!?:\s*", "", s, flags=re.I)
+                  s = re.sub(r"\s*\(v\d+\.\d+\.\d+\)\s*$", "", s)
+                  if s:
+                      s = s[0].upper() + s[1:]
+                      if s.lower() not in seen:
+                          seen.add(s.lower())
+                          bullets.append(f"- {s}")
+                  if len(bullets) >= 6:
+                      break
+              notes = "\n".join(bullets) if bullets else f"- UIPod {tag} build for TrimUI Brick (tg5040)"
+
+          with open(out_path, "w", encoding="utf-8") as out:
+              out.write("### What's Changed\n\n" + notes + "\n")
+          print(open(out_path, "r", encoding="utf-8").read())
+          PY
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,6 +173,9 @@ jobs:
           SAFE_VER="$(printf '%s' "$RELEASE_TAG" | sed 's/[^A-Za-z0-9._+-]/-/g')"
           BRICK_ZIP="dist/UIPod-${SAFE_VER}-brick.zip"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "UIPod ${RELEASE_TAG}" \
+              --notes-file /tmp/release-notes.md
             gh release upload "$RELEASE_TAG" \
               dist/UIPod.pak.zip \
               "$BRICK_ZIP" \
@@ -131,5 +185,5 @@ jobs:
               dist/UIPod.pak.zip \
               "$BRICK_ZIP" \
               --title "UIPod ${RELEASE_TAG}" \
-              --generate-notes
+              --notes-file /tmp/release-notes.md
           fi
