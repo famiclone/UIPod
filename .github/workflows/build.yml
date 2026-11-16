@@ -37,16 +37,18 @@ jobs:
 
       - name: Run Rust workspace unit tests
         run: |
+          mkdir -p build-trimpod/.cargo-cache
           docker run --rm \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e CARGO_HOME=/build/build-trimpod/.cargo-cache \
             -v "$PWD":/build -w /build trimpod-toolchain:latest \
-            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --offline --workspace"
+            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --locked --workspace --lib"
 
       - name: Cross-compile UIPod for TrimUI Brick (tg5040)
         run: |
           BASE_VER="$(tr -d '[:space:]' < VERSION)"
           export UIPOD_VERSION="${BASE_VER}-${GITHUB_SHA::7}"
-          ./build.sh clean
+          ./build.sh
           ./package.sh
 
       - name: Upload TrimUI Brick pak artifacts

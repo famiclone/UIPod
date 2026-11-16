@@ -85,16 +85,18 @@ jobs:
 
       - name: Run Rust workspace unit tests
         run: |
+          mkdir -p build-trimpod/.cargo-cache
           docker run --rm \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e CARGO_HOME=/build/build-trimpod/.cargo-cache \
             -v "$PWD":/build -w /build trimpod-toolchain:latest \
-            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --offline --workspace"
+            bash -lc "export PATH=/opt/cargo/bin:\$PATH; cargo test --locked --workspace --lib"
 
       - name: Build & package UIPod for TrimUI Brick
         env:
           UIPOD_VERSION: ${{ steps.ver.outputs.tag }}
         run: |
-          ./build.sh clean
+          ./build.sh
           ./package.sh
 
       - name: Verify stamped pak.json version matches tag
@@ -117,7 +119,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          SAFE_VER="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._+-' '-')"
+          SAFE_VER="$(printf '%s' "$RELEASE_TAG" | sed 's/[^A-Za-z0-9._+-]/-/g')"
           BRICK_ZIP="dist/UIPod-${SAFE_VER}-brick.zip"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \

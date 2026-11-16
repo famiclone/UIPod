@@ -1354,7 +1354,7 @@ mod tests {
 
             tp_navidrome_tree_clear();
             let mut titles: Vec<String> = Vec::new();
-            let mut err = [0i8; 128];
+            let mut err = [0 as c_char; 128];
             let count = tp_navidrome_sync_catalog(
                 Some(on_song_cb),
                 None,
@@ -1399,7 +1399,7 @@ mod tests {
                 0
             );
 
-            let mut cov_out = [0i8; 256];
+            let mut cov_out = [0 as c_char; 256];
             assert!(tp_navidrome_ensure_cover_cached(
                 tp_cstr.as_ptr(),
                 c_id.as_ptr(),

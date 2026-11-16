@@ -13,7 +13,7 @@ ZIP="$ROOT/build-trimpod/trimpod-full.zip"
 PAK="$ROOT/dist/UIPod.pak"
 THEME="$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox"
 UIPOD_VERSION="${UIPOD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo "v0.1.0")}"
-SAFE_VER="$(printf '%s' "$UIPOD_VERSION" | tr -c 'A-Za-z0-9._+-' '-')"
+SAFE_VER="$(printf '%s' "$UIPOD_VERSION" | sed 's/[^A-Za-z0-9._+-]/-/g')"
 BRICK_ZIP="$ROOT/dist/UIPod-${SAFE_VER}-brick.zip"
 
 [ -n "$ZIP" ] && [ -f "$ZIP" ] || { echo "Missing build-trimpod/*-full.zip — run ./build.sh first."; exit 1; }

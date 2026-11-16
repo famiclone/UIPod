@@ -41,7 +41,7 @@ docker run --rm \
   export CARGO_HOME=/build/$BUILD_DIR/.cargo-cache
   export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=\${CROSS_COMPILE}gcc
   echo '>> Building pure-Rust crates (trimpod-ui + trimpod-navidrome + trimpod-jellyfin -> libtrimpod_ffi.a) ...'
-  cargo build --release --target aarch64-unknown-linux-gnu -j $JOBS \
+  cargo build --locked --release --target aarch64-unknown-linux-gnu -j $JOBS \
     --manifest-path /build/crates/trimpod-ffi/Cargo.toml
 
   # /usr/local/bin (our sdl2-config wrapper, baked into the image) must win over
