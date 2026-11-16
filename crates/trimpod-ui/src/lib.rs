@@ -14,12 +14,26 @@ pub use renderer::UiEngine;
 pub const DEFAULT_BG_RGB: u32 = 0xD6D8D5;
 /// Default `ui.figcraft` foreground color (`#3C3637`).
 pub const DEFAULT_FG_RGB: u32 = 0x3C3637;
+/// `UIPod Classic Dark` background color (`#1E1B1C`).
+pub const DARK_BG_RGB: u32 = 0x1E1B1C;
+/// `UIPod Classic Dark` foreground color (`#D6D8D5`).
+pub const DARK_FG_RGB: u32 = 0xD6D8D5;
 
 /// Active theme colors (`0xRRGGBB`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeColors {
     pub bg_rgb: u32,
     pub fg_rgb: u32,
+}
+
+impl ThemeColors {
+    /// Returns the `UIPod Classic Dark` theme palette.
+    pub const fn classic_dark() -> Self {
+        Self {
+            bg_rgb: DARK_BG_RGB,
+            fg_rgb: DARK_FG_RGB,
+        }
+    }
 }
 
 impl Default for ThemeColors {

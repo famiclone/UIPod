@@ -58,8 +58,9 @@ struct trimpod_theme
 };
 
 static const struct trimpod_theme trimpod_themes[] = {
-    /* UIPod Classic (ui.figcraft design tokens): shipped default look */
-    { "UIPod Classic",    0xD6D8D5, 0x3C3637 },
+    /* UIPod Classic (ui.figcraft design tokens): shipped default + dark companion */
+    { "UIPod Classic",      0xD6D8D5, 0x3C3637 },
+    { "UIPod Classic Dark", 0x1E1B1C, 0xD6D8D5 },
     /* Classic (0xD8DCD0, the mono LCD) */
     { "Classic Dark",     0xD8DCD0, TRIMPOD_INK_DARK  },
     { "Classic Light",    0xD8DCD0, TRIMPOD_INK_LIGHT },

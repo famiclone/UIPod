@@ -457,7 +457,7 @@ impl UiEngine {
                         draw_chevron_s(&mut self.canvas, right_arrow_x, arrow_y, ink);
 
                         let val_right_x = right_arrow_x - 10.0;
-                        let max_val_w = (bx.w * 0.36).max(80.0);
+                        let max_val_w = (bx.w * 0.46).max(80.0);
                         let val_fitted = self.truncate_ellipsis(trimmed, max_val_w, &vp);
                         let val_w = self
                             .canvas
@@ -472,7 +472,7 @@ impl UiEngine {
                         (left_arrow_x - 16.0).max(text_x)
                     } else {
                         // ui.figcraft [1318] Type=NotActive4: right-aligned Value without arrows
-                        let max_val_w = (bx.w * 0.42).max(80.0);
+                        let max_val_w = (bx.w * 0.50).max(80.0);
                         let val_fitted = self.truncate_ellipsis(trimmed, max_val_w, &vp);
                         let val_w = self
                             .canvas
