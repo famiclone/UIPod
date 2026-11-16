@@ -1803,23 +1803,80 @@ static void draw_album_art(fb_data *fb, unsigned fg, unsigned bg)
     if (s_has_art)
     {
         const bool mono = global_settings.mono_album_art;
-        for (int dy = 0; dy < NP_ART_SIZE; dy++)
+        if (mono)
         {
-            fb_data *dst = fb + (NP_ART_Y + dy) * LCD_FBWIDTH + NP_ART_X;
-            const uint8_t *src = s_art_rgb + dy * NP_ART_SIZE * 3;
-            if (mono)
+            static const uint8_t bayer4[4][4] = {
+                {  0,  8,  2, 10 },
+                { 12,  4, 14,  6 },
+                {  3, 11,  1,  9 },
+                { 15,  7, 13,  5 },
+            };
+            int br = RGB_UNPACK_RED(bg), bgc = RGB_UNPACK_GREEN(bg), bb = RGB_UNPACK_BLUE(bg);
+            int fr = RGB_UNPACK_RED(fg), fgc = RGB_UNPACK_GREEN(fg), fb_c = RGB_UNPACK_BLUE(fg);
+            int bg_l = 54 * br + 183 * bgc + 19 * bb;
+            int fg_l = 54 * fr + 183 * fgc + 19 * fb_c;
+            int dr = (bg_l >= fg_l) ? fr : br;
+            int dg = (bg_l >= fg_l) ? fgc : bgc;
+            int db = (bg_l >= fg_l) ? fb_c : bb;
+            int lr = (bg_l >= fg_l) ? br : fr;
+            int lg = (bg_l >= fg_l) ? bgc : fgc;
+            int lb = (bg_l >= fg_l) ? bb : fb_c;
+            fb_data pal[3] = {
+                FB_RGBPACK(dr, dg, db),
+                FB_RGBPACK((dr + lr + 1) / 2, (dg + lg + 1) / 2, (db + lb + 1) / 2),
+                FB_RGBPACK(lr, lg, lb),
+            };
+
+            uint32_t hist[256];
+            memset(hist, 0, sizeof(hist));
+            const int npx = NP_ART_SIZE * NP_ART_SIZE;
+            for (int i = 0; i < npx; i++)
             {
+                const uint8_t *p = s_art_rgb + i * 3;
+                int l = (54 * p[0] + 183 * p[1] + 19 * p[2] + 128) >> 8;
+                hist[l]++;
+            }
+            uint32_t clip = (uint32_t)(npx / 50), acc = 0;
+            int lo = 0, hi = 255;
+            for (int i = 0; i < 256; i++) { acc += hist[i]; if (acc >= clip) { lo = i; break; } }
+            acc = 0;
+            for (int i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= clip) { hi = i; break; } }
+            if (hi - lo < 48) { lo = 0; hi = 255; }
+            float inv_span = 1.0f / (float)((hi - lo > 0) ? (hi - lo) : 1);
+
+            for (int dy = 0; dy < NP_ART_SIZE; dy++)
+            {
+                fb_data *dst = fb + (NP_ART_Y + dy) * LCD_FBWIDTH + NP_ART_X;
+                const uint8_t *src = s_art_rgb + dy * NP_ART_SIZE * 3;
+                const uint8_t *brow = bayer4[dy & 3];
                 for (int dx = 0; dx < NP_ART_SIZE; dx++)
                 {
-                    int r = src[dx * 3 + 0];
-                    int g = src[dx * 3 + 1];
-                    int b = src[dx * 3 + 2];
-                    int l = (77 * r + 150 * g + 29 * b + 128) >> 8;
-                    dst[dx] = FB_RGBPACK(l, l, l);
+                    int raw_l = (54 * src[dx * 3 + 0] +
+                                 183 * src[dx * 3 + 1] +
+                                 19 * src[dx * 3 + 2] + 128) >> 8;
+                    float norm = (float)(raw_l - lo) * inv_span;
+                    if (norm < 0.0f) norm = 0.0f;
+                    else if (norm > 1.0f) norm = 1.0f;
+                    float g_l = powf(norm, 1.15f);
+                    int tone;
+                    if (g_l <= 0.14f) tone = 0;
+                    else if (g_l >= 0.86f) tone = 2;
+                    else
+                    {
+                        float bv = ((float)brow[dx & 3] / 16.0f) - 0.5f + (1.0f / 32.0f);
+                        float v = g_l + bv * 0.16f;
+                        tone = (v < 0.36f) ? 0 : ((v < 0.72f) ? 1 : 2);
+                    }
+                    dst[dx] = pal[tone];
                 }
             }
-            else
+        }
+        else
+        {
+            for (int dy = 0; dy < NP_ART_SIZE; dy++)
             {
+                fb_data *dst = fb + (NP_ART_Y + dy) * LCD_FBWIDTH + NP_ART_X;
+                const uint8_t *src = s_art_rgb + dy * NP_ART_SIZE * 3;
                 for (int dx = 0; dx < NP_ART_SIZE; dx++)
                 {
                     dst[dx] = FB_RGBPACK(src[dx * 3 + 0],

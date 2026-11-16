@@ -1,6 +1,6 @@
 {
   "name": "UIPod",
-  "version": "v0.1.1",
+  "version": "v0.1.2",
   "type": "TOOL",
   "description": "An iPod-inspired offline, Navidrome & Jellyfin media player for the TrimUI Brick/Hammer with GPU UI and visualizations.",
   "author": "famiclone",
@@ -13,6 +13,7 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.1.2": "- Monochrome album art now renders in 3 shades of the active theme palette with ordered Bayer dithering\n- Unified UIPod naming across Rust crates and C application modules",
     "v0.1.1": "- Added UIPod Classic Dark theme (#1E1B1C / #D6D8D5) in Settings -> Display -> Theme",
     "v0.1.0": "- Native 1024x768 HiDPI pure-Rust UI (uipod-ui) with Geologica typography\n- English & Ukrainian localization\n- Navidrome / Subsonic music streaming, caching & offline downloads (/mnt/SDCARD/Media/Music/navidrome)\n- Jellyfin video (Movies, TV Shows) & audio streaming with automatic H.264/AAC transcoding and offline downloads (/mnt/SDCARD/Media/Videos/jellyfin)\n- Built-in AutoEQ headphone database & 10-band parametric EQ\n- 100 Milkdrop GPU visualizers via projectM"
   }

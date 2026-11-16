@@ -53,10 +53,14 @@ fn rgb_u32_to_color(rgb: u32) -> Color {
 }
 
 #[inline]
-fn fnv1a_art_hash(bytes: &[u8], mono: bool) -> u64 {
+fn fnv1a_art_hash(bytes: &[u8], mono: bool, theme: ThemeColors) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     h ^= u64::from(mono);
     h = h.wrapping_mul(0x0100_0000_01b3);
+    if mono {
+        h ^= ((theme.bg_rgb as u64) << 24) ^ (theme.fg_rgb as u64);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
     // Stride by 4 bytes for ultra-fast cache invalidation (<0.02 ms on Cortex-A53)
     for chunk in bytes.chunks(4) {
         let mut word = 0u32;
@@ -67,6 +71,106 @@ fn fnv1a_art_hash(bytes: &[u8], mono: bool) -> u64 {
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
     h
+}
+
+/// Quantizes a `256x256` `RGB24` album cover into the active theme's exact 3 LCD shades
+/// (`dark`, `50% mid`, `light` derived from `theme.bg_rgb` and `theme.fg_rgb`) with
+/// 2nd–98th percentile auto-levels and 4x4 Bayer ordered dithering.
+pub fn quantize_mono_art_3shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut [RGBA8]) {
+    const BAYER4: [[u8; 4]; 4] = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+    ];
+
+    let br = ((theme.bg_rgb >> 16) & 0xFF) as u8;
+    let bg = ((theme.bg_rgb >> 8) & 0xFF) as u8;
+    let bb = (theme.bg_rgb & 0xFF) as u8;
+    let fr = ((theme.fg_rgb >> 16) & 0xFF) as u8;
+    let fg = ((theme.fg_rgb >> 8) & 0xFF) as u8;
+    let fb = (theme.fg_rgb & 0xFF) as u8;
+
+    let bg_luma = 54u32 * (br as u32) + 183u32 * (bg as u32) + 19u32 * (bb as u32);
+    let fg_luma = 54u32 * (fr as u32) + 183u32 * (fg as u32) + 19u32 * (fb as u32);
+
+    let (dark, light) = if bg_luma >= fg_luma {
+        (RGBA8::new(fr, fg, fb, 255), RGBA8::new(br, bg, bb, 255))
+    } else {
+        (RGBA8::new(br, bg, bb, 255), RGBA8::new(fr, fg, fb, 255))
+    };
+    let mid = RGBA8::new(
+        ((dark.r as u16 + light.r as u16 + 1) / 2) as u8,
+        ((dark.g as u16 + light.g as u16 + 1) / 2) as u8,
+        ((dark.b as u16 + light.b as u16 + 1) / 2) as u8,
+        255,
+    );
+    let palette = [dark, mid, light];
+
+    let npx = 256 * 256;
+    let mut hist = [0u32; 256];
+    for px in rgb24[..npx * 3].chunks_exact(3) {
+        let l = ((54u32 * px[0] as u32 + 183u32 * px[1] as u32 + 19u32 * px[2] as u32 + 128)
+            >> 8) as usize;
+        hist[l] += 1;
+    }
+
+    let clip = (npx / 50) as u32; // 2nd and 98th percentiles
+    let mut acc = 0u32;
+    let mut lo = 0i32;
+    for (i, &c) in hist.iter().enumerate() {
+        acc += c;
+        if acc >= clip {
+            lo = i as i32;
+            break;
+        }
+    }
+    acc = 0;
+    let mut hi = 255i32;
+    for (i, &c) in hist.iter().enumerate().rev() {
+        acc += c;
+        if acc >= clip {
+            hi = i as i32;
+            break;
+        }
+    }
+    if hi - lo < 48 {
+        lo = 0;
+        hi = 255;
+    }
+    let inv_span = 1.0 / ((hi - lo).max(1) as f32);
+
+    for y in 0..256usize {
+        let bayer_row = &BAYER4[y & 3];
+        for x in 0..256usize {
+            let i = y * 256 + x;
+            let px = &rgb24[i * 3..i * 3 + 3];
+            let raw_l = ((54u32 * px[0] as u32
+                + 183u32 * px[1] as u32
+                + 19u32 * px[2] as u32
+                + 128)
+                >> 8) as i32;
+            let norm = ((raw_l - lo) as f32 * inv_span).clamp(0.0, 1.0);
+            let g_l = norm.powf(1.15);
+
+            let tone = if g_l <= 0.14 {
+                0
+            } else if g_l >= 0.86 {
+                2
+            } else {
+                let bval = (bayer_row[x & 3] as f32 / 16.0) - 0.5 + (1.0 / 32.0);
+                let v = g_l + bval * 0.16;
+                if v < 0.36 {
+                    0
+                } else if v < 0.72 {
+                    1
+                } else {
+                    2
+                }
+            };
+            out_rgba[i] = palette[tone];
+        }
+    }
 }
 
 /// Pure-Rust GPU UI engine backed by `taffy` + `femtovg` on OpenGL ES 3.0.
@@ -500,31 +604,29 @@ impl UiEngine {
         }
     }
 
-    fn ensure_album_art_uploaded(&mut self, rgb24: &[u8], mono: bool) -> Option<ImageId> {
+    fn ensure_album_art_uploaded(
+        &mut self,
+        rgb24: &[u8],
+        mono: bool,
+        theme: ThemeColors,
+    ) -> Option<ImageId> {
         if rgb24.len() < 256 * 256 * 3 {
             return None;
         }
-        let hash = fnv1a_art_hash(&rgb24[..256 * 256 * 3], mono);
+        let hash = fnv1a_art_hash(&rgb24[..256 * 256 * 3], mono, theme);
         if self.art_hash == Some(hash) {
             if let Some(id) = self.art_image {
                 return Some(id);
             }
         }
 
-        for (src, dst) in rgb24[..256 * 256 * 3]
-            .chunks_exact(3)
-            .zip(self.art_rgba_scratch.iter_mut())
-        {
-            if mono {
-                // ui.figcraft [252]: saturation = -1.0, contrast = +0.48
-                let r = src[0] as f32 / 255.0;
-                let g = src[1] as f32 / 255.0;
-                let b = src[2] as f32 / 255.0;
-                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                let contrasted = ((luma - 0.5) * 1.48 + 0.5).clamp(0.0, 1.0);
-                let v = (contrasted * 255.0 + 0.5) as u8;
-                *dst = RGBA8::new(v, v, v, 255);
-            } else {
+        if mono {
+            quantize_mono_art_3shade(&rgb24[..256 * 256 * 3], theme, &mut self.art_rgba_scratch);
+        } else {
+            for (src, dst) in rgb24[..256 * 256 * 3]
+                .chunks_exact(3)
+                .zip(self.art_rgba_scratch.iter_mut())
+            {
                 *dst = RGBA8::new(src[0], src[1], src[2], 255);
             }
         }
@@ -647,7 +749,9 @@ impl UiEngine {
 
         // 2. Album Art [1402] Type=Cover (32, 256, 256, 256): r=8 image + 4px inside rounded border [1403]
         let art_drawn = if let Some(rgb24) = state.art_rgb24 {
-            if let Some(img_id) = self.ensure_album_art_uploaded(rgb24, state.mono_album_art) {
+            if let Some(img_id) =
+                self.ensure_album_art_uploaded(rgb24, state.mono_album_art, state.theme)
+            {
                 let paint = Paint::image(
                     img_id,
                     np.art_box.x,
@@ -880,3 +984,46 @@ const _: () = {
     assert!(SCREEN_W as usize == WIDTH);
     assert!(SCREEN_H as usize == HEIGHT);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monochrome_art_uses_exact_three_theme_shades() {
+        let mut rgb = vec![0u8; 256 * 256 * 3];
+        for y in 0..256usize {
+            for x in 0..256usize {
+                let v = ((x + y) / 2) as u8;
+                let i = (y * 256 + x) * 3;
+                rgb[i] = v;
+                rgb[i + 1] = v;
+                rgb[i + 2] = v;
+            }
+        }
+        let mut out = vec![RGBA8::new(0, 0, 0, 255); 256 * 256];
+        let theme = ThemeColors {
+            bg_rgb: 0x0094E1,
+            fg_rgb: 0x002B4A,
+        };
+        quantize_mono_art_3shade(&rgb, theme, &mut out);
+
+        let dark = RGBA8::new(0x00, 0x2B, 0x4A, 255);
+        let light = RGBA8::new(0x00, 0x94, 0xE1, 255);
+        let mid = RGBA8::new(0x00, 0x60, 0x96, 255);
+
+        let mut seen = [false; 3];
+        for &px in &out {
+            if px == dark {
+                seen[0] = true;
+            } else if px == mid {
+                seen[1] = true;
+            } else if px == light {
+                seen[2] = true;
+            } else {
+                panic!("unexpected shade outside 3-tone theme palette: {px:?}");
+            }
+        }
+        assert_eq!(seen, [true, true, true]);
+    }
+}
