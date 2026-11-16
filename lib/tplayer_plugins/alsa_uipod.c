@@ -220,7 +220,7 @@ static int set_constraints(snd_pcm_ioplug_t *io)
                                            TPVA_FRAMES / MIN_PERIOD_FRAMES);
 }
 
-SND_PCM_PLUGIN_DEFINE_FUNC(trimpod)
+SND_PCM_PLUGIN_DEFINE_FUNC(uipod)
 {
     struct tp *tp;
     int fd, err = -ENODEV;
@@ -280,16 +280,16 @@ fail_free:
     return err;
 }
 
-SND_PCM_PLUGIN_SYMBOL(trimpod);
+SND_PCM_PLUGIN_SYMBOL(uipod);
 
 /* The player opens "default", and this system's alsa-lib opens the codec for
- * that name whatever the configuration says.  So while Trimpod's ring exists,
+ * that name whatever the configuration says.  So while UIPod's ring exists,
  * the name is taken over here: a plug, for format and channels, over the type
  * above, defined in memory.  (Its rate converter rejects the player's fixed
  * period sizes, so the rate stays the player's.) */
-#define TP_PCM      "trimpod_video"
-#define TP_PCM_CONF "pcm_type.trimpod { lib \"%s\" }\n" \
-                    "pcm." TP_PCM " { type plug slave.pcm { type trimpod } }\n"
+#define TP_PCM      "uipod_video"
+#define TP_PCM_CONF "pcm_type.uipod { lib \"%s\" }\n" \
+                    "pcm." TP_PCM " { type plug slave.pcm { type uipod } }\n"
 
 int snd_pcm_open(snd_pcm_t **pcmp, const char *name, snd_pcm_stream_t stream,
                  int mode)

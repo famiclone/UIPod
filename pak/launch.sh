@@ -1,9 +1,9 @@
 #!/bin/sh
-# Trimpod — Rockbox-based music player for the TrimUI Brick (NextUI).
-# Launches our independently-built Rockbox SDL app with the 1ST_GEN_REMIX theme.
+# UIPod — Rockbox-based media player for the TrimUI Brick (NextUI).
+# Launches our independently-built UIPod SDL app with the 1ST_GEN_REMIX theme.
 PAK_DIR="$(dirname "$0")"
-RBDIR="$PAK_DIR/trimpod"
-RBDIR_BIND="/tmp/trimpod"
+RBDIR="$PAK_DIR/uipod"
+RBDIR_BIND="/tmp/uipod"
 cd "$PAK_DIR" || exit 1
 
 # Rockbox stores its config/playlists under HOME; keep it on the SD card.
@@ -25,20 +25,20 @@ fi
 # Ensure EQ presets and AutoEQ directories exist on the SD card before binding.
 mkdir -p "$RBDIR/eqs" "$RBDIR/autoeq"
 
-# The app's data dir is built as /tmp/trimpod, so bind our pak data there.
-if [ ! -f "$RBDIR_BIND/rockbox" ]; then
+# The app's data dir is built as /tmp/uipod, so bind our pak data there.
+if [ ! -f "$RBDIR_BIND/uipod" ]; then
   mkdir -p "$RBDIR_BIND"
   mount --bind "$RBDIR" "$RBDIR_BIND"
 fi
 
 # Rewrite bundled theme cfgs from the canonical /.rockbox to the live bind path,
-# and migrate any pre-HiDPI config.cfg font/scroll references seamlessly.
+# and migrate any pre-rename /tmp/trimpod or pre-HiDPI config.cfg references seamlessly.
 for theme in "$RBDIR"/themes/*.cfg; do
-  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/trimpod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g' "$theme"
+  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/uipod#g; s#/tmp/trimpod#/tmp/uipod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g' "$theme"
 done
 for cfg in "$RBDIR/config.cfg" "$HOME/.config/rockbox.org/config.cfg"; do
   if [ -f "$cfg" ]; then
-    sed -i 's/24-ChicagoFLF\.fnt/76-Geologica.fnt/g; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
+    sed -i 's#/tmp/trimpod#/tmp/uipod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
   fi
 done
 
@@ -66,7 +66,7 @@ unset SDL_HQ_SCALER SDL_ROTATION SDL_BLITTER_DISABLED
 KEYMON_PIDS="$(pidof keymon.elf 2>/dev/null)"
 SHM=/dev/shm/SharedSettings
 if [ -f "$SHM" ]; then
-  dd if="$SHM" bs=1 skip=56 count=4 of=/tmp/trimpod_muted_vol 2>/dev/null
+  dd if="$SHM" bs=1 skip=56 count=4 of=/tmp/uipod_muted_vol 2>/dev/null
   printf '\273\377\377\377' | dd of="$SHM" bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
 fi
 [ -n "$KEYMON_PIDS" ] && kill -STOP $KEYMON_PIDS 2>/dev/null
@@ -106,9 +106,9 @@ TRIMPOD_SPK_MUTE="$(cat "$SPK_MUTE" 2>/dev/null)"
 # exit and stacking on aborted runs.  (SIGKILL is uncatchable; nothing can help
 # that, but it's the only gap now.)
 cleanup() {
-  kill -9 "$(pidof trimpod)"   2>/dev/null
+  kill -9 "$(pidof uipod)"   2>/dev/null
   [ -n "$KEYMON_PIDS" ] && kill -CONT $KEYMON_PIDS 2>/dev/null
-  [ -f /tmp/trimpod_muted_vol ] && dd if=/tmp/trimpod_muted_vol of=/dev/shm/SharedSettings bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
+  [ -f /tmp/uipod_muted_vol ] && dd if=/tmp/uipod_muted_vol of=/dev/shm/SharedSettings bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
   [ -n "$TRIMPOD_DV" ] && amixer -q sset "digital volume" "$TRIMPOD_DV" 2>/dev/null
   [ -n "$TRIMPOD_DAC" ] && amixer -q sset "DAC volume" "$TRIMPOD_DAC" 2>/dev/null
   [ -n "$TRIMPOD_SV" ] && amixer -q sset "Soft Volume Master" "$TRIMPOD_SV" 2>/dev/null
@@ -148,4 +148,4 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit' INT TERM HUP
 
-"$RBDIR/trimpod" --zoom "$ZOOMVAL" > "$PAK_DIR/uipod.log" 2>&1
+"$RBDIR/uipod" --zoom "$ZOOMVAL" > "$PAK_DIR/uipod.log" 2>&1

@@ -46,16 +46,18 @@ docker run --rm \
 
   # /usr/local/bin (our sdl2-config wrapper, baked into the image) must win over
   # the sysroot's broken sdl2-config, so do NOT prepend \$SYSROOT/usr/bin here.
-  if [ ! -f $BUILD_DIR/Makefile ] || ! grep -q libuipod_ffi $BUILD_DIR/Makefile; then
-    rm -f $BUILD_DIR/Makefile $BUILD_DIR/make.dep
+  if [ ! -f $BUILD_DIR/Makefile ] || \
+     ! grep -q libuipod_ffi $BUILD_DIR/Makefile || \
+     ! grep -q 'RBDIR = /tmp/uipod' $BUILD_DIR/Makefile; then
+    rm -rf $BUILD_DIR/apps $BUILD_DIR/firmware $BUILD_DIR/Makefile $BUILD_DIR/autoconf.h $BUILD_DIR/make.dep
     cd $BUILD_DIR
     ../tools/configure --target=$TARGET_ID --type=N
   else
     cd $BUILD_DIR
   fi
   rm -f rbversion.h firmware/common/version.o
-  if [ -f trimpod ] && [ /build/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a -nt trimpod ]; then
-    rm -f trimpod
+  if [ -f uipod ] && [ /build/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a -nt uipod ]; then
+    rm -f uipod
   fi
   make -j$JOBS VERSION=\"\$VERSION\"
   # Produce the runtime zip package.sh assembles the .pak from.
@@ -71,4 +73,4 @@ docker run --rm \
   make -C lib/tplayer_plugins -j$JOBS CC=\${CROSS_COMPILE}gcc OUT=/build/$BUILD_DIR/tplayer_plugins
 "
 
-echo ">> Done. Binary: $BUILD_DIR/trimpod (runtime zip: $BUILD_DIR/trimpod-full.zip)"
+echo ">> Done. Binary: $BUILD_DIR/uipod (runtime zip: $BUILD_DIR/uipod-full.zip)"

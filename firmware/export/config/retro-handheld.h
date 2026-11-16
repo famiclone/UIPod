@@ -96,7 +96,7 @@
 /* Hold/lock switch (Brick side toggle): blocks all input when engaged. */
 #define HAS_BUTTON_HOLD
 
-#define BOOTDIR "/tmp/trimpod"
+#define BOOTDIR "/tmp/uipod"
 
 /* No special storage */
 #define CONFIG_STORAGE STORAGE_HOSTFS

@@ -886,10 +886,10 @@ rhhconf () {
     pmlibs="$rootdir/lib/projectm/lib/libprojectM-4.a $rootdir/lib/projectm/lib/libprojectM_eval.a -lGLESv2 -lEGL -lstdc++ -lstdc++fs"
     LDOPTS="$rsffi -lm -ldl -lrt -L/usr/lib -lSDL2 -lpthread $pmlibs"
 
-    rbdir="/tmp/trimpod"
-    bindir="/tmp/trimpod"
-    libdir="/tmp/trimpod"
-    sharedir="/tmp/trimpod"
+    rbdir="/tmp/uipod"
+    bindir="/tmp/uipod"
+    libdir="/tmp/uipod"
+    sharedir="/tmp/uipod"
     lcd_orientation="landscape"
 }
 
@@ -2953,8 +2953,8 @@ fi
     boottool="cp "
     bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
     bmp2rb_native="$rootdir/tools/bmp2rb -f 9"
-    output="trimpod"
-    bootoutput="trimpod"
+    output="uipod"
+    bootoutput="uipod"
     appextra="recorder:gui"
     t_cpu="hosted"
     t_manufacturer="sdl"

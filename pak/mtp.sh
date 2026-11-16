@@ -4,7 +4,7 @@
 # edge (power-target.c), so umtprd never runs on battery; launch.sh runs "stop"
 # on exit.  Overlapping edges queue on the lock.
 G="$MTP_GADGET"
-BIN="$(dirname "$0")/trimpod"
+BIN="$(dirname "$0")/uipod"
 FFS=/dev/usb-ffs/mtp
 PIDF=/tmp/uipod-umtprd.pid
 [ -n "$G" ] && [ -x "$BIN/umtprd" ] || exit 0

@@ -139,7 +139,7 @@ static char **player_environment(void)
              old ? ":" : "", old ? old : "");
     envp[n++] = lib_path;
     envp[n++] = "LD_PRELOAD=" PLUGIN_DIR "/libdivx_shim.so:"
-                PLUGIN_DIR "/libasound_module_pcm_trimpod.so";
+                PLUGIN_DIR "/libasound_module_pcm_uipod.so";
     for (char **e = environ; *e && n < ENV_MAX - 1; e++)
         if (strncmp(*e, "LD_LIBRARY_PATH=", 16) && strncmp(*e, "LD_PRELOAD=", 11))
             envp[n++] = *e;

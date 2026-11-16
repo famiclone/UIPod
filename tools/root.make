@@ -314,7 +314,7 @@ tags:
 	$(SILENT)rm -f TAGS
 	$(SILENT)etags -o $(BUILDDIR)/TAGS $(filter-out %.o,$(SRC) $(OTHER_SRC))
 
-zip: $(BUILDDIR)/trimpod.zip
+zip: $(BUILDDIR)/uipod.zip
 7zip: $(BUILDDIR)/rockbox.7z
 tar: $(BUILDDIR)/rockbox.tar
 
@@ -341,12 +341,12 @@ fulltar: ZIPFILESUFFIX=-full
 fulltar: tar
 
 ifneq ($(NODEPS),)
-$(BUILDDIR)/trimpod.zip:
+$(BUILDDIR)/uipod.zip:
 else
-$(BUILDDIR)/trimpod.zip: build
+$(BUILDDIR)/uipod.zip: build
 endif
-	$(call PRINTS,ZIP trimpod$(ZIPFILESUFFIX).zip)
-	$(SILENT)$(TOOLSDIR)/buildzip.pl $(VERBOSEOPT) --app=$(APPLICATION) -m \"$(MODELNAME)\" -i \"$(TARGET_ID)\" -o $(BUILDDIR)/trimpod$(ZIPFILESUFFIX).zip -r "$(ROOTDIR)" --rbdir="$(RBDIR)" $(BUILDZIPOPTS) $(TARGET) $(BINARY)
+	$(call PRINTS,ZIP uipod$(ZIPFILESUFFIX).zip)
+	$(SILENT)$(TOOLSDIR)/buildzip.pl $(VERBOSEOPT) --app=$(APPLICATION) -m \"$(MODELNAME)\" -i \"$(TARGET_ID)\" -o $(BUILDDIR)/uipod$(ZIPFILESUFFIX).zip -r "$(ROOTDIR)" --rbdir="$(RBDIR)" $(BUILDZIPOPTS) $(TARGET) $(BINARY)
 
 mapzip:
 	$(SILENT)find . -name "*.map" | xargs zip rockbox-maps.zip
