@@ -36,12 +36,14 @@
 #include "system.h"
 
 #include "uipod_folders.h"
+#include "uipod_downloads.h"
 #include "uipod_keyboard.h"
 #include "uipod_library.h"
 #include "uipod_navidrome.h"
 #include "uipod_page.h"
 #include "uipod_playlists.h"
 #include "uipod_rs_navidrome.h"
+#include "uipod_rs_ui.h"
 #include "uipod_svg.h"
 #include "uipod_transition.h"
 #include "uipod_ui.h"
@@ -58,6 +60,9 @@
 #define NAV_DB_SD             ROCKBOX_DIR "/navidrome.db"
 #define NAV_DB_RAM            "/tmp/uipod-navidrome.db"
 #define NAV_PLAYLISTS_DIR     ROCKBOX_DIR "/Playlists_Navidrome"
+#define NAV_FAV_DIR           ROCKBOX_DIR "/Playlists_Navidrome_Fav"
+#define NAV_FAVOURITES_M3U8   NAV_FAV_DIR "/Favourites.m3u8"
+#define NAV_FAV_SENTINEL      "\x01" "FAVOURITES"
 #define NAV_COPY_BUF          (256 * 1024)
 #define NAV_SCHEMA_VERSION    2
 
@@ -335,6 +340,16 @@ void uipod_navidrome_db_unlock(void)
     mutex_unlock(&s_nav_db_mutex);
 }
 
+bool uipod_navidrome_is_configured(void)
+{
+    return tp_navidrome_is_configured();
+}
+
+const char *uipod_navidrome_favourites_path(void)
+{
+    return NAV_FAVOURITES_M3U8;
+}
+
 bool uipod_navidrome_has_tracks(void)
 {
     bool has = false;
@@ -389,6 +404,8 @@ static const TpNavHttpVtable s_http_vt = {
 #endif
 };
 
+static void repath_catalog_for_quality(uint8_t new_quality);
+
 void uipod_navidrome_init(void)
 {
     mutex_init(&s_nav_db_mutex);
@@ -397,13 +414,18 @@ void uipod_navidrome_init(void)
     const char *cache_root = "/tmp/uipod_navidrome_cache";
     struct stat st;
     if (stat("/mnt/SDCARD", &st) == 0 && S_ISDIR(st.st_mode))
-        cache_root = "/mnt/SDCARD/Media/Music/navidrome";
+        cache_root = "/mnt/SDCARD/Media/navidrome";
 
     tp_navidrome_init(cache_root, &s_http_vt);
     load_or_import_config();
 
     if (!dir_exists(NAV_PLAYLISTS_DIR))
         mkdir(NAV_PLAYLISTS_DIR);
+
+    bool need_repath = false;
+    char live_root[MAX_PATH];
+    live_root[0] = '\0';
+    tp_navidrome_get_cache_root(live_root, sizeof(live_root));
 
     mutex_lock(&s_nav_db_mutex);
     remove(NAV_DB_RAM);
@@ -426,8 +448,34 @@ void uipod_navidrome_init(void)
         }
     }
 
+    if (s_nav_db && live_root[0])
+    {
+        sqlite3_stmt *chk = NULL;
+        if (sqlite3_prepare_v2(s_nav_db, "SELECT path FROM tracks LIMIT 1;", -1, &chk, NULL) == SQLITE_OK)
+        {
+            if (sqlite3_step(chk) == SQLITE_ROW)
+            {
+                const char *p0 = (const char *)sqlite3_column_text(chk, 0);
+                size_t rlen = strlen(live_root);
+                if (p0 && (strncmp(p0, live_root, rlen) != 0 ||
+                           (p0[rlen] != '/' && p0[rlen] != '\0')))
+                {
+                    need_repath = true;
+                }
+            }
+            sqlite3_finalize(chk);
+        }
+    }
+
     rebuild_virtual_tree_locked();
     mutex_unlock(&s_nav_db_mutex);
+
+    if (need_repath)
+    {
+        TpNavConfigC cfg;
+        if (tp_navidrome_get_config(&cfg))
+            repath_catalog_for_quality(cfg.quality);
+    }
 }
 
 void uipod_navidrome_close(void)
@@ -540,6 +588,21 @@ static void sync_on_playlist(void *vctx, const char *playlist_name,
     if (!playlist_name || !playlist_name[0] || !m3u8_content)
         return;
 
+    if (strcmp(playlist_name, NAV_FAV_SENTINEL) == 0)
+    {
+        if (!dir_exists(NAV_FAV_DIR))
+            mkdir(NAV_FAV_DIR);
+        int fd = open(NAV_FAVOURITES_M3U8, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (fd >= 0)
+        {
+            size_t len = strlen(m3u8_content);
+            if (len > 0)
+                write(fd, m3u8_content, len);
+            close(fd);
+        }
+        return;
+    }
+
     if (!dir_exists(NAV_PLAYLISTS_DIR))
         mkdir(NAV_PLAYLISTS_DIR);
 
@@ -643,15 +706,168 @@ bool uipod_navidrome_sync(bool show_summary_splash)
     nav_db_writeback_locked();
     mutex_unlock(&s_nav_db_mutex);
 
+    uipod_library_bump_remote_gen();
+
     if (show_summary_splash)
         splashf(HZ * 3 / 2, str(LANG_UIPOD_NAV_SYNCED_FMT), (int)total);
     return true;
 }
 
+bool uipod_navidrome_sync_favourites(bool show_summary_splash)
+{
+    if (!tp_navidrome_is_configured() || uipod_offline_mode_get())
+        return false;
+
+    if (show_summary_splash)
+    {
+        uipod_fullscreen_message(str(LANG_UIPOD_NAV_CONNECTING), NULL);
+        backlight_on();
+    }
+
+    mutex_lock(&s_nav_db_mutex);
+    if (!s_nav_db)
+    {
+        mutex_unlock(&s_nav_db_mutex);
+        return false;
+    }
+
+    int before_changes = sqlite3_total_changes(s_nav_db);
+    nav_db_exec("BEGIN IMMEDIATE;");
+
+    static const char INS_IGNORE_SQL[] =
+        "INSERT OR IGNORE INTO tracks("
+        "song_id,path,cover_id,server_path,suffix,bit_depth,category,size,"
+        "title,artist,albumartist,album,genre,year,tracknum,discnum,"
+        "duration_ms,bitrate,frequency,browse_artist,sort_artist)"
+        " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21);";
+
+    struct nav_sync_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    sqlite3_prepare_v2(s_nav_db, INS_IGNORE_SQL, -1, &ctx.ins_stmt, NULL);
+
+    char err[160] = "";
+    int32_t fav_cnt = tp_navidrome_sync_starred(
+        sync_on_song,
+        sync_on_playlist,
+        show_summary_splash ? sync_cancel_bridge : NULL,
+        &ctx,
+        err,
+        sizeof(err));
+
+    sqlite3_finalize(ctx.ins_stmt);
+
+    if (fav_cnt < 0)
+    {
+        nav_db_exec("ROLLBACK;");
+        mutex_unlock(&s_nav_db_mutex);
+        if (show_summary_splash && !ctx.cancel.cancelled)
+            splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        return false;
+    }
+
+    nav_db_exec("COMMIT;");
+    bool db_changed = (sqlite3_total_changes(s_nav_db) != before_changes);
+    if (db_changed)
+    {
+        rebuild_virtual_tree_locked();
+        nav_db_writeback_locked();
+    }
+    mutex_unlock(&s_nav_db_mutex);
+
+    if (db_changed)
+        uipod_library_bump_remote_gen();
+
+    if (show_summary_splash)
+        splashf(HZ, str(LANG_UIPOD_NAV_SYNCED_FMT), (int)fav_cnt);
+    return true;
+}
+
 /* ---- Fast Offline Re-Pathing When Switching Audio Quality ------------- */
+
+static void rewrite_single_m3u8_locked(const char *pl_path,
+                                       sqlite3_stmt *lookup_stmt)
+{
+    char tmp_path[MAX_PATH];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", pl_path);
+
+    int in = open(pl_path, O_RDONLY);
+    if (in < 0)
+        return;
+    off_t fsz = filesize(in);
+    if (fsz <= 0 || fsz > 2 * 1024 * 1024)
+    {
+        close(in);
+        return;
+    }
+    char *content = malloc((size_t)fsz + 1);
+    if (!content)
+    {
+        close(in);
+        return;
+    }
+    ssize_t n = read(in, content, (size_t)fsz);
+    close(in);
+    if (n <= 0)
+    {
+        free(content);
+        return;
+    }
+    content[n] = '\0';
+
+    int out = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (out < 0)
+    {
+        free(content);
+        return;
+    }
+
+    char *cursor = content;
+    while (*cursor)
+    {
+        char *nl = strchr(cursor, '\n');
+        size_t len = nl ? (size_t)(nl - cursor) : strlen(cursor);
+        size_t clean_len = len;
+        if (clean_len > 0 && cursor[clean_len - 1] == '\r')
+            clean_len--;
+
+        char line[MAX_PATH];
+        if (clean_len > 0 && clean_len < sizeof(line) && cursor[0] != '#')
+        {
+            memcpy(line, cursor, clean_len);
+            line[clean_len] = '\0';
+
+            const char *mapped = line;
+            sqlite3_bind_text(lookup_stmt, 1, line, -1, SQLITE_STATIC);
+            if (sqlite3_step(lookup_stmt) == SQLITE_ROW)
+            {
+                const char *np = (const char *)sqlite3_column_text(lookup_stmt, 0);
+                if (np && np[0])
+                    mapped = np;
+            }
+            fdprintf(out, "%s\n", mapped);
+            sqlite3_reset(lookup_stmt);
+        }
+        else if (clean_len > 0 || cursor[0] == '#')
+        {
+            write(out, cursor, clean_len);
+            write(out, "\n", 1);
+        }
+
+        if (!nl)
+            break;
+        cursor = nl + 1;
+    }
+
+    close(out);
+    free(content);
+    rename(tmp_path, pl_path);
+}
 
 static void rewrite_nav_playlists_paths_locked(sqlite3_stmt *lookup_stmt)
 {
+    if (file_exists(NAV_FAVOURITES_M3U8))
+        rewrite_single_m3u8_locked(NAV_FAVOURITES_M3U8, lookup_stmt);
+
     DIR *d = opendir(NAV_PLAYLISTS_DIR);
     if (!d)
         return;
@@ -663,81 +879,9 @@ static void rewrite_nav_playlists_paths_locked(sqlite3_stmt *lookup_stmt)
         if (!dot || (strcasecmp(dot, ".m3u8") != 0 && strcasecmp(dot, ".m3u") != 0))
             continue;
 
-        char pl_path[MAX_PATH], tmp_path[MAX_PATH];
+        char pl_path[MAX_PATH];
         snprintf(pl_path, sizeof(pl_path), "%s/%s", NAV_PLAYLISTS_DIR, e->d_name);
-        snprintf(tmp_path, sizeof(tmp_path), "%s/%s.tmp", NAV_PLAYLISTS_DIR, e->d_name);
-
-        int in = open(pl_path, O_RDONLY);
-        if (in < 0)
-            continue;
-        off_t fsz = filesize(in);
-        if (fsz <= 0 || fsz > 2 * 1024 * 1024)
-        {
-            close(in);
-            continue;
-        }
-        char *content = malloc((size_t)fsz + 1);
-        if (!content)
-        {
-            close(in);
-            continue;
-        }
-        ssize_t n = read(in, content, (size_t)fsz);
-        close(in);
-        if (n <= 0)
-        {
-            free(content);
-            continue;
-        }
-        content[n] = '\0';
-
-        int out = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        if (out < 0)
-        {
-            free(content);
-            continue;
-        }
-
-        char *cursor = content;
-        while (*cursor)
-        {
-            char *nl = strchr(cursor, '\n');
-            size_t len = nl ? (size_t)(nl - cursor) : strlen(cursor);
-            size_t clean_len = len;
-            if (clean_len > 0 && cursor[clean_len - 1] == '\r')
-                clean_len--;
-
-            char line[MAX_PATH];
-            if (clean_len > 0 && clean_len < sizeof(line) && cursor[0] != '#')
-            {
-                memcpy(line, cursor, clean_len);
-                line[clean_len] = '\0';
-
-                const char *mapped = line;
-                sqlite3_bind_text(lookup_stmt, 1, line, -1, SQLITE_STATIC);
-                if (sqlite3_step(lookup_stmt) == SQLITE_ROW)
-                {
-                    const char *np = (const char *)sqlite3_column_text(lookup_stmt, 0);
-                    if (np && np[0])
-                        mapped = np;
-                }
-                fdprintf(out, "%s\n", mapped);
-                sqlite3_reset(lookup_stmt);
-            }
-            else if (clean_len > 0 || cursor[0] == '#')
-            {
-                write(out, cursor, clean_len);
-                write(out, "\n", 1);
-            }
-
-            if (!nl)
-                break;
-            cursor = nl + 1;
-        }
-
-        close(out);
-        free(content);
-        rename(tmp_path, pl_path);
+        rewrite_single_m3u8_locked(pl_path, lookup_stmt);
     }
     closedir(d);
 }
@@ -842,6 +986,7 @@ static void repath_catalog_for_quality(uint8_t new_quality)
     rebuild_virtual_tree_locked();
     nav_db_writeback_locked();
     mutex_unlock(&s_nav_db_mutex);
+    uipod_library_bump_remote_gen();
 }
 
 /* ---- Playback, Metadata, Cover Art & Scrobble Hooks ------------------- */
@@ -902,6 +1047,13 @@ bool uipod_navidrome_prepare_track(const char *path, bool ui_blocking)
     if (file_exists(path))
         return true;
 
+    if (uipod_offline_mode_get())
+    {
+        if (ui_blocking)
+            splash(HZ, ID2P(LANG_UIPOD_OFFLINE_MODE));
+        return false;
+    }
+
     char song_id[128], cover_id[128];
     if (!lookup_song_ids_by_path(path, song_id, sizeof(song_id),
                                  cover_id, sizeof(cover_id), NULL))
@@ -945,89 +1097,54 @@ bool uipod_navidrome_download_tracks(char *const *paths, int count)
         return false;
     }
 
-    struct ui_cancel_state cancel = { .cancelled = false };
-    char widest[96], msg[96];
-    if (count > 1)
-        snprintf(widest, sizeof(widest), str(LANG_UIPOD_DOWNLOADING_FMT), count, count);
-
-    int ok_count = 0;
-    char first_err[160] = "";
+    int enqueued = 0;
+    mutex_lock(&s_nav_db_mutex);
+    sqlite3_stmt *st = NULL;
+    if (s_nav_db)
+    {
+        sqlite3_prepare_v2(
+            s_nav_db,
+            "SELECT song_id, COALESCE(cover_id, ''),"
+            " COALESCE(artist, ''), COALESCE(title, '')"
+            " FROM tracks WHERE path=?1;",
+            -1, &st, NULL);
+    }
 
     for (int i = 0; i < count; i++)
     {
-        if (ui_cancel_check_cb(&cancel))
-            break;
-
         const char *p = paths[i];
-        if (!uipod_navidrome_is_track_path(p))
+        if (!st || !uipod_navidrome_is_track_path(p))
             continue;
 
-        if (count == 1)
-            uipod_fullscreen_message(str(LANG_UIPOD_DOWNLOADING), NULL);
-        else
+        sqlite3_bind_text(st, 1, p, -1, SQLITE_STATIC);
+        if (sqlite3_step(st) == SQLITE_ROW)
         {
-            snprintf(msg, sizeof(msg), str(LANG_UIPOD_DOWNLOADING_FMT), i + 1, count);
-            uipod_fullscreen_message(msg, widest);
-        }
-        backlight_on();
-        yield();
-
-        char song_id[128], cover_id[128];
-        if (!lookup_song_ids_by_path(p, song_id, sizeof(song_id),
-                                     cover_id, sizeof(cover_id), NULL))
-        {
-            continue;
-        }
-
-        char err[160] = "";
-        int32_t rc = tp_navidrome_ensure_track_cached(
-            p,
-            song_id,
-            cover_id,
-            ui_cancel_check_cb,
-            &cancel,
-            err,
-            sizeof(err)
-        );
-
-        if (rc == -2 || cancel.cancelled)
-            break;
-
-        if (rc == 0 && file_exists(p))
-        {
-            if (cover_id[0])
+            const char *sid = (const char *)sqlite3_column_text(st, 0);
+            const char *cid = (const char *)sqlite3_column_text(st, 1);
+            const char *art = (const char *)sqlite3_column_text(st, 2);
+            const char *tit = (const char *)sqlite3_column_text(st, 3);
+            if (sid && sid[0])
             {
-                char cov_buf[MAX_PATH];
-                tp_navidrome_ensure_cover_cached(p, cover_id, cov_buf, sizeof(cov_buf));
+                char disp[192];
+                if (art && art[0] && tit && tit[0])
+                    snprintf(disp, sizeof(disp), "%s - %s", art, tit);
+                else if (tit && tit[0])
+                    strlcpy(disp, tit, sizeof(disp));
+                else
+                    disp[0] = '\0';
+
+                if (uipod_downloads_enqueue_nav_track(p, sid, cid ? cid : "", disp))
+                    enqueued++;
             }
-            tp_navidrome_pin_track(p);
-            ok_count++;
         }
-        else if (!first_err[0] && err[0])
-        {
-            strlcpy(first_err, err, sizeof(first_err));
-        }
+        sqlite3_reset(st);
     }
 
-    if (ok_count > 0)
-        uipod_library_mark_stale();
+    if (st)
+        sqlite3_finalize(st);
+    mutex_unlock(&s_nav_db_mutex);
 
-    if (cancel.cancelled)
-        return false;
-
-    if (ok_count == 0)
-    {
-        splashf(HZ * 3 / 2, "%s",
-                first_err[0] ? first_err : (const char *)str(LANG_FAILED));
-        return false;
-    }
-
-    if (count == 1)
-        splash(HZ, ID2P(LANG_UIPOD_DOWNLOADED_ONE));
-    else
-        splashf(HZ * 3 / 2, str(LANG_UIPOD_DOWNLOADED_FMT), ok_count);
-
-    return true;
+    return enqueued > 0;
 }
 
 bool uipod_navidrome_download_track(const char *path)
@@ -1215,15 +1332,57 @@ bool uipod_navidrome_get_cover_info(const char *path,
         return true;
     }
 
-    if (!uipod_source_is_navidrome())
+    if (uipod_offline_mode_get())
         return false;
 
     return tp_navidrome_ensure_cover_cached(path, cover_id, cover_path_out, cover_cap);
 }
 
+void uipod_navidrome_prefetch_steps(int max_steps)
+{
+    if (uipod_offline_mode_get() || !uipod_navidrome_has_tracks())
+        return;
+
+    if (max_steps <= 0)
+    {
+        tp_navidrome_enqueue_prefetch3("", "", "", "", "", "", "", "", "");
+        return;
+    }
+    if (max_steps > 3)
+        max_steps = 3;
+
+    char p_buf[3][MAX_PATH];
+    char sid[3][128];
+    char cid[3][128];
+    const char *use_p[3] = { "", "", "" };
+    int n = 0;
+
+    for (int i = 0; i < 3; i++)
+    {
+        sid[i][0] = '\0';
+        cid[i][0] = '\0';
+    }
+
+    for (int step = 1; step <= max_steps && n < 3; step++)
+    {
+        const char *pn = playlist_peek(step, p_buf[n], sizeof(p_buf[n]));
+        if (pn && uipod_navidrome_is_track_path(pn) &&
+            lookup_song_ids_by_path(pn, sid[n], sizeof(sid[n]),
+                                    cid[n], sizeof(cid[n]), NULL))
+        {
+            use_p[n] = p_buf[n];
+            n++;
+        }
+    }
+
+    tp_navidrome_enqueue_prefetch3(use_p[0], sid[0], cid[0],
+                                   use_p[1], sid[1], cid[1],
+                                   use_p[2], sid[2], cid[2]);
+}
+
 void uipod_navidrome_on_track_change(const char *cur_path)
 {
-    if (!uipod_source_is_navidrome())
+    if (uipod_offline_mode_get() || !uipod_navidrome_has_tracks())
         return;
 
     if (uipod_navidrome_is_track_path(cur_path))
@@ -1235,36 +1394,11 @@ void uipod_navidrome_on_track_change(const char *cur_path)
             tp_navidrome_notify_track_start(cur_sid);
         }
     }
-
-    /* Peek next 2 upcoming queue entries and enqueue background SD prefetch! */
-    char p1_buf[MAX_PATH], p2_buf[MAX_PATH];
-    const char *p1 = playlist_peek(1, p1_buf, sizeof(p1_buf));
-    const char *p2 = playlist_peek(2, p2_buf, sizeof(p2_buf));
-
-    char sid1[128] = "", cid1[128] = "";
-    char sid2[128] = "", cid2[128] = "";
-    const char *use_p1 = "";
-    const char *use_p2 = "";
-
-    if (p1 && uipod_navidrome_is_track_path(p1) &&
-        lookup_song_ids_by_path(p1, sid1, sizeof(sid1), cid1, sizeof(cid1), NULL))
-    {
-        use_p1 = p1;
-    }
-    if (p2 && uipod_navidrome_is_track_path(p2) &&
-        lookup_song_ids_by_path(p2, sid2, sizeof(sid2), cid2, sizeof(cid2), NULL))
-    {
-        use_p2 = p2;
-    }
-
-    if (use_p1[0] || use_p2[0])
-        tp_navidrome_enqueue_prefetch(use_p1, sid1, cid1, use_p2, sid2, cid2);
 }
 
 void uipod_navidrome_on_track_finish(const struct mp3entry *id3)
 {
-    if (!uipod_source_is_navidrome() || !id3 ||
-        !uipod_navidrome_is_track_path(id3->path))
+    if (uipod_offline_mode_get() || !id3 || !uipod_navidrome_is_track_path(id3->path))
         return;
 
     char sid[128];
@@ -1276,17 +1410,18 @@ void uipod_navidrome_on_track_finish(const struct mp3entry *id3)
     }
 }
 
-/* ---- Navidrome Settings / Setup Page ---------------------------------- */
+/* ---- Navidrome Settings / Setup Page (`Sources Navidrome` [1884]) ----- */
 
 enum
 {
     NAV_ROW_URL = 0,
     NAV_ROW_USER,
     NAV_ROW_PASS,
-    NAV_ROW_QUALITY,
-    NAV_ROW_CACHE_LIMIT,
-    NAV_ROW_SELF_SIGNED,
     NAV_ROW_SYNC,
+    NAV_ROW_CACHE_LOC,
+    NAV_ROW_QUALITY,
+    NAV_ROW_SELF_SIGNED,
+    NAV_ROW_CACHE_LIMIT,
     NAV_ROW_CLEAR_CACHE,
     NAV_ROW_COUNT
 };
@@ -1300,7 +1435,7 @@ struct nav_settings_page
     TpNavConfigC        cfg;
     bool                from_source_picker;
     bool                synced_ok;
-    char                indic_buf[NAV_ROW_COUNT][96];
+    char                indic_buf[NAV_ROW_COUNT][128];
 };
 
 static const char *quality_label(uint8_t q)
@@ -1324,6 +1459,19 @@ static void format_cache_limit(uint32_t mb, char *out, size_t cap)
         snprintf(out, cap, "%u MB", (unsigned)mb);
 }
 
+static void nav_short_cache_loc(const char *path, char *out, size_t cap)
+{
+    if (!path || !path[0])
+    {
+        snprintf(out, cap, "%s/Media", UIPOD_INDIC_PLAIN);
+        return;
+    }
+    const char *disp = path;
+    if (strncmp(disp, "/mnt/SDCARD/", 12) == 0)
+        disp += 11;
+    snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, disp);
+}
+
 static const char *nav_set_get_name(int sel, void *data, char *buf, size_t buf_len)
 {
     (void)data; (void)buf; (void)buf_len;
@@ -1332,10 +1480,11 @@ static const char *nav_set_get_name(int sel, void *data, char *buf, size_t buf_l
         case NAV_ROW_URL:         return str(LANG_UIPOD_NAV_SERVER_URL);
         case NAV_ROW_USER:        return str(LANG_UIPOD_NAV_USERNAME);
         case NAV_ROW_PASS:        return str(LANG_UIPOD_NAV_PASSWORD);
-        case NAV_ROW_QUALITY:     return str(LANG_UIPOD_NAV_QUALITY);
-        case NAV_ROW_CACHE_LIMIT: return str(LANG_UIPOD_NAV_CACHE_LIMIT);
-        case NAV_ROW_SELF_SIGNED: return str(LANG_UIPOD_NAV_SELF_SIGNED);
         case NAV_ROW_SYNC:        return str(LANG_UIPOD_NAV_SYNC);
+        case NAV_ROW_CACHE_LOC:   return str(LANG_UIPOD_CACHE_LOCATION);
+        case NAV_ROW_QUALITY:     return str(LANG_UIPOD_NAV_QUALITY);
+        case NAV_ROW_SELF_SIGNED: return str(LANG_UIPOD_NAV_SELF_SIGNED);
+        case NAV_ROW_CACHE_LIMIT: return str(LANG_UIPOD_NAV_CACHE_LIMIT);
         case NAV_ROW_CLEAR_CACHE: return str(LANG_UIPOD_NAV_CLEAR_CACHE);
         default:                  return "";
     }
@@ -1353,36 +1502,46 @@ static const char *nav_set_get_indicator(int sel, void *data)
     {
         case NAV_ROW_URL:
             if (!p->cfg.url[0])
-                return str(LANG_UIPOD_NAV_NOT_SET);
+            {
+                snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, str(LANG_UIPOD_NAV_NOT_SET));
+                return out;
+            }
             {
                 const char *u = p->cfg.url;
                 if (strncasecmp(u, "http://", 7) == 0)
                     u += 7;
                 else if (strncasecmp(u, "https://", 8) == 0)
                     u += 8;
-                strlcpy(out, u, cap);
+                snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, u);
                 return out;
             }
         case NAV_ROW_USER:
-            return p->cfg.username[0] ? p->cfg.username
-                                      : (const char *)str(LANG_UIPOD_NAV_NOT_SET);
+            snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN,
+                     p->cfg.username[0] ? p->cfg.username
+                                        : (const char *)str(LANG_UIPOD_NAV_NOT_SET));
+            return out;
         case NAV_ROW_PASS:
-            return p->cfg.password[0] ? "••••••••"
-                                      : (const char *)str(LANG_UIPOD_NAV_NOT_SET);
+            snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN,
+                     p->cfg.password[0] ? "••••••••"
+                                        : (const char *)str(LANG_UIPOD_NAV_NOT_SET));
+            return out;
+        case NAV_ROW_SYNC:
+            return ">";
+        case NAV_ROW_CACHE_LOC:
+            nav_short_cache_loc(p->cfg.cache_location, out, cap);
+            return out;
         case NAV_ROW_QUALITY:
             return quality_label(p->cfg.quality);
+        case NAV_ROW_SELF_SIGNED:
+            return uipod_toggle_str(p->cfg.allow_self_signed != 0);
         case NAV_ROW_CACHE_LIMIT:
             format_cache_limit(p->cfg.cache_limit_mb, out, cap);
             return out;
-        case NAV_ROW_SELF_SIGNED:
-            return uipod_toggle_str(p->cfg.allow_self_signed != 0);
-        case NAV_ROW_SYNC:
-            return ">";
         case NAV_ROW_CLEAR_CACHE:
         {
             uint64_t bytes = tp_navidrome_cache_usage_bytes();
             unsigned mb = (unsigned)((bytes + (512ULL * 1024ULL)) / (1024ULL * 1024ULL));
-            snprintf(out, cap, "%u MB", mb);
+            snprintf(out, cap, "%s%u MB", UIPOD_INDIC_PLAIN, mb);
             return out;
         }
         default:
@@ -1403,13 +1562,37 @@ static int nav_set_poll(struct uipod_page *self, int timeout)
     return action;
 }
 
-static void nav_apply_and_persist_cfg(struct nav_settings_page *p, uint8_t prev_quality)
+static void nav_apply_and_persist_cfg(struct nav_settings_page *p,
+                                      uint8_t prev_quality,
+                                      const char *prev_cache_loc)
 {
     tp_navidrome_set_config(&p->cfg);
     tp_navidrome_get_config(&p->cfg);
     save_config_to_disk();
-    if (p->cfg.quality != prev_quality)
+    bool loc_changed = prev_cache_loc &&
+                       strcmp(p->cfg.cache_location, prev_cache_loc) != 0;
+    if (p->cfg.quality != prev_quality || loc_changed)
         repath_catalog_for_quality(p->cfg.quality);
+}
+
+static void nav_cycle_cache_limit(struct nav_settings_page *p,
+                                  int dir,
+                                  uint8_t prev_quality,
+                                  const char *prev_loc)
+{
+    int cur = 0;
+    for (size_t i = 0; i < ARRAYLEN(s_cache_presets_mb); i++)
+    {
+        if (s_cache_presets_mb[i] == p->cfg.cache_limit_mb)
+        {
+            cur = (int)i;
+            break;
+        }
+    }
+    int n = (int)ARRAYLEN(s_cache_presets_mb);
+    cur = (cur + (dir < 0 ? -1 : 1) + n) % n;
+    p->cfg.cache_limit_mb = s_cache_presets_mb[cur];
+    nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
 }
 
 static enum uipod_page_result nav_set_on_action(struct uipod_page *self, int action)
@@ -1420,10 +1603,32 @@ static enum uipod_page_result nav_set_on_action(struct uipod_page *self, int act
     if (action == ACTION_STD_CANCEL)
         return UIPOD_PAGE_DONE;
 
+    uint8_t prev_quality = p->cfg.quality;
+    char prev_loc[sizeof(p->cfg.cache_location)];
+    strlcpy(prev_loc, p->cfg.cache_location, sizeof(prev_loc));
+
+    if (action == ACTION_SETTINGS_DEC || action == ACTION_SETTINGS_INC)
+    {
+        int dir = (action == ACTION_SETTINGS_DEC) ? -1 : 1;
+        if (sel == NAV_ROW_QUALITY)
+        {
+            p->cfg.quality = (uint8_t)((p->cfg.quality + (dir < 0 ? 2 : 1)) % 3);
+            nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
+        }
+        else if (sel == NAV_ROW_SELF_SIGNED)
+        {
+            p->cfg.allow_self_signed = p->cfg.allow_self_signed ? 0 : 1;
+            nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
+        }
+        else if (sel == NAV_ROW_CACHE_LIMIT)
+        {
+            nav_cycle_cache_limit(p, dir, prev_quality, prev_loc);
+        }
+        return UIPOD_PAGE_STAY;
+    }
+
     if (action != ACTION_STD_OK)
         return UIPOD_PAGE_STAY;
-
-    uint8_t prev_quality = p->cfg.quality;
 
     switch (sel)
     {
@@ -1437,18 +1642,40 @@ static enum uipod_page_result nav_set_on_action(struct uipod_page *self, int act
             if (uipod_kbd_input_ex(buf, sizeof(buf), true) == 0)
             {
                 strlcpy(p->cfg.url, buf, sizeof(p->cfg.url));
-                nav_apply_and_persist_cfg(p, prev_quality);
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             }
             break;
         }
         case NAV_ROW_USER:
             if (uipod_kbd_input_ex(p->cfg.username, sizeof(p->cfg.username), true) == 0)
-                nav_apply_and_persist_cfg(p, prev_quality);
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             break;
         case NAV_ROW_PASS:
             if (uipod_kbd_input_ex(p->cfg.password, sizeof(p->cfg.password), true) == 0)
-                nav_apply_and_persist_cfg(p, prev_quality);
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             break;
+        case NAV_ROW_SYNC:
+            nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
+            if (uipod_navidrome_sync(true))
+            {
+                p->synced_ok = true;
+                if (p->from_source_picker)
+                {
+                    p->base.no_arm_back = true;
+                    return UIPOD_PAGE_DONE;
+                }
+            }
+            break;
+        case NAV_ROW_CACHE_LOC:
+        {
+            char picked[MAX_PATH];
+            if (uipod_folder_pick(picked, sizeof(picked)))
+            {
+                strlcpy(p->cfg.cache_location, picked, sizeof(p->cfg.cache_location));
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
+            }
+            break;
+        }
         case NAV_ROW_QUALITY:
         {
             const char *opts[3] = {
@@ -1460,7 +1687,7 @@ static enum uipod_page_result nav_set_on_action(struct uipod_page *self, int act
             if (pick >= 0 && pick <= 2)
             {
                 p->cfg.quality = (uint8_t)pick;
-                nav_apply_and_persist_cfg(p, prev_quality);
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             }
             break;
         }
@@ -1478,25 +1705,13 @@ static enum uipod_page_result nav_set_on_action(struct uipod_page *self, int act
             if (pick >= 0 && (size_t)pick < ARRAYLEN(s_cache_presets_mb))
             {
                 p->cfg.cache_limit_mb = s_cache_presets_mb[pick];
-                nav_apply_and_persist_cfg(p, prev_quality);
+                nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             }
             break;
         }
         case NAV_ROW_SELF_SIGNED:
             p->cfg.allow_self_signed = p->cfg.allow_self_signed ? 0 : 1;
-            nav_apply_and_persist_cfg(p, prev_quality);
-            break;
-        case NAV_ROW_SYNC:
-            if (uipod_navidrome_sync(true))
-            {
-                p->synced_ok = true;
-                if (p->from_source_picker)
-                {
-                    uipod_source_set_navidrome(true);
-                    p->base.no_arm_back = true;
-                    return UIPOD_PAGE_DONE;
-                }
-            }
+            nav_apply_and_persist_cfg(p, prev_quality, prev_loc);
             break;
         case NAV_ROW_CLEAR_CACHE:
             if (uipod_confirm(str(LANG_UIPOD_NAV_CLEAR_CACHE_Q), NULL))
@@ -1517,14 +1732,20 @@ static const struct uipod_page_vtable nav_settings_vtable = {
     .on_action = nav_set_on_action,
 };
 
-static const int nav_settings_allowed[] = { ACTION_STD_OK, ACTION_STD_CANCEL, -1 };
+static const int nav_settings_allowed[] = {
+    ACTION_STD_OK, ACTION_STD_CANCEL,
+    ACTION_SETTINGS_DEC, ACTION_SETTINGS_INC, -1
+};
 
 int uipod_navidrome_settings_page(bool from_source_picker)
 {
+    uint8_t prev_src = uipod_gpu_get_header_source();
+    uipod_gpu_set_header_source(UIPOD_SRC_ICON_NAVIDROME);
+
     struct nav_settings_page p;
     memset(&p, 0, sizeof(p));
     p.base.vt      = &nav_settings_vtable;
-    p.base.context = CONTEXT_LIST;
+    p.base.context = CONTEXT_SETTINGS_RECTRIGGER;
     p.base.allowed = nav_settings_allowed;
     p.base.title   = str(LANG_UIPOD_SOURCE_NAVIDROME);
     p.from_source_picker = from_source_picker;
@@ -1540,6 +1761,7 @@ int uipod_navidrome_settings_page(bool from_source_picker)
                                                                     : NAV_ROW_URL);
 
     uipod_page_run(&p.base);
+    uipod_gpu_set_header_source(prev_src);
     return p.synced_ok ? 1 : 0;
 }
 
@@ -1721,6 +1943,46 @@ static int nav_files_poll(struct uipod_page *self, int timeout)
     return action;
 }
 
+static bool nav_files_play_or_ctx(struct nav_files_page *p, int sel, bool is_ctx)
+{
+    int track_cnt = 0;
+    int track_sel = -1;
+    for (int i = 0; i < p->count; i++)
+    {
+        if (!p->entries[i].is_dir && p->entries[i].target_path[0])
+        {
+            if (i == sel)
+                track_sel = track_cnt;
+            track_cnt++;
+        }
+    }
+    if (track_cnt <= 0 || track_sel < 0)
+        return false;
+
+    char **paths = malloc((size_t)track_cnt * sizeof(*paths));
+    if (!paths)
+    {
+        return is_ctx
+            ? uipod_music_context(p->entries[sel].name,
+                                  p->entries[sel].target_path,
+                                  FILE_ATTR_AUDIO)
+            : uipod_play_track(p->entries[sel].target_path);
+    }
+
+    int k = 0;
+    for (int i = 0; i < p->count; i++)
+    {
+        if (!p->entries[i].is_dir && p->entries[i].target_path[0])
+            paths[k++] = p->entries[i].target_path;
+    }
+
+    bool started = is_ctx
+        ? uipod_music_context_track_in_list(p->entries[sel].name, paths, k, track_sel)
+        : uipod_play_tracks_at(paths, k, track_sel);
+    free(paths);
+    return started;
+}
+
 static enum uipod_page_result nav_files_on_action(struct uipod_page *self, int action)
 {
     struct nav_files_page *p = (struct nav_files_page *)self;
@@ -1741,7 +2003,7 @@ static enum uipod_page_result nav_files_on_action(struct uipod_page *self, int a
             else
             {
                 nav_files_save_pos(p, sel);
-                if (uipod_play_track(p->entries[sel].target_path))
+                if (nav_files_play_or_ctx(p, sel, false))
                 {
                     p->result = GO_TO_WPS;
                     return UIPOD_PAGE_DONE;
@@ -1769,9 +2031,7 @@ static enum uipod_page_result nav_files_on_action(struct uipod_page *self, int a
             }
             else
             {
-                if (uipod_music_context(p->entries[sel].name,
-                                          p->entries[sel].target_path,
-                                          FILE_ATTR_AUDIO))
+                if (nav_files_play_or_ctx(p, sel, true))
                 {
                     p->result = GO_TO_WPS;
                     return UIPOD_PAGE_DONE;

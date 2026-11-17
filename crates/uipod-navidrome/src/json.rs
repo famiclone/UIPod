@@ -529,6 +529,30 @@ pub fn decode_playlist_detail(bytes: &[u8]) -> Result<SubsonicPlaylistDetail, St
     Ok(SubsonicPlaylistDetail { id, name, songs })
 }
 
+pub fn decode_starred_songs(bytes: &[u8]) -> Result<Vec<SubsonicSong>, String> {
+    let root = parse_json(bytes)?;
+    let sr = unwrap_subsonic_root(&root)?;
+    let Some(st) = sr
+        .get("starred2")
+        .or_else(|| sr.get("starred"))
+        .and_then(JsonVal::as_obj)
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(arr) = st.get("song").and_then(JsonVal::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut songs = Vec::with_capacity(arr.len());
+    for item in arr {
+        if let Some(obj) = item.as_obj() {
+            if let Some(song) = parse_song_obj(obj) {
+                songs.push(song);
+            }
+        }
+    }
+    Ok(songs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +606,31 @@ mod tests {
         let payload = br#"{"subsonic-response":{"status":"failed","error":{"code":40,"message":"Wrong username or password"}}}"#;
         let err = decode_ping(payload).unwrap_err();
         assert_eq!(err, "Wrong username or password");
+    }
+
+    #[test]
+    fn test_decode_starred2_songs() {
+        let payload = br#"{
+          "subsonic-response": {
+            "status": "ok",
+            "version": "1.16.1",
+            "starred2": {
+              "song": [
+                {
+                  "id": "fav-1",
+                  "title": "Feel Good Inc.",
+                  "artist": "Gorillaz",
+                  "album": "Demon Days",
+                  "track": 6,
+                  "suffix": "flac"
+                }
+              ]
+            }
+          }
+        }"#;
+        let songs = decode_starred_songs(payload).unwrap();
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].id, "fav-1");
+        assert_eq!(songs[0].title, "Feel Good Inc.");
     }
 }

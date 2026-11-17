@@ -34,10 +34,10 @@ extern const struct menu_item_ex
 /* UIPod sub-menu page openers (each in its own per-menu file). */
 int uipod_settings_page(void);        /* main_menu.c */
 int uipod_extras_page(void);          /* main_menu.c */
-int uipod_source_page(void);          /* main_menu.c */
-int uipod_source_boot_page(void);     /* main_menu.c */
-bool uipod_source_is_configured(void);/* main_menu.c */
+int uipod_sources_page(void);         /* main_menu.c */
 int uipod_appearance_page(void);      /* power_menu.c */
+int uipod_customize_theme_page(void); /* power_menu.c */
+void uipod_theme_sync_startup(void);  /* power_menu.c */
 int uipod_power_page(void);           /* power_menu.c */
 int uipod_audio_folders_page(void);   /* audio_folders_menu.c */
 int uipod_av_page(void);              /* visualizer_menu.c */

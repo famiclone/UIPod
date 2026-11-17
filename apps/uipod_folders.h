@@ -6,6 +6,12 @@
 #ifndef _UIPOD_FOLDERS_H
 #define _UIPOD_FOLDERS_H
 
+#include <stdbool.h>
+#include <stddef.h>
+
+/* Interactive directory picker (`Hold A` / `MENU` selects highlighted folder). */
+bool uipod_folder_pick(char *out, size_t out_len);
+
 /* Settings -> *Folders pages (MENUITEM_FUNCTION targets) */
 int uipod_music_settings(void);
 int uipod_podcast_settings(void);

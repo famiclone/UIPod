@@ -26,6 +26,7 @@ int  uipod_library_reconcile(bool force_full);
  * attached, as a half-copied file would be indexed and never revisited. */
 void uipod_library_mark_stale(void);
 void uipod_library_refresh_if_stale(void);
+void uipod_library_bump_remote_gen(void);
 
 /* Shuffle All's track set: every Music path in title order, one callback per
  * row (return false to stop).  Past UIPOD_MAX_FILES_IN_PLAYLIST rows it is a

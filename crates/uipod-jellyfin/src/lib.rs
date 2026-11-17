@@ -214,6 +214,7 @@ pub struct TpJfConfigC {
     pub url: [u8; 256],
     pub username: [u8; 128],
     pub password: [u8; 128],
+    pub cache_location: [u8; 256],
     pub video_quality: u8,
     pub audio_quality: u8,
     pub allow_self_signed: u8,
@@ -623,15 +624,45 @@ pub extern "C" fn tp_jellyfin_shutdown() {
     }
 }
 
+fn apply_jf_config(mut cfg: JellyfinConfig) -> bool {
+    let maybe_roots = cfg.effective_roots();
+    let old_mgr = current_cache();
+    let Some(mgr) = old_mgr else {
+        return false;
+    };
+    if let Some((desired_vroot, desired_aroot)) = maybe_roots {
+        if mgr.video_root() != desired_vroot.as_path()
+            || mgr.audio_root() != desired_aroot.as_path()
+        {
+            let prev = mgr.get_config();
+            if prev.url.trim() == cfg.url.trim()
+                && prev.username.trim() == cfg.username.trim()
+                && prev.password == cfg.password
+            {
+                if cfg.access_token.is_empty() {
+                    cfg.access_token = prev.access_token;
+                }
+                if cfg.user_id.is_empty() {
+                    cfg.user_id = prev.user_id;
+                }
+            }
+            let transport = Arc::clone(mgr.transport());
+            mgr.shutdown();
+            let new_mgr = JfCacheManager::new(desired_vroot, desired_aroot, transport);
+            new_mgr.set_config(cfg);
+            *cache_slot().lock().unwrap() = Some(new_mgr);
+            return true;
+        }
+    }
+    mgr.set_config(cfg);
+    true
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn tp_jellyfin_load_config_text(ini_utf8: *const c_char) -> bool {
     let text = unsafe { opt_cstr(ini_utf8) };
     let cfg = JellyfinConfig::parse_ini(&text);
-    let Some(mgr) = current_cache() else {
-        return false;
-    };
-    mgr.set_config(cfg);
-    true
+    apply_jf_config(cfg)
 }
 
 #[no_mangle]
@@ -659,13 +690,21 @@ pub unsafe extern "C" fn tp_jellyfin_get_config(out_cfg: *mut TpJfConfigC) -> bo
         return false;
     };
     let cfg = mgr.get_config();
+    let cur_vroot = mgr.video_root().to_string_lossy().into_owned();
+    let loc = if cfg.cache_location.trim().is_empty() {
+        config::normalize_cache_location(&cur_vroot)
+    } else {
+        config::normalize_cache_location(&cfg.cache_location)
+    };
     let dst = unsafe { &mut *out_cfg };
     dst.url.fill(0);
     dst.username.fill(0);
     dst.password.fill(0);
+    dst.cache_location.fill(0);
     write_str_to_c_buf(&cfg.url, &mut dst.url);
     write_str_to_c_buf(&cfg.username, &mut dst.username);
     write_str_to_c_buf(&cfg.password, &mut dst.password);
+    write_str_to_c_buf(&loc, &mut dst.cache_location);
     dst.video_quality = cfg.video_quality as u8;
     dst.audio_quality = cfg.audio_quality as u8;
     dst.allow_self_signed = if cfg.allow_self_signed { 1 } else { 0 };
@@ -679,9 +718,6 @@ pub unsafe extern "C" fn tp_jellyfin_set_config(in_cfg: *const TpJfConfigC) -> b
     if in_cfg.is_null() {
         return false;
     }
-    let Some(mgr) = current_cache() else {
-        return false;
-    };
     let src = unsafe { &*in_cfg };
     let cfg = JellyfinConfig {
         url: c_buf_to_string(&src.url, ""),
@@ -693,9 +729,40 @@ pub unsafe extern "C" fn tp_jellyfin_set_config(in_cfg: *const TpJfConfigC) -> b
         audio_quality: AudioQuality::from_u8(src.audio_quality),
         cache_limit_mb: src.cache_limit_mb,
         allow_self_signed: src.allow_self_signed != 0,
+        cache_location: config::normalize_cache_location(&c_buf_to_string(
+            &src.cache_location,
+            config::DEFAULT_CACHE_LOCATION,
+        )),
     };
-    mgr.set_config(cfg);
+    apply_jf_config(cfg)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tp_jellyfin_get_roots(
+    video_out: *mut c_char,
+    video_cap: usize,
+    audio_out: *mut c_char,
+    audio_cap: usize,
+) -> bool {
+    let Some(mgr) = current_cache() else {
+        return false;
+    };
+    if !video_out.is_null() && video_cap > 0 {
+        let v = mgr.video_root().to_string_lossy();
+        let slice = unsafe { std::slice::from_raw_parts_mut(video_out as *mut u8, video_cap) };
+        write_str_to_c_buf(&v, slice);
+    }
+    if !audio_out.is_null() && audio_cap > 0 {
+        let a = mgr.audio_root().to_string_lossy();
+        let slice = unsafe { std::slice::from_raw_parts_mut(audio_out as *mut u8, audio_cap) };
+        write_str_to_c_buf(&a, slice);
+    }
     true
+}
+
+#[no_mangle]
+pub extern "C" fn tp_jellyfin_is_busy() -> bool {
+    current_cache().map(|m| m.is_busy()).unwrap_or(false)
 }
 
 #[no_mangle]
@@ -1174,6 +1241,20 @@ pub unsafe extern "C" fn tp_jellyfin_prefetch_audio(
         return;
     }
     mgr.enqueue_prefetch(local_path, song_id, suffix, cover_id);
+}
+
+#[no_mangle]
+pub extern "C" fn tp_jellyfin_clear_prefetches() {
+    if let Some(mgr) = current_cache() {
+        mgr.clear_audio_prefetches();
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tp_jellyfin_take_prefetch_done() -> bool {
+    current_cache()
+        .map(|m| m.take_prefetch_done())
+        .unwrap_or(false)
 }
 
 #[no_mangle]

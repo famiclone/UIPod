@@ -37,6 +37,7 @@
 #include "system.h"
 
 #include "uipod_folders.h"
+#include "uipod_downloads.h"
 #include "uipod_jellyfin.h"
 #include "uipod_keyboard.h"
 #include "uipod_library.h"
@@ -44,6 +45,7 @@
 #include "uipod_page.h"
 #include "uipod_playlists.h"
 #include "uipod_rs_jellyfin.h"
+#include "uipod_rs_ui.h"
 #include "uipod_svg.h"
 #include "uipod_transition.h"
 #include "uipod_ui.h"
@@ -385,6 +387,11 @@ static const TpJfHttpVtable s_jf_http_vt = {
 #endif
 };
 
+static void jf_repath_roots(const char *old_vroot,
+                            const char *new_vroot,
+                            const char *old_aroot,
+                            const char *new_aroot);
+
 void uipod_jellyfin_init(void)
 {
     mutex_init(&s_jf_db_mutex);
@@ -394,8 +401,8 @@ void uipod_jellyfin_init(void)
     struct stat st;
     if (stat("/mnt/SDCARD", &st) == 0 && S_ISDIR(st.st_mode))
     {
-        video_root = "/mnt/SDCARD/Media/Videos/jellyfin";
-        audio_root = "/mnt/SDCARD/Media/Music/jellyfin";
+        video_root = "/mnt/SDCARD/Media/jellyfin";
+        audio_root = "/mnt/SDCARD/Media/jellyfin/Music";
     }
 
     tp_jellyfin_init(video_root, audio_root, &s_jf_http_vt);
@@ -403,6 +410,12 @@ void uipod_jellyfin_init(void)
 
     if (!dir_exists(JF_PLAYLISTS_DIR))
         mkdir(JF_PLAYLISTS_DIR);
+
+    char live_vroot[MAX_PATH], live_aroot[MAX_PATH];
+    live_vroot[0] = '\0';
+    live_aroot[0] = '\0';
+    tp_jellyfin_get_roots(live_vroot, sizeof(live_vroot),
+                          live_aroot, sizeof(live_aroot));
 
     mutex_lock(&s_jf_db_mutex);
     remove(JF_DB_RAM);
@@ -425,6 +438,13 @@ void uipod_jellyfin_init(void)
         }
     }
     mutex_unlock(&s_jf_db_mutex);
+
+    /* Migrate legacy v0.1.x `/mnt/SDCARD/Media/{Videos,Music}/jellyfin` DB paths */
+    if (live_vroot[0] && live_aroot[0])
+    {
+        jf_repath_roots("/mnt/SDCARD/Media/Videos/jellyfin", live_vroot,
+                        "/mnt/SDCARD/Media/Music/jellyfin", live_aroot);
+    }
 }
 
 void uipod_jellyfin_close(void)
@@ -738,6 +758,8 @@ bool uipod_jellyfin_sync(bool show_summary_splash)
     jf_db_writeback_locked();
     mutex_unlock(&s_jf_db_mutex);
 
+    uipod_library_bump_remote_gen();
+
     /* Persist freshly acquired `access_token` + `user_id` to `jellyfin.cfg` */
     jf_save_config_to_disk();
 
@@ -813,8 +835,12 @@ bool uipod_jellyfin_prepare_track(const char *path, bool ui_blocking)
     if (file_exists(path))
         return true;
 
-    if (!uipod_source_is_jellyfin())
+    if (uipod_offline_mode_get())
+    {
+        if (ui_blocking)
+            splash(HZ, ID2P(LANG_UIPOD_OFFLINE_MODE));
         return false;
+    }
 
     char song_id[128], suffix[32], cover_id[128];
     if (!jf_lookup_song_by_path(path, song_id, sizeof(song_id),
@@ -852,70 +878,58 @@ bool uipod_jellyfin_download_tracks(char *const *paths, int count)
     if (!paths || count <= 0)
         return false;
 
-    button_clear_queue();
-    struct jf_cancel_state cancel = { .cancelled = false };
-    int ok_count = 0;
-    char first_err[128];
-    first_err[0] = '\0';
-
-    char widest[64], msg[64];
-    snprintf(widest, sizeof(widest), str(LANG_UIPOD_DOWNLOADING_FMT), count, count);
+    int enqueued = 0;
+    mutex_lock(&s_jf_db_mutex);
+    sqlite3_stmt *st = NULL;
+    if (s_jf_db)
+    {
+        sqlite3_prepare_v2(
+            s_jf_db,
+            "SELECT song_id, COALESCE(suffix, ''), COALESCE(cover_id, ''),"
+            " COALESCE(artist, ''), COALESCE(title, '')"
+            " FROM tracks WHERE path=?1;",
+            -1, &st, NULL);
+    }
 
     for (int i = 0; i < count; i++)
     {
-        if (jf_cancel_check_cb(&cancel))
-            break;
-
         const char *p = paths[i];
-        if (!p || !uipod_jellyfin_is_track_path(p))
+        if (!st || !p || !uipod_jellyfin_is_track_path(p))
             continue;
 
-        if (count == 1)
-            uipod_fullscreen_message(str(LANG_UIPOD_DOWNLOADING), NULL);
-        else
+        sqlite3_bind_text(st, 1, p, -1, SQLITE_STATIC);
+        if (sqlite3_step(st) == SQLITE_ROW)
         {
-            snprintf(msg, sizeof(msg), str(LANG_UIPOD_DOWNLOADING_FMT), i + 1, count);
-            uipod_fullscreen_message(msg, widest);
+            const char *sid = (const char *)sqlite3_column_text(st, 0);
+            const char *suf = (const char *)sqlite3_column_text(st, 1);
+            const char *cid = (const char *)sqlite3_column_text(st, 2);
+            const char *art = (const char *)sqlite3_column_text(st, 3);
+            const char *tit = (const char *)sqlite3_column_text(st, 4);
+            if (sid && sid[0])
+            {
+                char disp[192];
+                if (art && art[0] && tit && tit[0])
+                    snprintf(disp, sizeof(disp), "%s - %s", art, tit);
+                else if (tit && tit[0])
+                    strlcpy(disp, tit, sizeof(disp));
+                else
+                    disp[0] = '\0';
+
+                if (uipod_downloads_enqueue_jf_audio(
+                        p, sid, suf ? suf : "", cid ? cid : "", disp))
+                {
+                    enqueued++;
+                }
+            }
         }
-        backlight_on();
-
-        char song_id[128], suffix[32], cover_id[128];
-        if (!jf_lookup_song_by_path(p, song_id, sizeof(song_id),
-                                    suffix, sizeof(suffix),
-                                    cover_id, sizeof(cover_id), NULL))
-            continue;
-
-        char err[128];
-        err[0] = '\0';
-        int32_t rc = tp_jellyfin_ensure_audio_cached(
-            p, song_id, suffix, cover_id, 1,
-            jf_cancel_check_cb, &cancel, err, sizeof(err));
-        if (cancel.cancelled)
-            break;
-        if (rc == 0)
-            ok_count++;
-        else if (!first_err[0] && err[0])
-            strlcpy(first_err, err, sizeof(first_err));
+        sqlite3_reset(st);
     }
 
-    if (ok_count > 0)
-        uipod_library_mark_stale();
+    if (st)
+        sqlite3_finalize(st);
+    mutex_unlock(&s_jf_db_mutex);
 
-    if (cancel.cancelled)
-        return false;
-
-    if (ok_count == 0)
-    {
-        splashf(HZ * 3 / 2, "%s",
-                first_err[0] ? first_err : (const char *)str(LANG_FAILED));
-        return false;
-    }
-
-    if (count == 1)
-        splash(HZ, ID2P(LANG_UIPOD_DOWNLOADED_ONE));
-    else
-        splashf(HZ * 3 / 2, str(LANG_UIPOD_DOWNLOADED_FMT), ok_count);
-    return true;
+    return enqueued > 0;
 }
 
 bool uipod_jellyfin_download_track(const char *path)
@@ -1101,23 +1115,18 @@ bool uipod_jellyfin_get_cover_info(const char *path,
     return tp_jellyfin_cover_path_for(path, cover_id, cover_path_out, cover_cap) > 0;
 }
 
-void uipod_jellyfin_on_track_change(const char *cur_path)
+void uipod_jellyfin_prefetch_steps(int max_steps)
 {
-    if (!uipod_source_is_jellyfin())
+    if (uipod_offline_mode_get() || !uipod_jellyfin_has_tracks())
         return;
 
-    if (uipod_jellyfin_is_track_path(cur_path))
-    {
-        char sid[128], suf[32], cid[128];
-        if (jf_lookup_song_by_path(cur_path, sid, sizeof(sid),
-                                   suf, sizeof(suf), cid, sizeof(cid), NULL))
-        {
-            tp_jellyfin_report_session(0, sid, sid, "uipod-audio", 0, 0);
-        }
-    }
+    tp_jellyfin_clear_prefetches();
+    if (max_steps <= 0)
+        return;
+    if (max_steps > 3)
+        max_steps = 3;
 
-    /* Prefetch next 2 upcoming Jellyfin audio tracks in the background */
-    for (int step = 1; step <= 2; step++)
+    for (int step = 1; step <= max_steps; step++)
     {
         char pbuf[MAX_PATH];
         const char *pn = playlist_peek(step, pbuf, sizeof(pbuf));
@@ -1133,10 +1142,25 @@ void uipod_jellyfin_on_track_change(const char *cur_path)
     }
 }
 
+void uipod_jellyfin_on_track_change(const char *cur_path)
+{
+    if (uipod_offline_mode_get() || !uipod_jellyfin_has_tracks())
+        return;
+
+    if (uipod_jellyfin_is_track_path(cur_path))
+    {
+        char sid[128], suf[32], cid[128];
+        if (jf_lookup_song_by_path(cur_path, sid, sizeof(sid),
+                                   suf, sizeof(suf), cid, sizeof(cid), NULL))
+        {
+            tp_jellyfin_report_session(0, sid, sid, "uipod-audio", 0, 0);
+        }
+    }
+}
+
 void uipod_jellyfin_on_track_finish(const struct mp3entry *id3)
 {
-    if (!uipod_source_is_jellyfin() || !id3 ||
-        !uipod_jellyfin_is_track_path(id3->path))
+    if (uipod_offline_mode_get() || !id3 || !uipod_jellyfin_is_track_path(id3->path))
         return;
 
     char sid[128];
@@ -1384,6 +1408,12 @@ static void jf_play_video_by_id(const char *item_id, bool force_from_start)
         return;
     }
 
+    if (uipod_offline_mode_get())
+    {
+        splash(HZ, ID2P(LANG_UIPOD_OFFLINE_MODE));
+        return;
+    }
+
 #ifdef RETRO_HANDHELD
     /* 2) Stream over network via local loopback HTTP/TLS proxy + Jellyfin */
     uipod_fullscreen_message(str(LANG_UIPOD_NAV_BUFFERING), NULL);
@@ -1468,87 +1498,46 @@ static bool jf_download_video_ids(char **ids, int count)
     if (!ids || count <= 0)
         return false;
 
-    button_clear_queue();
-    struct jf_cancel_state cancel = { .cancelled = false };
-    int ok_count = 0;
-    char first_err[128];
-    first_err[0] = '\0';
-
-    char widest[64], msg[64];
-    snprintf(widest, sizeof(widest), str(LANG_UIPOD_DOWNLOADING_FMT), count, count);
-
+    int enqueued = 0;
     for (int i = 0; i < count; i++)
     {
-        if (jf_cancel_check_cb(&cancel))
-            break;
-
         struct jf_video_row row;
         if (!jf_load_video_row(ids[i], &row) || !row.local_path[0])
             continue;
 
-        if (count == 1)
-            uipod_fullscreen_message(str(LANG_UIPOD_DOWNLOADING), NULL);
-        else
-        {
-            snprintf(msg, sizeof(msg), str(LANG_UIPOD_DOWNLOADING_FMT), i + 1, count);
-            uipod_fullscreen_message(msg, widest);
-        }
-        backlight_on();
+        struct uipod_dl_jf_video_req req;
+        memset(&req, 0, sizeof(req));
+        req.title           = row.name;
+        req.local_path      = row.local_path;
+        req.item_id         = row.id;
+        req.media_source_id = row.media_source_id;
+        req.container       = row.container;
+        req.video_codec     = row.video_codec;
+        req.audio_codec     = row.audio_codec;
+        req.width           = row.width;
+        req.height          = row.height;
+        req.bit_depth       = row.bit_depth;
+        req.bitrate         = row.bitrate;
 
-        char err[128];
-        err[0] = '\0';
-        int32_t rc = tp_jellyfin_download_video(
-            row.local_path,
-            row.id,
-            row.media_source_id,
-            row.container,
-            row.video_codec,
-            row.audio_codec,
-            row.width,
-            row.height,
-            row.bit_depth,
-            row.bitrate,
-            jf_cancel_check_cb,
-            &cancel,
-            err,
-            sizeof(err));
-        if (cancel.cancelled)
-            break;
-        if (rc == 0)
-            ok_count++;
-        else if (!first_err[0] && err[0])
-            strlcpy(first_err, err, sizeof(first_err));
+        if (uipod_downloads_enqueue_jf_video(&req))
+            enqueued++;
     }
-
-    if (cancel.cancelled)
-        return false;
-
-    if (ok_count == 0)
-    {
-        splashf(HZ * 3 / 2, "%s",
-                first_err[0] ? first_err : (const char *)str(LANG_FAILED));
-        return false;
-    }
-
-    if (count == 1)
-        splash(HZ, ID2P(LANG_UIPOD_DOWNLOADED_ONE));
-    else
-        splashf(HZ * 3 / 2, str(LANG_UIPOD_DOWNLOADED_VIDEOS_FMT), ok_count);
-    return true;
+    return enqueued > 0;
 }
 
-/* ---- Jellyfin Settings Page ------------------------------------------- */
+/* ---- Jellyfin Settings Page (`Sources Jellyfin` [2277]) --------------- */
 
 enum
 {
     JF_ROW_URL = 0,
     JF_ROW_USER,
     JF_ROW_PASS,
+    JF_ROW_SYNC,
+    JF_ROW_CACHE_LOC,
     JF_ROW_VIDEO_QUAL,
     JF_ROW_AUDIO_QUAL,
-    JF_ROW_CACHE_LIMIT,
     JF_ROW_SELF_SIGNED,
-    JF_ROW_SYNC,
+    JF_ROW_CACHE_LIMIT,
     JF_ROW_CLEAR_CACHE,
     JF_ROW_COUNT
 };
@@ -1562,7 +1551,7 @@ struct jf_settings_page
     TpJfConfigC         cfg;
     bool                from_source_picker;
     bool                synced_ok;
-    char                indic_buf[JF_ROW_COUNT][96];
+    char                indic_buf[JF_ROW_COUNT][128];
 };
 
 static const char *jf_video_quality_label(uint8_t q)
@@ -1598,6 +1587,19 @@ static void jf_format_cache_limit(uint32_t mb, char *out, size_t cap)
         snprintf(out, cap, "%u MB", (unsigned)mb);
 }
 
+static void jf_short_cache_loc(const char *path, char *out, size_t cap)
+{
+    if (!path || !path[0])
+    {
+        snprintf(out, cap, "%s/Media", UIPOD_INDIC_PLAIN);
+        return;
+    }
+    const char *disp = path;
+    if (strncmp(disp, "/mnt/SDCARD/", 12) == 0)
+        disp += 11;
+    snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, disp);
+}
+
 static const char *jf_set_get_name(int sel, void *data, char *buf, size_t buf_len)
 {
     (void)data; (void)buf; (void)buf_len;
@@ -1606,11 +1608,12 @@ static const char *jf_set_get_name(int sel, void *data, char *buf, size_t buf_le
         case JF_ROW_URL:         return str(LANG_UIPOD_NAV_SERVER_URL);
         case JF_ROW_USER:        return str(LANG_UIPOD_NAV_USERNAME);
         case JF_ROW_PASS:        return str(LANG_UIPOD_NAV_PASSWORD);
+        case JF_ROW_SYNC:        return str(LANG_UIPOD_NAV_SYNC);
+        case JF_ROW_CACHE_LOC:   return str(LANG_UIPOD_CACHE_LOCATION);
         case JF_ROW_VIDEO_QUAL:  return str(LANG_UIPOD_JF_VIDEO_QUALITY);
         case JF_ROW_AUDIO_QUAL:  return str(LANG_UIPOD_NAV_QUALITY);
-        case JF_ROW_CACHE_LIMIT: return str(LANG_UIPOD_NAV_CACHE_LIMIT);
         case JF_ROW_SELF_SIGNED: return str(LANG_UIPOD_NAV_SELF_SIGNED);
-        case JF_ROW_SYNC:        return str(LANG_UIPOD_NAV_SYNC);
+        case JF_ROW_CACHE_LIMIT: return str(LANG_UIPOD_NAV_CACHE_LIMIT);
         case JF_ROW_CLEAR_CACHE: return str(LANG_UIPOD_NAV_CLEAR_CACHE);
         default:                 return "";
     }
@@ -1628,38 +1631,48 @@ static const char *jf_set_get_indicator(int sel, void *data)
     {
         case JF_ROW_URL:
             if (!p->cfg.url[0])
-                return str(LANG_UIPOD_NAV_NOT_SET);
+            {
+                snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, str(LANG_UIPOD_NAV_NOT_SET));
+                return out;
+            }
             {
                 const char *u = p->cfg.url;
                 if (strncasecmp(u, "http://", 7) == 0)
                     u += 7;
                 else if (strncasecmp(u, "https://", 8) == 0)
                     u += 8;
-                strlcpy(out, u, cap);
+                snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, u);
                 return out;
             }
         case JF_ROW_USER:
-            return p->cfg.username[0] ? p->cfg.username
-                                      : (const char *)str(LANG_UIPOD_NAV_NOT_SET);
+            snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN,
+                     p->cfg.username[0] ? p->cfg.username
+                                        : (const char *)str(LANG_UIPOD_NAV_NOT_SET));
+            return out;
         case JF_ROW_PASS:
-            return p->cfg.password[0] ? "••••••••"
-                                      : (const char *)str(LANG_UIPOD_NAV_NOT_SET);
+            snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN,
+                     p->cfg.password[0] ? "••••••••"
+                                        : (const char *)str(LANG_UIPOD_NAV_NOT_SET));
+            return out;
+        case JF_ROW_SYNC:
+            return NULL;
+        case JF_ROW_CACHE_LOC:
+            jf_short_cache_loc(p->cfg.cache_location, out, cap);
+            return out;
         case JF_ROW_VIDEO_QUAL:
             return jf_video_quality_label(p->cfg.video_quality);
         case JF_ROW_AUDIO_QUAL:
             return jf_audio_quality_label(p->cfg.audio_quality);
+        case JF_ROW_SELF_SIGNED:
+            return uipod_toggle_str(p->cfg.allow_self_signed != 0);
         case JF_ROW_CACHE_LIMIT:
             jf_format_cache_limit(p->cfg.cache_limit_mb, out, cap);
             return out;
-        case JF_ROW_SELF_SIGNED:
-            return uipod_toggle_str(p->cfg.allow_self_signed != 0);
-        case JF_ROW_SYNC:
-            return NULL;
         case JF_ROW_CLEAR_CACHE:
         {
             uint64_t bytes = tp_jellyfin_cache_usage_bytes();
             uint32_t mb = (uint32_t)((bytes + (512ULL * 1024ULL)) / (1024ULL * 1024ULL));
-            snprintf(out, cap, "%u MB", (unsigned)mb);
+            snprintf(out, cap, "%s%u MB", UIPOD_INDIC_PLAIN, (unsigned)mb);
             return out;
         }
         default:
@@ -1881,15 +1894,156 @@ static void jf_repath_audio_for_quality(uint8_t new_quality)
     jf_db_exec("COMMIT;");
     jf_db_writeback_locked();
     mutex_unlock(&s_jf_db_mutex);
+    uipod_library_bump_remote_gen();
+}
+
+static void jf_repath_roots(const char *old_vroot,
+                            const char *new_vroot,
+                            const char *old_aroot,
+                            const char *new_aroot)
+{
+    bool v_diff = old_vroot && new_vroot && old_vroot[0] && new_vroot[0] &&
+                  strcmp(old_vroot, new_vroot) != 0;
+    bool a_diff = old_aroot && new_aroot && old_aroot[0] && new_aroot[0] &&
+                  strcmp(old_aroot, new_aroot) != 0;
+    if (!v_diff && !a_diff)
+        return;
+
+    bool any_updated = false;
+    mutex_lock(&s_jf_db_mutex);
+    if (!s_jf_db)
+    {
+        mutex_unlock(&s_jf_db_mutex);
+        return;
+    }
+
+    jf_db_exec("BEGIN IMMEDIATE;");
+
+    if (a_diff)
+    {
+        size_t olen = strlen(old_aroot);
+        jf_db_exec("DROP TABLE IF EXISTS temp.jf_repath;");
+        jf_db_exec("CREATE TEMP TABLE jf_repath("
+                   "id INTEGER PRIMARY KEY, old_path TEXT UNIQUE, new_path TEXT NOT NULL UNIQUE);");
+
+        sqlite3_stmt *sel = NULL, *ins = NULL;
+        if (sqlite3_prepare_v2(s_jf_db, "SELECT id, path FROM tracks;", -1, &sel, NULL) == SQLITE_OK &&
+            sqlite3_prepare_v2(s_jf_db,
+                               "INSERT OR IGNORE INTO temp.jf_repath(id, old_path, new_path) VALUES(?1,?2,?3);",
+                               -1, &ins, NULL) == SQLITE_OK)
+        {
+            while (sqlite3_step(sel) == SQLITE_ROW)
+            {
+                int id = sqlite3_column_int(sel, 0);
+                const char *oldp = (const char *)sqlite3_column_text(sel, 1);
+                if (!oldp || strncmp(oldp, old_aroot, olen) != 0 ||
+                    (oldp[olen] != '/' && oldp[olen] != '\0'))
+                    continue;
+                char newp[MAX_PATH];
+                snprintf(newp, sizeof(newp), "%s%s", new_aroot, oldp + olen);
+                sqlite3_bind_int (ins, 1, id);
+                sqlite3_bind_text(ins, 2, oldp, -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(ins, 3, newp, -1, SQLITE_TRANSIENT);
+                sqlite3_step(ins);
+                sqlite3_reset(ins);
+                any_updated = true;
+            }
+        }
+        sqlite3_finalize(sel);
+        sqlite3_finalize(ins);
+
+        if (any_updated)
+        {
+            jf_db_exec("UPDATE tracks SET path = ("
+                       "SELECT new_path FROM temp.jf_repath WHERE temp.jf_repath.id = tracks.id)"
+                       " WHERE id IN (SELECT id FROM temp.jf_repath);");
+            sqlite3_stmt *lookup = NULL;
+            if (sqlite3_prepare_v2(s_jf_db,
+                                   "SELECT new_path FROM temp.jf_repath WHERE old_path = ?1;",
+                                   -1, &lookup, NULL) == SQLITE_OK)
+            {
+                jf_rewrite_playlists_paths_locked(lookup);
+                sqlite3_finalize(lookup);
+            }
+        }
+        jf_db_exec("DROP TABLE IF EXISTS temp.jf_repath;");
+    }
+
+    if (v_diff)
+    {
+        size_t olen = strlen(old_vroot);
+        sqlite3_stmt *sel = NULL, *upd = NULL;
+        if (sqlite3_prepare_v2(s_jf_db,
+                               "SELECT row_id, local_path FROM jf_videos WHERE local_path IS NOT NULL;",
+                               -1, &sel, NULL) == SQLITE_OK &&
+            sqlite3_prepare_v2(s_jf_db,
+                               "UPDATE jf_videos SET local_path = ?1 WHERE row_id = ?2;",
+                               -1, &upd, NULL) == SQLITE_OK)
+        {
+            while (sqlite3_step(sel) == SQLITE_ROW)
+            {
+                int rid = sqlite3_column_int(sel, 0);
+                const char *oldp = (const char *)sqlite3_column_text(sel, 1);
+                if (!oldp || strncmp(oldp, old_vroot, olen) != 0 ||
+                    (oldp[olen] != '/' && oldp[olen] != '\0'))
+                    continue;
+                char newp[MAX_PATH];
+                snprintf(newp, sizeof(newp), "%s%s", new_vroot, oldp + olen);
+                sqlite3_bind_text(upd, 1, newp, -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int (upd, 2, rid);
+                sqlite3_step(upd);
+                sqlite3_reset(upd);
+                any_updated = true;
+            }
+        }
+        sqlite3_finalize(sel);
+        sqlite3_finalize(upd);
+    }
+
+    jf_db_exec("COMMIT;");
+    if (any_updated)
+        jf_db_writeback_locked();
+    mutex_unlock(&s_jf_db_mutex);
+
+    if (any_updated)
+        uipod_library_bump_remote_gen();
 }
 
 static void jf_apply_and_persist_cfg(struct jf_settings_page *p, uint8_t prev_audio_qual)
 {
+    char old_vroot[MAX_PATH], old_aroot[MAX_PATH];
+    char new_vroot[MAX_PATH], new_aroot[MAX_PATH];
+    old_vroot[0] = old_aroot[0] = new_vroot[0] = new_aroot[0] = '\0';
+    tp_jellyfin_get_roots(old_vroot, sizeof(old_vroot), old_aroot, sizeof(old_aroot));
+
     tp_jellyfin_set_config(&p->cfg);
     tp_jellyfin_get_config(&p->cfg);
     jf_save_config_to_disk();
+
+    tp_jellyfin_get_roots(new_vroot, sizeof(new_vroot), new_aroot, sizeof(new_aroot));
+    jf_repath_roots(old_vroot, new_vroot, old_aroot, new_aroot);
+
     if (p->cfg.audio_quality != prev_audio_qual)
         jf_repath_audio_for_quality(p->cfg.audio_quality);
+}
+
+static void jf_cycle_cache_limit(struct jf_settings_page *p,
+                                 int dir,
+                                 uint8_t prev_audio_qual)
+{
+    int cur = 0;
+    for (size_t i = 0; i < ARRAYLEN(s_jf_cache_presets_mb); i++)
+    {
+        if (s_jf_cache_presets_mb[i] == p->cfg.cache_limit_mb)
+        {
+            cur = (int)i;
+            break;
+        }
+    }
+    int n = (int)ARRAYLEN(s_jf_cache_presets_mb);
+    cur = (cur + (dir < 0 ? -1 : 1) + n) % n;
+    p->cfg.cache_limit_mb = s_jf_cache_presets_mb[cur];
+    jf_apply_and_persist_cfg(p, prev_audio_qual);
 }
 
 static void jf_set_draw(struct uipod_page *self)
@@ -1913,10 +2067,35 @@ static enum uipod_page_result jf_set_on_action(struct uipod_page *self, int acti
     if (action == ACTION_STD_CANCEL)
         return UIPOD_PAGE_DONE;
 
+    uint8_t prev_audio_qual = p->cfg.audio_quality;
+
+    if (action == ACTION_SETTINGS_DEC || action == ACTION_SETTINGS_INC)
+    {
+        int dir = (action == ACTION_SETTINGS_DEC) ? -1 : 1;
+        if (sel == JF_ROW_VIDEO_QUAL)
+        {
+            p->cfg.video_quality = (uint8_t)((p->cfg.video_quality + (dir < 0 ? 3 : 1)) % 4);
+            jf_apply_and_persist_cfg(p, prev_audio_qual);
+        }
+        else if (sel == JF_ROW_AUDIO_QUAL)
+        {
+            p->cfg.audio_quality = (uint8_t)((p->cfg.audio_quality + (dir < 0 ? 2 : 1)) % 3);
+            jf_apply_and_persist_cfg(p, prev_audio_qual);
+        }
+        else if (sel == JF_ROW_SELF_SIGNED)
+        {
+            p->cfg.allow_self_signed = p->cfg.allow_self_signed ? 0 : 1;
+            jf_apply_and_persist_cfg(p, prev_audio_qual);
+        }
+        else if (sel == JF_ROW_CACHE_LIMIT)
+        {
+            jf_cycle_cache_limit(p, dir, prev_audio_qual);
+        }
+        return UIPOD_PAGE_STAY;
+    }
+
     if (action != ACTION_STD_OK)
         return UIPOD_PAGE_STAY;
-
-    uint8_t prev_audio_qual = p->cfg.audio_quality;
 
     switch (sel)
     {
@@ -1944,6 +2123,30 @@ static enum uipod_page_result jf_set_on_action(struct uipod_page *self, int acti
             if (uipod_kbd_input_ex(p->cfg.password, sizeof(p->cfg.password), true) == 0)
                 jf_apply_and_persist_cfg(p, prev_audio_qual);
             break;
+
+        case JF_ROW_SYNC:
+            jf_apply_and_persist_cfg(p, prev_audio_qual);
+            if (uipod_jellyfin_sync(true))
+            {
+                p->synced_ok = true;
+                if (p->from_source_picker)
+                {
+                    p->base.no_arm_back = true;
+                    return UIPOD_PAGE_DONE;
+                }
+            }
+            break;
+
+        case JF_ROW_CACHE_LOC:
+        {
+            char picked[MAX_PATH];
+            if (uipod_folder_pick(picked, sizeof(picked)))
+            {
+                strlcpy(p->cfg.cache_location, picked, sizeof(p->cfg.cache_location));
+                jf_apply_and_persist_cfg(p, prev_audio_qual);
+            }
+            break;
+        }
 
         case JF_ROW_VIDEO_QUAL:
         {
@@ -2002,20 +2205,6 @@ static enum uipod_page_result jf_set_on_action(struct uipod_page *self, int acti
             jf_apply_and_persist_cfg(p, prev_audio_qual);
             break;
 
-        case JF_ROW_SYNC:
-            jf_apply_and_persist_cfg(p, prev_audio_qual);
-            if (uipod_jellyfin_sync(true))
-            {
-                p->synced_ok = true;
-                if (p->from_source_picker)
-                {
-                    uipod_source_set(UIPOD_SOURCE_JELLYFIN);
-                    p->base.no_arm_back = true;
-                    return UIPOD_PAGE_DONE;
-                }
-            }
-            break;
-
         case JF_ROW_CLEAR_CACHE:
             if (uipod_confirm(str(LANG_UIPOD_JF_CLEAR_CACHE_Q), NULL))
             {
@@ -2036,15 +2225,19 @@ static const struct uipod_page_vtable jf_set_vtable = {
 };
 
 static const int jf_set_allowed[] = {
-    ACTION_STD_OK, ACTION_STD_CANCEL, -1
+    ACTION_STD_OK, ACTION_STD_CANCEL,
+    ACTION_SETTINGS_DEC, ACTION_SETTINGS_INC, -1
 };
 
 int uipod_jellyfin_settings_page(bool from_source_picker)
 {
+    uint8_t prev_src = uipod_gpu_get_header_source();
+    uipod_gpu_set_header_source(UIPOD_SRC_ICON_JELLYFIN);
+
     struct jf_settings_page p;
     memset(&p, 0, sizeof(p));
     p.base.vt          = &jf_set_vtable;
-    p.base.context     = CONTEXT_LIST;
+    p.base.context     = CONTEXT_SETTINGS_RECTRIGGER;
     p.base.allowed     = jf_set_allowed;
     p.base.title       = str(LANG_UIPOD_SOURCE_JELLYFIN);
     p.from_source_picker = from_source_picker;
@@ -2061,6 +2254,7 @@ int uipod_jellyfin_settings_page(bool from_source_picker)
                                                                    : JF_ROW_URL);
 
     uipod_page_run(&p.base);
+    uipod_gpu_set_header_source(prev_src);
     return p.synced_ok ? 1 : 0;
 }
 
@@ -2189,6 +2383,51 @@ static void jf_browser_load_level(struct jf_browser_page *p)
         {
             case JF_LVL_VIEWS:
             {
+                if (p->mode == JF_MODE_VIDEOS && uipod_offline_mode_get())
+                {
+                    if (sqlite3_prepare_v2(
+                            s_jf_db,
+                            "SELECT id, name, COALESCE(series_name, ''), season_number,"
+                            " episode_number, year, COALESCE(container, 'mp4'),"
+                            " COALESCE(local_path, '')"
+                            " FROM jf_videos WHERE item_type IN (?1, ?2, ?3)"
+                            " GROUP BY id ORDER BY series_name, season_number, episode_number, name COLLATE NOCASE;",
+                            -1, &st, NULL) == SQLITE_OK)
+                    {
+                        sqlite3_bind_int(st, 1, TP_JF_ITEM_MOVIE);
+                        sqlite3_bind_int(st, 2, TP_JF_ITEM_EPISODE);
+                        sqlite3_bind_int(st, 3, TP_JF_ITEM_VIDEO);
+                        while (sqlite3_step(st) == SQLITE_ROW)
+                        {
+                            const char *lp = (const char *)sqlite3_column_text(st, 7);
+                            char dl_path[MAX_PATH];
+                            if (!lp || !lp[0] ||
+                                tp_jellyfin_resolve_downloaded_video(lp, dl_path, sizeof(dl_path)) == 0)
+                            {
+                                continue;
+                            }
+                            struct jf_browse_entry *e = jf_browser_push_entry(p);
+                            if (!e) break;
+                            e->kind = JF_ENT_VIDEO;
+                            strlcpy(e->id, (const char *)sqlite3_column_text(st, 0), sizeof(e->id));
+                            const char *nm  = (const char *)sqlite3_column_text(st, 1);
+                            const char *snm = (const char *)sqlite3_column_text(st, 2);
+                            int snum        = sqlite3_column_int(st, 3);
+                            int enum_no     = sqlite3_column_int(st, 4);
+                            int yr          = sqlite3_column_int(st, 5);
+                            const char *cnt = (const char *)sqlite3_column_text(st, 6);
+                            snprintf(e->aux, sizeof(e->aux), "v.%s", cnt[0] ? cnt : "mp4");
+                            if (snm && snm[0] && snum > 0 && enum_no > 0)
+                                snprintf(e->label, sizeof(e->label), "%s S%02dE%02d - %s", snm, snum, enum_no, nm);
+                            else if (yr > 0)
+                                snprintf(e->label, sizeof(e->label), "%s (%d)", nm, yr);
+                            else
+                                strlcpy(e->label, nm, sizeof(e->label));
+                        }
+                        sqlite3_finalize(st);
+                    }
+                    break;
+                }
                 const char *sql = (p->mode == JF_MODE_VIDEOS)
                     ? "SELECT id, name, view_kind FROM jf_views WHERE view_kind != 2 ORDER BY ord;"
                     : "SELECT id, name, view_kind FROM jf_views ORDER BY ord;";
@@ -2717,7 +2956,34 @@ static enum uipod_page_result jf_browser_on_action(struct uipod_page *self, int 
             }
             if (cur.kind == JF_ENT_AUDIO_TRACK)
             {
-                if (uipod_play_track(cur.aux))
+                int track_cnt = 0, track_sel = -1;
+                for (int i = 0; i < p->count; i++)
+                {
+                    if (p->entries[i].kind == JF_ENT_AUDIO_TRACK && p->entries[i].aux[0])
+                    {
+                        if (i == sel)
+                            track_sel = track_cnt;
+                        track_cnt++;
+                    }
+                }
+                bool started = false;
+                char **paths = (track_cnt > 0 && track_sel >= 0)
+                             ? malloc((size_t)track_cnt * sizeof(*paths))
+                             : NULL;
+                if (paths)
+                {
+                    int k = 0;
+                    for (int i = 0; i < p->count; i++)
+                        if (p->entries[i].kind == JF_ENT_AUDIO_TRACK && p->entries[i].aux[0])
+                            paths[k++] = p->entries[i].aux;
+                    started = uipod_play_tracks_at(paths, k, track_sel);
+                    free(paths);
+                }
+                else
+                {
+                    started = uipod_play_track(cur.aux);
+                }
+                if (started)
                 {
                     p->result = GO_TO_WPS;
                     return UIPOD_PAGE_DONE;
@@ -2780,7 +3046,34 @@ static enum uipod_page_result jf_browser_on_action(struct uipod_page *self, int 
 
             if (cur.kind == JF_ENT_AUDIO_TRACK)
             {
-                if (uipod_music_context(cur.label, cur.aux, FILE_ATTR_AUDIO))
+                int track_cnt = 0, track_sel = -1;
+                for (int i = 0; i < p->count; i++)
+                {
+                    if (p->entries[i].kind == JF_ENT_AUDIO_TRACK && p->entries[i].aux[0])
+                    {
+                        if (i == sel)
+                            track_sel = track_cnt;
+                        track_cnt++;
+                    }
+                }
+                bool started = false;
+                char **paths = (track_cnt > 0 && track_sel >= 0)
+                             ? malloc((size_t)track_cnt * sizeof(*paths))
+                             : NULL;
+                if (paths)
+                {
+                    int k = 0;
+                    for (int i = 0; i < p->count; i++)
+                        if (p->entries[i].kind == JF_ENT_AUDIO_TRACK && p->entries[i].aux[0])
+                            paths[k++] = p->entries[i].aux;
+                    started = uipod_music_context_track_in_list(cur.label, paths, k, track_sel);
+                    free(paths);
+                }
+                else
+                {
+                    started = uipod_music_context(cur.label, cur.aux, FILE_ATTR_AUDIO);
+                }
+                if (started)
                 {
                     p->result = GO_TO_WPS;
                     return UIPOD_PAGE_DONE;
@@ -2932,7 +3225,11 @@ static int jf_run_browser(enum jf_browse_mode mode)
 
 int uipod_jellyfin_videos_browse(bool tv_only)
 {
-    return jf_run_browser(tv_only ? JF_MODE_TV : JF_MODE_VIDEOS);
+    uint8_t prev_src = uipod_gpu_get_header_source();
+    uipod_gpu_set_header_source(UIPOD_SRC_ICON_JELLYFIN);
+    int r = jf_run_browser(tv_only ? JF_MODE_TV : JF_MODE_VIDEOS);
+    uipod_gpu_set_header_source(prev_src);
+    return r;
 }
 
 int uipod_jellyfin_files_browse(void)

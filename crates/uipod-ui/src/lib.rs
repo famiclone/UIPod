@@ -10,28 +10,41 @@ pub mod renderer;
 
 pub use renderer::UiEngine;
 
-/// Default `ui.figcraft` background color (`#D6D8D5`).
+/// Default `ui.figcraft` background color (`bg-color` = `#D6D8D5`).
 pub const DEFAULT_BG_RGB: u32 = 0xD6D8D5;
-/// Default `ui.figcraft` foreground color (`#3C3637`).
+/// Default `ui.figcraft` primary foreground color (`fg-color` = `#3C3637`).
 pub const DEFAULT_FG_RGB: u32 = 0x3C3637;
+/// Default `ui.figcraft` light auxiliary shade (`fg-color-1` = `#A8A8A8`).
+pub const DEFAULT_FG1_RGB: u32 = 0xA8A8A8;
+/// Default `ui.figcraft` dark auxiliary shade (`fg-color-2` = `#595959`).
+pub const DEFAULT_FG2_RGB: u32 = 0x595959;
+
 /// `UIPod Classic Dark` background color (`#1E1B1C`).
 pub const DARK_BG_RGB: u32 = 0x1E1B1C;
-/// `UIPod Classic Dark` foreground color (`#D6D8D5`).
+/// `UIPod Classic Dark` primary foreground color (`#D6D8D5`).
 pub const DARK_FG_RGB: u32 = 0xD6D8D5;
+/// `UIPod Classic Dark` first auxiliary shade (`#555253`).
+pub const DARK_FG1_RGB: u32 = 0x555253;
+/// `UIPod Classic Dark` second auxiliary shade (`#AEAFAD`).
+pub const DARK_FG2_RGB: u32 = 0xAEAFAD;
 
-/// Active theme colors (`0xRRGGBB`).
+/// Active 4-shade iPod Mini theme palette (`0xRRGGBB`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeColors {
     pub bg_rgb: u32,
     pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
 }
 
 impl ThemeColors {
-    /// Returns the `UIPod Classic Dark` theme palette.
+    /// Returns the `UIPod Classic Dark` 4-shade theme palette.
     pub const fn classic_dark() -> Self {
         Self {
             bg_rgb: DARK_BG_RGB,
             fg_rgb: DARK_FG_RGB,
+            fg1_rgb: DARK_FG1_RGB,
+            fg2_rgb: DARK_FG2_RGB,
         }
     }
 }
@@ -41,6 +54,8 @@ impl Default for ThemeColors {
         Self {
             bg_rgb: DEFAULT_BG_RGB,
             fg_rgb: DEFAULT_FG_RGB,
+            fg1_rgb: DEFAULT_FG1_RGB,
+            fg2_rgb: DEFAULT_FG2_RGB,
         }
     }
 }
@@ -54,6 +69,16 @@ pub enum PlayMode {
     Pause,
     FastForward,
     Rewind,
+}
+
+/// Source badge shown in `Header -> Group 3` (`64x64` icons `[1591]`, `[1594]`, `[1800]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeaderSourceIcon {
+    #[default]
+    None,
+    MicroSd,
+    Navidrome,
+    Jellyfin,
 }
 
 /// File-type badge shown on the left of a `MenuItem` in file/track browsers.
@@ -97,7 +122,7 @@ impl FileIconKind {
                 };
                 Self::Video(short.to_string())
             }
-            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "JSON" | "INI" | "CUE" => {
+            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "JSON" | "INI" | "CUE" | "XML" => {
                 let short = match upper.as_str() {
                     "JSON" => "JSN",
                     other => other,
@@ -117,16 +142,18 @@ impl FileIconKind {
 pub enum RightAccessory<'a> {
     #[default]
     None,
-    /// Submenu triangle chevron (`icon_play_s`, `32x32`).
+    /// Submenu arrow chevron (`icon_arrow_s` `[1738]`, `32x32`).
     Chevron,
     /// Boolean pill switch (`toggle`, `64x32`).
     Toggle(bool),
-    /// Right-aligned setting value string (e.g. `"-6 dB"`, `"All"`, `"80%"`).
+    /// Cycleable setting value (`Type=Active4` `[1293]` with `< Value >` arrows when selected).
+    CycleValue(&'a str),
+    /// Plain right-aligned text value (`Type=Active5` `[2035]` without `< >` arrows).
     Value(&'a str),
 }
 
 /// State of the shared `Header` component (`960x80` + `4px` bottom border).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct HeaderState<'a> {
     pub title: &'a str,
     /// Optional left-aligned button legend (`%Tl`) overriding `play_mode` + `title` when non-empty.
@@ -135,6 +162,14 @@ pub struct HeaderState<'a> {
     pub battery_percent: u8,
     pub is_charging: bool,
     pub is_hold: bool,
+    /// Shows `icon_arrow_64` (`[1590]`) in `Header -> Group 3` while caching/downloading/syncing.
+    pub is_downloading: bool,
+    /// Completed download count shown beside `icon_arrow_64` (`DONE/TOTAL`) when `download_total > 0`.
+    pub download_done: u32,
+    /// Total queued batch count (`0` = show arrow icon only without numeric badge).
+    pub download_total: u32,
+    /// Optional `64x64` source icon (`[1591]`/`[1594]`/`[1800]`) in `Header -> Group 3`.
+    pub source_icon: HeaderSourceIcon,
 }
 
 /// Single visible row inside a `Main` / `Source` / `Settings` list screen.
@@ -157,7 +192,7 @@ pub struct ListScreenState<'a> {
     pub visible_items: usize,
 }
 
-/// Complete state of the `Now Playing` (`WPS`) screen (`[233]`).
+/// Complete state of the `Now Playing` (`WPS`) screen (`[233]` and `[1805] Now Playing (Alt)`).
 #[derive(Debug, Clone, Copy)]
 pub struct NowPlayingState<'a> {
     pub theme: ThemeColors,
@@ -184,6 +219,25 @@ pub struct NowPlayingState<'a> {
     pub center_status_label: &'a str,
     /// Optional `256 * 256 * 3` RGB888 album art pixels.
     pub art_rgb24: Option<&'a [u8]>,
-    /// When `true` (default per user requirement), renders album art with monochrome + contrast filter.
+    /// When `true` (default), renders album art with the 4-shade iPod Mini theme palette.
     pub mono_album_art: bool,
+    /// When `true`, renders `Now Playing (Alt)` (`[1805]`: centered `534x534` cover + bottom seekbar).
+    pub alt_layout: bool,
+}
+
+/// Single keycap in the on-screen QWERTY keyboard.
+#[derive(Debug, Clone, Copy)]
+pub struct KeyboardKey<'a> {
+    pub label: &'a str,
+    pub selected: bool,
+    pub is_modifier: bool,
+    pub is_active_toggle: bool,
+}
+
+/// Complete state of the full-screen QWERTY keyboard (`1024x768`).
+#[derive(Debug, Clone)]
+pub struct KeyboardState<'a> {
+    pub theme: ThemeColors,
+    pub text: &'a str,
+    pub rows: [Vec<KeyboardKey<'a>>; 5],
 }

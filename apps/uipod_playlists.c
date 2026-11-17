@@ -36,6 +36,7 @@
 #include "playlist_catalog.h"
 #include "playlist.h"          /* playlist_load/get_track_info/delete/save (Edit) */
 #include "audio.h"             /* uipod_resume_if_current */
+#include "appevents.h"         /* BUFFER_EVENT_BUFFER_LOW, send_event */
 #include "metadata.h"
 #include "filetypes.h"         /* FILE_ATTR_AUDIO (track-set inserts) */
 #include "kernel.h"            /* current_tick (shuffle seed) */
@@ -48,17 +49,36 @@
 #include "uipod_m4b.h"       /* an m4b tap resumes at its saved position */
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_downloads.h"
 #include "uipod_playlists.h"
 #include "uipod_svg.h"
 
 #define PL_MAX        256
 #define PL_NAMEBUF    (PL_MAX * 64)   /* packed NUL-terminated names */
 
+#define OFFLINE_PL_DIR "/tmp/uipod_offline_pl"
+
+enum pl_source_dir
+{
+    PL_SRC_NAV_FAV   = 0,
+    PL_SRC_LOCAL     = 1,
+    PL_SRC_NAVIDROME = 2,
+    PL_SRC_JELLYFIN  = 3,
+};
+
+struct pl_item
+{
+    int     name_off;
+    uint8_t src;
+};
+
 /* one playlists page at a time -> the listing lives in file-scope statics */
-static char pl_dir[MAX_PATH];         /* the catalog directory */
-static char pl_namebuf[PL_NAMEBUF];   /* packed NUL-terminated playlist names */
-static int  pl_off[PL_MAX];           /* offset of each name in pl_namebuf */
-static int  pl_count;
+static char           pl_dir[MAX_PATH];         /* the local catalog directory */
+static char           pl_namebuf[PL_NAMEBUF];   /* packed NUL-terminated playlist names */
+static struct pl_item pl_items[PL_MAX];
+static int            pl_count;
+static bool           pl_loaded_remote;
+static bool           pl_fav_checked_session;
 
 /* Remembered selection for the standalone screen, so re-entering it (incl.
  * returning from Now Playing) re-highlights the playlist you were on.  Empty
@@ -66,18 +86,41 @@ static int  pl_count;
 static char pl_last_sel[MAX_PATH];
 static bool pl_have_last;
 
-/* A pending playlist request handed to the root dispatch, routed via
- * GO_TO_PLAYLIST_VIEWER (playlist_view() in root_menu.c):
- *   view (tap A)          -> open the playlist's track listing in the viewer
- *     (uipod_playlists_take_pending_view);
- *   Play/Play Shuffled (Hold A) -> uipod_playlists_start_pending() begins
- *     playback so the track list sits *behind* Now Playing (backing out of
- *     the WPS reveals it).  Filename only -- the catalog dir is the stable
- *     pl_dir. */
+static char pl_pending_dir[MAX_PATH];
 static char pl_pending_file[MAX_PATH];
 static bool pl_pending_active;
 static bool pl_pending_shuffle;
 static bool pl_pending_view;
+
+static const char *pl_dir_for_src(uint8_t src)
+{
+    if (src == PL_SRC_NAV_FAV)
+        return ROCKBOX_DIR "/Playlists_Navidrome_Fav";
+    if (src == PL_SRC_NAVIDROME)
+        return ROCKBOX_DIR "/Playlists_Navidrome";
+    if (src == PL_SRC_JELLYFIN)
+        return ROCKBOX_DIR "/Playlists_Jellyfin";
+    return pl_dir;
+}
+
+static const char *pl_entry_filename(int sel)
+{
+    if (sel < 0 || sel >= pl_count)
+        return "";
+    return pl_namebuf + pl_items[sel].name_off;
+}
+
+static const char *pl_entry_dir(int sel)
+{
+    if (sel < 0 || sel >= pl_count)
+        return pl_dir;
+    return pl_dir_for_src(pl_items[sel].src);
+}
+
+static void pl_entry_full_path(int sel, char *out, size_t out_len)
+{
+    path_append(out, pl_entry_dir(sel), pl_entry_filename(sel), out_len);
+}
 
 static bool is_playlist(const char *name)
 {
@@ -122,37 +165,235 @@ static bool pl_file_is_empty(const char *path)
     return empty;
 }
 
-/* qsort comparator: natural alphabetical order of the names at two offsets */
-static int pl_off_cmp(const void *a, const void *b)
+/* True if `path` contains at least one non-comment track path that exists on disk. */
+static bool pl_file_has_offline_track(const char *path)
 {
-    return strnatcasecmp(pl_namebuf + *(const int *)a,
-                         pl_namebuf + *(const int *)b);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return false;
+    off_t fsz = filesize(fd);
+    if (fsz <= 0 || fsz > 2 * 1024 * 1024)
+    {
+        close(fd);
+        return false;
+    }
+    char *content = malloc((size_t)fsz + 1);
+    if (!content)
+    {
+        close(fd);
+        return false;
+    }
+    ssize_t n = read(fd, content, (size_t)fsz);
+    close(fd);
+    if (n <= 0)
+    {
+        free(content);
+        return false;
+    }
+    content[n] = '\0';
+
+    bool found = false;
+    char *cur = content;
+    while (*cur)
+    {
+        char *nl = strchr(cur, '\n');
+        size_t len = nl ? (size_t)(nl - cur) : strlen(cur);
+        if (len > 0 && cur[len - 1] == '\r')
+            len--;
+        if (len > 0 && len < MAX_PATH && cur[0] != '#')
+        {
+            char line[MAX_PATH];
+            memcpy(line, cur, len);
+            line[len] = '\0';
+            if (file_exists(line))
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!nl)
+            break;
+        cur = nl + 1;
+    }
+    free(content);
+    return found;
 }
 
-/* (Re)read the catalog directory into the packed name table, sorted. */
+/* Writes an offline-filtered copy of `src_path` into `OFFLINE_PL_DIR/<filename>`. */
+static bool pl_materialize_offline(const char *src_path,
+                                   const char *filename,
+                                   char *out_dir, size_t dir_cap,
+                                   char *out_file, size_t file_cap,
+                                   char *out_full, size_t full_cap)
+{
+    int fd = open(src_path, O_RDONLY);
+    if (fd < 0)
+        return false;
+    off_t fsz = filesize(fd);
+    if (fsz <= 0 || fsz > 2 * 1024 * 1024)
+    {
+        close(fd);
+        return false;
+    }
+    char *content = malloc((size_t)fsz + 1);
+    if (!content)
+    {
+        close(fd);
+        return false;
+    }
+    ssize_t n = read(fd, content, (size_t)fsz);
+    close(fd);
+    if (n <= 0)
+    {
+        free(content);
+        return false;
+    }
+    content[n] = '\0';
+
+    if (!dir_exists(OFFLINE_PL_DIR))
+        mkdir(OFFLINE_PL_DIR);
+
+    char dst_full[MAX_PATH];
+    path_append(dst_full, OFFLINE_PL_DIR, filename, sizeof(dst_full));
+    int out = open(dst_full, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (out < 0)
+    {
+        free(content);
+        return false;
+    }
+
+    fdprintf(out, "#EXTM3U\n");
+    int written = 0;
+    char *cur = content;
+    while (*cur)
+    {
+        char *nl = strchr(cur, '\n');
+        size_t len = nl ? (size_t)(nl - cur) : strlen(cur);
+        if (len > 0 && cur[len - 1] == '\r')
+            len--;
+        if (len > 0 && len < MAX_PATH && cur[0] != '#')
+        {
+            char line[MAX_PATH];
+            memcpy(line, cur, len);
+            line[len] = '\0';
+            if (file_exists(line))
+            {
+                fdprintf(out, "%s\n", line);
+                written++;
+            }
+        }
+        if (!nl)
+            break;
+        cur = nl + 1;
+    }
+    close(out);
+    free(content);
+
+    if (written <= 0)
+        return false;
+
+    if (out_dir)  strlcpy(out_dir,  OFFLINE_PL_DIR, dir_cap);
+    if (out_file) strlcpy(out_file, filename,       file_cap);
+    if (out_full) strlcpy(out_full, dst_full,       full_cap);
+    return true;
+}
+
+/* qsort comparator: Favourites pinned first, then natural alphabetical order */
+static int pl_item_cmp(const void *a, const void *b)
+{
+    const struct pl_item *ia = (const struct pl_item *)a;
+    const struct pl_item *ib = (const struct pl_item *)b;
+    if ((ia->src == PL_SRC_NAV_FAV) != (ib->src == PL_SRC_NAV_FAV))
+        return (ia->src == PL_SRC_NAV_FAV) ? -1 : 1;
+    int c = strnatcasecmp(pl_namebuf + ia->name_off, pl_namebuf + ib->name_off);
+    if (c != 0)
+        return c;
+    return (int)ia->src - (int)ib->src;
+}
+
+static bool pl_has_filename_ci(const char *fname)
+{
+    for (int i = 0; i < pl_count; i++)
+    {
+        if (pl_items[i].src == PL_SRC_NAV_FAV)
+            continue;
+        if (strcasecmp(pl_namebuf + pl_items[i].name_off, fname) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void pl_scan_dir_into(const char *dir_path, uint8_t src, int *used, bool offline)
+{
+    DIR *d = opendir(dir_path);
+    if (!d)
+        return;
+    struct dirent *e;
+    while ((e = readdir(d)))
+    {
+        if (e->d_name[0] == '.' || !is_playlist(e->d_name))
+            continue;
+        if (pl_has_filename_ci(e->d_name))
+            continue;
+        if (offline && src != PL_SRC_LOCAL)
+        {
+            char full[MAX_PATH];
+            path_append(full, dir_path, e->d_name, sizeof(full));
+            if (!pl_file_has_offline_track(full))
+                continue;
+        }
+        int len = (int)strlen(e->d_name) + 1;
+        if (pl_count >= PL_MAX || *used + len > (int)sizeof(pl_namebuf))
+            break;
+        pl_items[pl_count].name_off = *used;
+        pl_items[pl_count].src      = src;
+        pl_count++;
+        memcpy(pl_namebuf + *used, e->d_name, (size_t)len);
+        *used += len;
+    }
+    closedir(d);
+}
+
+/* (Re)read local + Favourites + synced Navidrome/Jellyfin playlist directories, sorted. */
 static void pl_load(void)
 {
     pl_count = 0;
     int used = 0;
+    bool offline = uipod_offline_mode_get();
+
     catalog_get_directory(pl_dir, sizeof(pl_dir));   /* also creates it if absent */
-    DIR *d = opendir(pl_dir);
-    if (d)
+    pl_scan_dir_into(pl_dir, PL_SRC_LOCAL, &used, offline);
+
+    if (pl_loaded_remote)
     {
-        struct dirent *e;
-        while ((e = readdir(d)))
+        const char *fav_path = uipod_navidrome_favourites_path();
+        if (!offline && !pl_fav_checked_session &&
+            uipod_navidrome_is_configured() && pl_file_is_empty(fav_path))
         {
-            if (e->d_name[0] == '.' || !is_playlist(e->d_name))
-                continue;
-            int len = strlen(e->d_name) + 1;
-            if (pl_count >= PL_MAX || used + len > (int)sizeof(pl_namebuf))
-                break;                               /* listing full (rare) */
-            pl_off[pl_count++] = used;
-            memcpy(pl_namebuf + used, e->d_name, len);
-            used += len;
+            pl_fav_checked_session = true;
+            uipod_navidrome_sync_favourites(false);
         }
-        closedir(d);
+
+        bool show_fav = offline ? pl_file_has_offline_track(fav_path)
+                                : (uipod_navidrome_is_configured() || !pl_file_is_empty(fav_path));
+        if (show_fav)
+        {
+            static const char fav_fname[] = "Favourites.m3u8";
+            int len = (int)sizeof(fav_fname);
+            if (pl_count < PL_MAX && used + len <= (int)sizeof(pl_namebuf))
+            {
+                pl_items[pl_count].name_off = used;
+                pl_items[pl_count].src      = PL_SRC_NAV_FAV;
+                pl_count++;
+                memcpy(pl_namebuf + used, fav_fname, (size_t)len);
+                used += len;
+            }
+        }
+
+        pl_scan_dir_into(ROCKBOX_DIR "/Playlists_Navidrome", PL_SRC_NAVIDROME, &used, offline);
+        pl_scan_dir_into(ROCKBOX_DIR "/Playlists_Jellyfin",  PL_SRC_JELLYFIN,  &used, offline);
     }
-    qsort(pl_off, pl_count, sizeof pl_off[0], pl_off_cmp);
+    qsort(pl_items, (size_t)pl_count, sizeof(pl_items[0]), pl_item_cmp);
 }
 
 struct playlists_page
@@ -178,7 +419,12 @@ struct playlists_page
  * the display name, reused for the list rows and the delete confirmation. */
 static void pl_display_name(int sel, char *out, size_t out_len)
 {
-    strlcpy(out, pl_namebuf + pl_off[sel], out_len);
+    if (sel >= 0 && sel < pl_count && pl_items[sel].src == PL_SRC_NAV_FAV)
+    {
+        strlcpy(out, str(LANG_UIPOD_FAVOURITES), out_len);
+        return;
+    }
+    strlcpy(out, pl_entry_filename(sel), out_len);
     char *dot = strrchr(out, '.');
     if (dot && (!strcasecmp(dot, ".m3u8") || !strcasecmp(dot, ".m3u")))
         *dot = '\0';
@@ -348,10 +594,10 @@ static void edit_playlist(int sel)
         .base = { .vt = &editor_vtable, .context = CONTEXT_LIST,
                   .allowed = editor_allowed },
     };
-    path_append(p.path, pl_dir, pl_namebuf + pl_off[sel], sizeof(p.path));
+    pl_entry_full_path(sel, p.path, sizeof(p.path));
 
     int index_sz = (int)playlist_get_index_bufsz(bufsz - 4096);
-    p.pl = playlist_load(pl_dir, pl_namebuf + pl_off[sel],
+    p.pl = playlist_load(pl_entry_dir(sel), pl_entry_filename(sel),
                          buf, index_sz, buf + index_sz, (int)(bufsz - index_sz));
     if (!p.pl)
     {
@@ -464,12 +710,144 @@ static void queue_start(bool shuffle, unsigned long elapsed,
     playlist_start(playlist_get_first_index(NULL), elapsed, offset);
 }
 
+/* ---- 3-by-3 Windowed Background Prefetch Coordinator ------------------ */
+
+static struct mutex s_pf_mutex;
+static bool         s_pf_mutex_ready;
+static bool         s_pf_active;
+static int          s_pf_win_start;
+static int          s_pf_win_end;
+
+static void pf_lock(void)
+{
+    if (!s_pf_mutex_ready)
+    {
+        mutex_init(&s_pf_mutex);
+        s_pf_mutex_ready = true;
+    }
+    mutex_lock(&s_pf_mutex);
+}
+
+static void pf_unlock(void)
+{
+    mutex_unlock(&s_pf_mutex);
+}
+
+static void pf_dispatch_steps(int steps)
+{
+    if (steps <= 0 || uipod_offline_mode_get())
+        return;
+    uipod_navidrome_prefetch_steps(steps);
+    uipod_jellyfin_prefetch_steps(steps);
+}
+
+void uipod_prefetch_on_queue_start(void)
+{
+    int pos = playlist_get_display_index() - 1;
+    if (pos < 0)
+        pos = 0;
+
+    pf_lock();
+    s_pf_active    = true;
+    s_pf_win_start = pos;
+    s_pf_win_end   = pos + 2;   /* Track `pos` playing + 2 prefetched = 3 tracks */
+    pf_unlock();
+
+    pf_dispatch_steps(2);
+}
+
+bool uipod_prefetch_on_track_change(void)
+{
+    int pos = playlist_get_display_index() - 1;
+    if (pos < 0)
+        return false;
+
+    int dispatch = 0;
+    bool window_changed = false;
+
+    pf_lock();
+    if (!s_pf_active || pos < s_pf_win_start || pos > s_pf_win_end)
+    {
+        /* Manual skip outside the active window (or uninitialized):
+         * start a fresh [pos .. pos + 2] 3-track window. */
+        s_pf_active    = true;
+        s_pf_win_start = pos;
+        s_pf_win_end   = pos + 2;
+        dispatch       = 2;
+        window_changed = true;
+    }
+    else if (pos == s_pf_win_end)
+    {
+        /* The 3rd track of the current window just started playing:
+         * prefetch the next 3 tracks [pos + 1 .. pos + 3]! */
+        s_pf_win_start = pos;
+        s_pf_win_end   = pos + 3;
+        dispatch       = 3;
+        window_changed = true;
+    }
+    pf_unlock();
+
+    if (dispatch > 0)
+        pf_dispatch_steps(dispatch);
+
+    return window_changed;
+}
+
+bool uipod_prefetch_allow_peek_offset(int peek_offset)
+{
+    if (peek_offset <= 0)
+        return true;
+
+    int pos = playlist_get_display_index() - 1;
+    if (pos < 0)
+        pos = 0;
+
+    pf_lock();
+    bool allow = s_pf_active ? ((pos + peek_offset) <= s_pf_win_end)
+                             : (peek_offset <= 2);
+    pf_unlock();
+    return allow;
+}
+
+static void pf_refresh_live_queue_insert(void)
+{
+    if (!(audio_status() & AUDIO_STATUS_PLAY))
+        return;
+
+    int pos = playlist_get_display_index() - 1;
+    if (pos < 0)
+        return;
+
+    int rem_steps = 0;
+    pf_lock();
+    if (!s_pf_active || pos < s_pf_win_start || pos > s_pf_win_end)
+    {
+        s_pf_active    = true;
+        s_pf_win_start = pos;
+        s_pf_win_end   = pos + 2;
+    }
+    rem_steps = s_pf_win_end - pos;
+    pf_unlock();
+
+    if (rem_steps > 3)
+        rem_steps = 3;
+    if (rem_steps > 0)
+        pf_dispatch_steps(rem_steps);
+    send_event(BUFFER_EVENT_BUFFER_LOW, NULL);
+}
+
 /* A fresh queue starts playing, shuffled first if `shuffle`; returns whether
  * it did.  The one start for built queues. */
 bool uipod_queue_end(struct uipod_queue *q, bool shuffle)
 {
     playlist_insert_context_release(&q->ctx);
-    if (!q->fresh || playlist_amount() <= 0)
+    if (!q->fresh)
+    {
+        if (playlist_amount() > 0)
+            pf_refresh_live_queue_insert();
+        return false;
+    }
+    if (playlist_amount() <= 0)
         return false;
     queue_start(shuffle, q->elapsed, q->offset);
     return true;
@@ -477,14 +855,67 @@ bool uipod_queue_end(struct uipod_queue *q, bool shuffle)
 
 bool uipod_play_track(const char *path)
 {
-    if (uipod_resume_if_current(path))
+    if (!path || !path[0])
+        return false;
+    char *arr[1] = { (char *)path };
+    return uipod_play_tracks_at(arr, 1, 0);
+}
+
+bool uipod_play_tracks_at(char *const *paths, int count, int start_idx)
+{
+    if (!paths || count <= 0)
+        return false;
+    if (start_idx < 0 || start_idx >= count)
+        start_idx = 0;
+
+    const char *start_path = paths[start_idx];
+    if (!start_path || !start_path[0])
+        return false;
+
+    /* Only shortcut to Now Playing without rebuilding if the live queue
+     * already matches this track list size and is playing `start_path`! */
+    if (playlist_amount() == count && uipod_resume_if_current(start_path))
         return true;
+
     struct uipod_queue q;
     if (!uipod_queue_begin(&q, PLAYLIST_REPLACE))
         return false;
-    uipod_m4b_resume_get(path, &q.elapsed, &q.offset);
-    uipod_queue_add_path(path, &q);
-    return uipod_queue_end(&q, false);
+
+    uipod_m4b_resume_get(start_path, &q.elapsed, &q.offset);
+
+    int slice_begin = 0;
+    int slice_end   = count;
+    if (count > UIPOD_MAX_FILES_IN_PLAYLIST)
+    {
+        slice_begin = start_idx - (UIPOD_MAX_FILES_IN_PLAYLIST / 2);
+        if (slice_begin < 0)
+            slice_begin = 0;
+        if (slice_begin + UIPOD_MAX_FILES_IN_PLAYLIST > count)
+            slice_begin = count - UIPOD_MAX_FILES_IN_PLAYLIST;
+        slice_end = slice_begin + UIPOD_MAX_FILES_IN_PLAYLIST;
+    }
+
+    int inserted = 0;
+    int target_pl_idx = 0;
+    for (int i = slice_begin; i < slice_end; i++)
+    {
+        if (!paths[i] || !paths[i][0])
+            continue;
+        if (!uipod_queue_add_path(paths[i], &q))
+            break;
+        if (i == start_idx)
+            target_pl_idx = inserted;
+        inserted++;
+    }
+
+    playlist_insert_context_release(&q.ctx);
+    if (!q.fresh || playlist_amount() <= 0 || inserted <= 0)
+        return false;
+
+    global_settings.playlist_shuffle = false;
+    replaygain_update();
+    playlist_start(target_pl_idx, q.elapsed, q.offset);
+    return true;
 }
 
 void uipod_queue_reshuffle(void)
@@ -546,6 +977,54 @@ static void queue_add_playlist(const char *path)
         return;
     playlist_entries_iterate(path, &q.ctx, NULL);
     uipod_queue_end(&q, false);
+}
+
+static bool has_downloadable_tracks(char *const *paths, int count)
+{
+    if (uipod_offline_mode_get())
+        return false;
+    for (int i = 0; i < count; i++)
+    {
+        const char *p = paths[i];
+        if (p && (uipod_navidrome_is_track_path(p) ||
+                  uipod_jellyfin_is_track_path(p)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void download_mixed_tracks(char *const *paths, int count)
+{
+    if (!paths || count <= 0)
+        return;
+
+    char **nav_list = malloc((size_t)count * sizeof(*nav_list));
+    char **jf_list  = malloc((size_t)count * sizeof(*jf_list));
+    int nav_n = 0, jf_n = 0;
+
+    if (nav_list && jf_list)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            char *p = paths[i];
+            if (!p)
+                continue;
+            if (uipod_navidrome_is_track_path(p))
+                nav_list[nav_n++] = p;
+            else if (uipod_jellyfin_is_track_path(p))
+                jf_list[jf_n++] = p;
+        }
+
+        if (nav_n > 0)
+            uipod_navidrome_download_tracks(nav_list, nav_n);
+        if (jf_n > 0 && !uipod_home_pending)
+            uipod_jellyfin_download_tracks(jf_list, jf_n);
+    }
+
+    free(nav_list);
+    free(jf_list);
 }
 
 /* The per-playlist Hold-A context menu, titled with the playlist's name.
@@ -611,12 +1090,7 @@ static void download_playlist_file(const char *m3u_path)
     free(content);
 
     if (count > 0)
-    {
-        if (uipod_source_is_jellyfin())
-            uipod_jellyfin_download_tracks(paths, count);
-        else
-            uipod_navidrome_download_tracks(paths, count);
-    }
+        download_mixed_tracks(paths, count);
 
     for (int i = 0; i < count; i++)
         free(paths[i]);
@@ -636,10 +1110,90 @@ static const char *const playlist_action_opts[] =
 static enum uipod_page_result playlist_action(struct playlists_page *p, int sel)
 {
     char path[MAX_PATH], name[MAX_PATH];
-    path_append(path, pl_dir, pl_namebuf + pl_off[sel], sizeof(path));
+    const char *entry_dir  = pl_entry_dir(sel);
+    const char *entry_file = pl_entry_filename(sel);
+    pl_entry_full_path(sel, path, sizeof(path));
     pl_display_name(sel, name, sizeof(name));
 
-    bool remote_src = uipod_source_is_navidrome() || uipod_source_is_jellyfin();
+    bool offline = uipod_offline_mode_get();
+
+    /* Synthetic Navidrome Favourites playlist menu */
+    if (pl_items[sel].src == PL_SRC_NAV_FAV)
+    {
+        const char *fav_opts[5];
+        int fav_codes[5];
+        int fn = 0;
+        fav_opts[fn] = ID2P(LANG_PLAY);                    fav_codes[fn++] = PL_ACT_PLAY;
+        fav_opts[fn] = ID2P(LANG_UIPOD_PLAY_SHUFFLED);     fav_codes[fn++] = PL_ACT_SHUFFLED;
+        fav_opts[fn] = ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE); fav_codes[fn++] = PL_ACT_QUEUE;
+        if (!offline)
+        {
+            fav_opts[fn] = ID2P(LANG_UIPOD_REFRESH);       fav_codes[fn++] = 100;
+            fav_opts[fn] = ID2P(LANG_UIPOD_DOWNLOAD);      fav_codes[fn++] = PL_ACT_DOWNLOAD;
+        }
+        int pick = uipod_context_menu(name, fav_opts, fn);
+        if (pick < 0 || pick >= fn)
+            return UIPOD_PAGE_STAY;
+        int act_code = fav_codes[pick];
+        if (act_code == 100)
+        {
+            uipod_navidrome_sync_favourites(true);
+            pl_load();
+            gui_synclist_set_nb_items(&p->lists, pl_count + 1);
+            return UIPOD_PAGE_STAY;
+        }
+        if (act_code == PL_ACT_PLAY || act_code == PL_ACT_SHUFFLED)
+        {
+            if (!warn_on_pl_erase())
+                return UIPOD_PAGE_STAY;
+            if (offline)
+            {
+                if (!pl_materialize_offline(path, entry_file,
+                                            pl_pending_dir, sizeof(pl_pending_dir),
+                                            pl_pending_file, sizeof(pl_pending_file),
+                                            NULL, 0))
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_PLAYLIST_EMPTY));
+                    return UIPOD_PAGE_STAY;
+                }
+            }
+            else
+            {
+                strlcpy(pl_pending_dir,  entry_dir,  sizeof pl_pending_dir);
+                strlcpy(pl_pending_file, entry_file, sizeof pl_pending_file);
+            }
+            pl_pending_shuffle = (act_code == PL_ACT_SHUFFLED);
+            pl_pending_active  = true;
+            p->result = GO_TO_PLAYLIST_VIEWER;
+            return UIPOD_PAGE_DONE;
+        }
+        if (act_code == PL_ACT_QUEUE)
+        {
+            char use_path[MAX_PATH];
+            if (offline)
+            {
+                if (pl_materialize_offline(path, entry_file, NULL, 0, NULL, 0,
+                                           use_path, sizeof(use_path)))
+                    queue_add_playlist(use_path);
+            }
+            else
+            {
+                queue_add_playlist(path);
+            }
+            return UIPOD_PAGE_STAY;
+        }
+        if (act_code == PL_ACT_DOWNLOAD)
+        {
+            download_playlist_file(path);
+            return UIPOD_PAGE_STAY;
+        }
+        return UIPOD_PAGE_STAY;
+    }
+
+    bool remote_src = !offline &&
+                      ((pl_items[sel].src != PL_SRC_LOCAL) ||
+                       uipod_navidrome_has_tracks() ||
+                       uipod_jellyfin_has_tracks());
     int n_opts = ARRAYLEN(playlist_action_opts) - (remote_src ? 0 : 1);
     int act = uipod_context_menu(name, playlist_action_opts, n_opts);
     switch (act)
@@ -647,30 +1201,50 @@ static enum uipod_page_result playlist_action(struct playlists_page *p, int sel)
         case PL_ACT_PLAY:
         case PL_ACT_SHUFFLED:
         {
-            /* Record the pick and hand off to the root dispatch: playback starts
-             * immediately (from the top, or shuffled) and slides to Now Playing,
-             * with the playlist's file list shown *behind* it -- backing out of
-             * the WPS reveals it.  Routed via GO_TO_PLAYLIST_VIEWER; the play
-             * happens in uipod_playlists_start_pending() (root_menu.c). */
             if (!warn_on_pl_erase())            /* about to replace the playlist */
                 break;                          /* declined: stay on the list */
-            strlcpy(pl_pending_file, pl_namebuf + pl_off[sel], sizeof pl_pending_file);
+            if (offline)
+            {
+                if (!pl_materialize_offline(path, entry_file,
+                                            pl_pending_dir, sizeof(pl_pending_dir),
+                                            pl_pending_file, sizeof(pl_pending_file),
+                                            NULL, 0))
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_PLAYLIST_EMPTY));
+                    break;
+                }
+            }
+            else
+            {
+                strlcpy(pl_pending_dir,  entry_dir,  sizeof pl_pending_dir);
+                strlcpy(pl_pending_file, entry_file, sizeof pl_pending_file);
+            }
             pl_pending_shuffle = (act == PL_ACT_SHUFFLED);
             pl_pending_active = true;
             p->result = GO_TO_PLAYLIST_VIEWER;
             return UIPOD_PAGE_DONE;
         }
         case PL_ACT_QUEUE:
-            queue_add_playlist(path);           /* the saved file is never edited */
+        {
+            char use_path[MAX_PATH];
+            if (offline)
+            {
+                if (pl_materialize_offline(path, entry_file, NULL, 0, NULL, 0,
+                                           use_path, sizeof(use_path)))
+                    queue_add_playlist(use_path);
+            }
+            else
+            {
+                queue_add_playlist(path);       /* the saved file is never edited */
+            }
             break;
+        }
         case PL_ACT_RENAME:
         {
-            /* Pre-fill the keyboard with the current name, then rename the
-             * .m3u8 file. */
             if (uipod_kbd_input(name, sizeof(name)) == 0 && name[0])
             {
                 char newpath[MAX_PATH];
-                snprintf(newpath, sizeof(newpath), "%s/%s.m3u8", pl_dir, name);
+                snprintf(newpath, sizeof(newpath), "%s/%s.m3u8", entry_dir, name);
                 if (strcmp(newpath, path) == 0)
                     break;                              /* unchanged */
                 if (file_exists(newpath))
@@ -717,7 +1291,7 @@ static enum uipod_page_result playlist_action(struct playlists_page *p, int sel)
 static enum uipod_page_result pick_into_existing(struct playlists_page *p, int sel)
 {
     char path[MAX_PATH];
-    path_append(path, pl_dir, pl_namebuf + pl_off[sel], sizeof(path));
+    pl_entry_full_path(sel, path, sizeof(path));
     if (p->pick_paths)
         for (int i = 0; i < p->pick_npaths; i++)
             catalog_insert_into(path, false, p->pick_paths[i], FILE_ATTR_AUDIO);
@@ -734,7 +1308,7 @@ static void pl_save_pos(struct playlists_page *p, int sel)
     if (p->pick)
         return;
     if (sel >= 0 && sel < pl_count)
-        strlcpy(pl_last_sel, pl_namebuf + pl_off[sel], sizeof(pl_last_sel));
+        strlcpy(pl_last_sel, pl_entry_filename(sel), sizeof(pl_last_sel));
     else
         pl_last_sel[0] = '\0';
     pl_have_last = true;
@@ -772,20 +1346,43 @@ static enum uipod_page_result playlists_on_action(struct uipod_page *self,
              * viewer refuses an empty playlist, so teach the add gesture
              * instead of bouncing. */
             char path[MAX_PATH];
-            path_append(path, pl_dir, pl_namebuf + pl_off[sel], sizeof(path));
-            if (pl_file_is_empty(path))
+            pl_entry_full_path(sel, path, sizeof(path));
+            bool offline = uipod_offline_mode_get();
+            bool is_empty = offline ? !pl_file_has_offline_track(path)
+                                    : pl_file_is_empty(path);
+            if (is_empty)
             {
                 char name[MAX_PATH];
                 pl_display_name(sel, name, sizeof(name));
-                static const char *const rows[] =
-                    { ID2P(LANG_UIPOD_PLAYLIST_EMPTY),
-                      ID2P(LANG_UIPOD_PLAYLIST_EMPTY_HINT1),
-                      ID2P(LANG_UIPOD_PLAYLIST_EMPTY_HINT2) };
-                uipod_message_page(name, rows, 3);
+                if (pl_items[sel].src == PL_SRC_NAV_FAV)
+                {
+                    static const char *const fav_rows[] =
+                        { ID2P(LANG_UIPOD_PLAYLIST_EMPTY),
+                          ID2P(LANG_UIPOD_FAV_EMPTY_HINT) };
+                    uipod_message_page(name, fav_rows, 2);
+                }
+                else
+                {
+                    static const char *const rows[] =
+                        { ID2P(LANG_UIPOD_PLAYLIST_EMPTY),
+                          ID2P(LANG_UIPOD_PLAYLIST_EMPTY_HINT1),
+                          ID2P(LANG_UIPOD_PLAYLIST_EMPTY_HINT2) };
+                    uipod_message_page(name, rows, 3);
+                }
                 return UIPOD_PAGE_STAY;
             }
-            strlcpy(pl_pending_file, pl_namebuf + pl_off[sel],
-                    sizeof pl_pending_file);
+            if (offline)
+            {
+                pl_materialize_offline(path, pl_entry_filename(sel),
+                                       pl_pending_dir, sizeof(pl_pending_dir),
+                                       pl_pending_file, sizeof(pl_pending_file),
+                                       NULL, 0);
+            }
+            else
+            {
+                strlcpy(pl_pending_dir,  pl_entry_dir(sel),      sizeof pl_pending_dir);
+                strlcpy(pl_pending_file, pl_entry_filename(sel), sizeof pl_pending_file);
+            }
             pl_pending_view = true;
             p->result = GO_TO_PLAYLIST_VIEWER;
             pl_save_pos(p, sel);
@@ -819,6 +1416,7 @@ static const int playlists_allowed[] = { ACTION_STD_OK, ACTION_STD_CONTEXT,
 /* Shared driver: (re)read the catalog, run the page with the given title. */
 static int run_playlists(struct playlists_page *p, const char *title)
 {
+    pl_loaded_remote = !p->pick;
     pl_load();
     gui_synclist_init(&p->lists, pl_get_name, NULL, false, 1, NULL);
     gui_synclist_set_title(&p->lists, (char *)title, Icon_Playlist);
@@ -832,7 +1430,7 @@ static int run_playlists(struct playlists_page *p, const char *title)
         if (pl_last_sel[0])
         {
             for (int i = 0; i < pl_count; i++)
-                if (strcmp(pl_namebuf + pl_off[i], pl_last_sel) == 0)
+                if (strcmp(pl_entry_filename(i), pl_last_sel) == 0)
                 {
                     sel = i;
                     break;
@@ -849,29 +1447,24 @@ static int run_playlists(struct playlists_page *p, const char *title)
     return p->base.home ? GO_TO_ROOT : p->result;
 }
 
-/* Consume a pending view request (tap A on a playlist row): fill `path` with
- * the playlist's full path and return true.  playlist_view() then opens the
- * stock viewer on it -- A on a track there starts playback from that track. */
 bool uipod_playlists_take_pending_view(char *path, size_t len)
 {
     if (!pl_pending_view)
         return false;
     pl_pending_view = false;
-    path_append(path, pl_dir, pl_pending_file, len);
+    path_append(path, pl_pending_dir[0] ? pl_pending_dir : pl_dir,
+                pl_pending_file, len);
     return true;
 }
 
-/* Consume a pending Play/Play Shuffled request (set by the action menu) and
- * play it from the top.  Returns 1 when playback started (caller -> Now
- * Playing), 0 when nothing was pending (caller -> show the file list), or -1 on
- * an empty/unloadable playlist (caller -> back to the Playlists list). */
 int uipod_playlists_start_pending(void)
 {
     if (!pl_pending_active)
         return 0;
     pl_pending_active = false;
 
-    if (playlist_create(pl_dir, pl_pending_file) == -1 || playlist_amount() <= 0)
+    const char *dir = pl_pending_dir[0] ? pl_pending_dir : pl_dir;
+    if (playlist_create(dir, pl_pending_file) == -1 || playlist_amount() <= 0)
     {
         splash(HZ, ID2P(LANG_UIPOD_PLAYLIST_EMPTY));
         return -1;
@@ -958,11 +1551,9 @@ static int music_ctx_menu(const char *title, bool set, bool can_download)
 bool uipod_music_context(const char *title, const char *path, int attr)
 {
     bool dir = attr & ATTR_DIRECTORY;
-    bool is_nav = !dir && uipod_source_is_navidrome() &&
-                  uipod_navidrome_is_track_path(path);
-    bool is_jf  = !dir && uipod_source_is_jellyfin() &&
-                  uipod_jellyfin_is_track_path(path);
-    bool can_dl = is_nav || is_jf;
+    bool is_nav = !dir && uipod_navidrome_is_track_path(path);
+    bool is_jf  = !dir && uipod_jellyfin_is_track_path(path);
+    bool can_dl = !uipod_offline_mode_get() && (is_nav || is_jf);
     switch (music_ctx_menu(title, dir, can_dl))
     {
         case MUSIC_CTX_PLAY:
@@ -989,15 +1580,43 @@ bool uipod_music_context(const char *title, const char *path, int attr)
     return false;
 }
 
+bool uipod_music_context_track_in_list(const char *title, char **paths,
+                                       int count, int sel)
+{
+    if (!paths || sel < 0 || sel >= count || !paths[sel] || !paths[sel][0])
+        return false;
+    const char *path = paths[sel];
+    bool is_nav = uipod_navidrome_is_track_path(path);
+    bool is_jf  = uipod_jellyfin_is_track_path(path);
+    bool can_dl = !uipod_offline_mode_get() && (is_nav || is_jf);
+    switch (music_ctx_menu(title, false, can_dl))
+    {
+        case MUSIC_CTX_PLAY:
+            return uipod_play_tracks_at(paths, count, sel);
+        case MUSIC_CTX_PLAY_NEXT:
+            uipod_queue_add(path, FILE_ATTR_AUDIO, PLAYLIST_INSERT, false);
+            break;
+        case MUSIC_CTX_ADD_QUEUE:
+            uipod_queue_add(path, FILE_ATTR_AUDIO, PLAYLIST_INSERT_LAST, false);
+            break;
+        case MUSIC_CTX_ADD_PL:
+            uipod_playlists_pick(path, FILE_ATTR_AUDIO);
+            break;
+        case MUSIC_CTX_DOWNLOAD:
+            if (is_jf)
+                uipod_jellyfin_download_track(path);
+            else
+                uipod_navidrome_download_track(path);
+            break;
+    }
+    return false;
+}
+
 bool uipod_music_context_tracks(const char *title, char **paths, int count)
 {
     if (count <= 0)
         return false;
-    bool is_nav = uipod_source_is_navidrome() &&
-                  uipod_navidrome_is_track_path(paths[0]);
-    bool is_jf  = uipod_source_is_jellyfin() &&
-                  uipod_jellyfin_is_track_path(paths[0]);
-    bool can_dl = is_nav || is_jf;
+    bool can_dl = has_downloadable_tracks(paths, count);
     switch (music_ctx_menu(title, true, can_dl))
     {
         case MUSIC_CTX_PLAY:
@@ -1014,10 +1633,7 @@ bool uipod_music_context_tracks(const char *title, char **paths, int count)
             uipod_playlists_pick_tracks(paths, count);
             break;
         case MUSIC_CTX_DOWNLOAD:
-            if (is_jf)
-                uipod_jellyfin_download_tracks(paths, count);
-            else
-                uipod_navidrome_download_tracks(paths, count);
+            download_mixed_tracks(paths, count);
             break;
     }
     return false;

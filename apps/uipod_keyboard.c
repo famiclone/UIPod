@@ -1,9 +1,6 @@
 /***************************************************************************
- * UIPod: a minimal on-screen keyboard, iPod aesthetic, Geologica.
- *
- * A fixed grid -- numbers, A-Z, hyphen (plus optional `sym` layer for URLs and
- * passwords), then a row of wide special keys (capslock / [sym] / space / del /
- * enter).  Capslock swaps the letter case in place.
+ * UIPod: On-screen QWERTY keyboard rendered in HiDPI Geologica via `uipod-ui`
+ * (with software fallback when the GLES context is owned by projectM).
  *
  * Button map: D-pad moves the highlight, A engages the highlighted key,
  * Y backspaces, B cancels and restores the original string.
@@ -11,38 +8,38 @@
  ****************************************************************************/
 #include "config.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include "string-extra.h"
 #include "action.h"
-#include "screens.h"       /* screens[], SCREEN_MAIN */
-#include "lcd.h"           /* DRMODE_*, lcd_set_drawmode */
-#include "font.h"          /* font_load / font_unload, FONT_UI */
+#include "screens.h"
+#include "lcd.h"
+#include "font.h"
 #include "gui/viewport.h"
-#include "rbpaths.h"       /* FONT_DIR */
-#include "settings.h"      /* global_settings.fg_color / bg_color (theme colours) */
+#include "rbpaths.h"
+#include "settings.h"
 #include "uipod_page.h"
+#include "uipod_rs_ui.h"
 #include "uipod_keyboard.h"
 
-/* Geologica size that fits a 5-row grid + field on the 1024x768 panel.
- * Loaded explicitly so the keyboard fits cleanly regardless of the UI font. */
 #define KBD_FONT_PATH   FONT_DIR "/67-Geologica.fnt"
 
-/* Character rows (lowercase base; capslock upcases letters at draw/insert). */
+/* QWERTY character rows (lowercase base; capslock upcases letters at draw/insert). */
 static const char *const kbd_alpha_rows_plain[4] =
 {
     "1234567890",
-    "abcdefghij",
-    "klmnopqrst",
-    "uvwxyz-",
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm-",
 };
 
 static const char *const kbd_alpha_rows_url[4] =
 {
     "1234567890",
-    "abcdefghij",
-    "klmnopqrst",
-    "uvwxyz-.:/",
+    "qwertyuiop",
+    "asdfghjkl-",
+    "zxcvbnm.:/",
 };
 
 static const char *const kbd_sym_rows[4] =
@@ -55,6 +52,7 @@ static const char *const kbd_sym_rows[4] =
 
 #define KBD_NROWS       5            /* 4 char rows + 1 special row */
 #define KBD_SPECIAL_ROW 4
+#define KBD_MAX_KEYS    50
 
 struct kbd_page
 {
@@ -92,7 +90,6 @@ static char upcase(char c)
     return (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
 }
 
-/* The label shown on a key; for a letter it reflects the current caps state. */
 static const char *key_label(const struct kbd_page *p, int row, int col, char *buf)
 {
     if (row == KBD_SPECIAL_ROW)
@@ -122,19 +119,49 @@ static const char *key_label(const struct kbd_page *p, int row, int col, char *b
     return buf;
 }
 
-/* Keep the cursor roughly in the same horizontal position when changing rows. */
-static int remap_col(int col, int from_count, int to_count)
+static int key_center_x_10x(const struct kbd_page *p, int row, int col)
 {
-    if (from_count <= 1)
-        return 0;
-    int nc = (col * (to_count - 1) + (from_count - 1) / 2) / (from_count - 1);
-    if (nc < 0) nc = 0;
-    if (nc > to_count - 1) nc = to_count - 1;
-    return nc;
+    /* Scaled by 10 for integer precision matching `uipod-ui`'s 1024px layout */
+    const int W10      = 1024 * 10;
+    const int inner10  = 960 * 10;
+    const int gap10    = 12 * 10;
+    const int n        = row_count(p, row);
+    if (n <= 0)
+        return W10 / 2;
+
+    const int kw10 = (row == KBD_SPECIAL_ROW)
+                         ? (inner10 - (n - 1) * gap10) / n
+                         : (inner10 - 9 * gap10) / 10;
+    const int row_w10   = n * kw10 + (n - 1) * gap10;
+    const int start_x10 = (W10 - row_w10) / 2;
+    return start_x10 + col * (kw10 + gap10) + kw10 / 2;
 }
 
-/* The slice of `text` whose pixel width fits in `maxw` (drop from the front so
- * the end -- where typing happens -- stays visible). */
+/* Maps `(from_row, col)` to the physically nearest key center in `to_row`. */
+static int remap_col_by_center(const struct kbd_page *p, int from_row, int col, int to_row)
+{
+    const int to_n = row_count(p, to_row);
+    if (to_n <= 1)
+        return 0;
+
+    const int target_cx = key_center_x_10x(p, from_row, col);
+    int best_c    = 0;
+    int best_dist = 0x7FFFFFFF;
+    for (int c = 0; c < to_n; c++)
+    {
+        int cx = key_center_x_10x(p, to_row, c);
+        int d  = cx - target_cx;
+        if (d < 0)
+            d = -d;
+        if (d < best_dist)
+        {
+            best_dist = d;
+            best_c    = c;
+        }
+    }
+    return best_c;
+}
+
 static const char *visible_tail(struct screen *s, const char *text, int maxw)
 {
     const char *p = text;
@@ -148,37 +175,51 @@ static const char *visible_tail(struct screen *s, const char *text, int maxw)
     return p;
 }
 
-static void draw(const struct kbd_page *p, struct viewport *vp)
+static void draw_sw_fallback(struct kbd_page *p, struct viewport *vp)
 {
+    if (p->fid < 0)
+    {
+        p->fid = font_load(KBD_FONT_PATH);
+        if (p->fid < 0)
+            p->fid = FONT_UI;
+    }
+
     struct screen *s = p->s;
+    s->setfont(p->fid);
+
     const int W = vp->width;
-    const int margin = 19, gap = 10;
-    const unsigned fg = global_settings.fg_color;   /* theme text colour */
-    const unsigned bg = global_settings.bg_color;   /* theme LCD ("backlight") colour */
+    const int margin = 32, gap = 12;
+    const unsigned fg  = (unsigned)global_settings.fg_color;
+    const unsigned fg1 = (unsigned)global_settings.fg1_color;
+    const unsigned fg2 = (unsigned)global_settings.fg2_color;
+    const unsigned bg  = (unsigned)global_settings.bg_color;
 
     s->set_viewport(vp);
     s->set_background(bg);
     s->clear_viewport();
 
     /* ---- input field ------------------------------------------------- */
-    const int fx = margin, fy = 19, fw = W - 2 * margin, fh = 90;
-    s->set_foreground(fg);
-    for (int b = 0; b < 3; b++)
+    const int fx = margin, fy = 32, fw = W - 2 * margin, fh = 96;
+    s->set_foreground(fg1);
+    for (int b = 0; b < 4; b++)
         s->drawrect(fx + b, fy + b, fw - 2 * b, fh - 2 * b);
 
     int tw, th;
-    const char *vis = visible_tail(s, p->buffer, fw - 38);
+    const char *vis = visible_tail(s, p->buffer, fw - 44);
     s->getstringsize((const unsigned char *)vis, &tw, &th);
+    s->set_foreground(fg);
     lcd_set_drawmode(DRMODE_FG);
-    s->putsxy(fx + 19, fy + (fh - th) / 2, (const unsigned char *)vis);
-    /* caret just after the text */
-    s->fillrect(fx + 19 + tw + 3, fy + 13, 6, fh - 26);
+    s->putsxy(fx + 20, fy + (fh - th) / 2, (const unsigned char *)vis);
+
+    lcd_set_drawmode(DRMODE_SOLID);
+    s->set_foreground(fg2);
+    s->fillrect(fx + 20 + tw + 4, fy + 20, 6, fh - 40);
 
     /* ---- key grid ---------------------------------------------------- */
     const int n_sp = special_count(p);
-    const int grid_top = fy + fh + 26;
-    const int key_h = 109, row_step = key_h + gap;
-    const int key_w = (W - 2 * margin - 9 * gap) / 10;          /* 10-col rows */
+    const int grid_top = 156;
+    const int key_h = 106, row_step = key_h + gap;
+    const int key_w = (W - 2 * margin - 9 * gap) / 10;
     const int sp_w  = (W - 2 * margin - (n_sp - 1) * gap) / n_sp;
 
     for (int r = 0; r < KBD_NROWS; r++)
@@ -196,7 +237,6 @@ static void draw(const struct kbd_page *p, struct viewport *vp)
             char cbuf[2];
             const char *label = key_label(p, r, c, cbuf);
 
-            /* cell: selected -> solid black; otherwise white with a border */
             lcd_set_drawmode(DRMODE_SOLID);
             if (selected)
             {
@@ -205,14 +245,14 @@ static void draw(const struct kbd_page *p, struct viewport *vp)
             }
             else
             {
-                s->set_foreground(fg);
-                for (int b = 0; b < 3; b++)
+                s->set_foreground(fg1);
+                for (int b = 0; b < 4; b++)
                     s->drawrect(x + b, y + b, kw - 2 * b, key_h - 2 * b);
             }
 
             int lw, lh;
             s->getstringsize((const unsigned char *)label, &lw, &lh);
-            s->set_foreground(selected ? bg : fg);
+            s->set_foreground(selected ? bg : ((r == KBD_SPECIAL_ROW) ? fg2 : fg));
             lcd_set_drawmode(DRMODE_FG);
             s->putsxy(x + (kw - lw) / 2, y + (key_h - lh) / 2,
                       (const unsigned char *)label);
@@ -223,9 +263,42 @@ static void draw(const struct kbd_page *p, struct viewport *vp)
     s->update_viewport();
 }
 
+static bool draw_gpu(const struct kbd_page *p)
+{
+    struct UIPodRsKeyboardKey keys[KBD_MAX_KEYS];
+    char char_labels[KBD_MAX_KEYS][4];
+    size_t row_counts[KBD_NROWS];
+    size_t total = 0;
+
+    for (int r = 0; r < KBD_NROWS; r++)
+    {
+        int n = row_count(p, r);
+        row_counts[r] = (size_t)n;
+        for (int c = 0; c < n && total < KBD_MAX_KEYS; c++)
+        {
+            const char *lbl = key_label(p, r, c, char_labels[total]);
+            bool active_toggle = false;
+            if (r == KBD_SPECIAL_ROW)
+            {
+                if (c == 0 && p->caps)
+                    active_toggle = true;
+                else if (p->allow_symbols && c == 1 && p->sym_mode)
+                    active_toggle = true;
+            }
+            keys[total].label            = lbl;
+            keys[total].selected         = (r == p->row && c == p->col);
+            keys[total].is_modifier      = (r == KBD_SPECIAL_ROW);
+            keys[total].is_active_toggle = active_toggle;
+            total++;
+        }
+    }
+
+    return uipod_gpu_render_keyboard(p->buffer, row_counts, keys);
+}
+
 static void append_char(char *buffer, int buflen, char c)
 {
-    int len = strlen(buffer);
+    int len = (int)strlen(buffer);
     if (len < buflen - 1)
     {
         buffer[len] = c;
@@ -235,7 +308,9 @@ static void append_char(char *buffer, int buflen, char c)
 
 static void backspace(char *buffer)
 {
-    int len = strlen(buffer);
+    int len = (int)strlen(buffer);
+    while (len > 0 && ((unsigned char)buffer[len - 1] & 0xC0) == 0x80)
+        len--;
     if (len > 0)
         buffer[len - 1] = '\0';
 }
@@ -245,10 +320,12 @@ static void backspace(char *buffer)
 static void kbd_page_draw(struct uipod_page *self)
 {
     struct kbd_page *p = (struct kbd_page *)self;
-    struct viewport vp = {0};  /* zero-init: viewport_set_fullscreen bus-errors otherwise */
+    if (draw_gpu(p))
+        return;
+
+    struct viewport vp = {0};
     viewport_set_fullscreen(&vp, SCREEN_MAIN);
-    p->s->setfont(p->fid);
-    draw(p, &vp);
+    draw_sw_fallback(p, &vp);
     p->s->set_viewport(NULL);
 }
 
@@ -259,7 +336,7 @@ static int kbd_page_poll(struct uipod_page *self, int timeout)
 }
 
 static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
-                                                   int action)
+                                                 int action)
 {
     struct kbd_page *p = (struct kbd_page *)self;
 
@@ -273,16 +350,18 @@ static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
             break;
         case ACTION_KBD_UP:
         {
-            int from = row_count(p, p->row);
-            p->row = (p->row - 1 + KBD_NROWS) % KBD_NROWS;
-            p->col = remap_col(p->col, from, row_count(p, p->row));
+            int from_row = p->row;
+            int to_row   = (p->row - 1 + KBD_NROWS) % KBD_NROWS;
+            p->col = remap_col_by_center(p, from_row, p->col, to_row);
+            p->row = to_row;
             break;
         }
         case ACTION_KBD_DOWN:
         {
-            int from = row_count(p, p->row);
-            p->row = (p->row + 1) % KBD_NROWS;
-            p->col = remap_col(p->col, from, row_count(p, p->row));
+            int from_row = p->row;
+            int to_row   = (p->row + 1) % KBD_NROWS;
+            p->col = remap_col_by_center(p, from_row, p->col, to_row);
+            p->row = to_row;
             break;
         }
 
@@ -331,13 +410,12 @@ static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
 
 static const struct uipod_page_vtable kbd_vtable =
 {
-    .legend    = NULL,                 /* full-screen page owns the whole screen */
+    .legend    = NULL,
     .draw      = kbd_page_draw,
     .poll      = kbd_page_poll,
     .on_action = kbd_page_on_action,
 };
 
-/* only A/Y/B + D-pad act; the run loop swallows everything else */
 static const int kbd_allowed[] =
 {
     ACTION_KBD_LEFT, ACTION_KBD_RIGHT, ACTION_KBD_UP, ACTION_KBD_DOWN,
@@ -354,20 +432,17 @@ int uipod_kbd_input_ex(char *buffer, int buflen, bool allow_symbols)
         strlcpy(backup, buffer, (size_t)buflen);
 
     struct screen *s = &screens[SCREEN_MAIN];
-    int fid = font_load(KBD_FONT_PATH);
-    if (fid < 0)
-        fid = FONT_UI;                 /* the UI font is Geologica too */
 
     struct kbd_page p =
     {
         .base = { .vt = &kbd_vtable, .context = CONTEXT_KEYBOARD,
                   .allowed = kbd_allowed,
-                  .no_theme = true,          /* own the whole screen, no status bar */
+                  .no_theme = true,
                   .no_header_refresh = true,
-                  .animated = true },        /* repaints the grid/cursor each tick */
+                  .animated = true },
         .s = s, .buffer = buffer, .buflen = buflen,
         .row = 1, .col = 0, .caps = false, .sym_mode = false,
-        .allow_symbols = allow_symbols, .fid = fid, .result = -1,
+        .allow_symbols = allow_symbols, .fid = -1, .result = -1,
     };
 
     uipod_page_run(&p.base);
@@ -377,8 +452,8 @@ int uipod_kbd_input_ex(char *buffer, int buflen, bool allow_symbols)
     free(backup);
 
     s->setfont(FONT_UI);
-    if (fid != FONT_UI)
-        font_unload(fid);
+    if (p.fid >= 0 && p.fid != FONT_UI)
+        font_unload(p.fid);
     return p.result;
 }
 

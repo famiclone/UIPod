@@ -61,6 +61,8 @@
 #include "uipod_library.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_downloads.h"
+#include "menus/exported_menus.h"
 #include "uipod_m4b.h"
 #include "rbunicode.h"
 #include "dsp_core.h"
@@ -166,9 +168,11 @@ int main(void)
     /* Build/refresh the SQLite library index (stat-gated: a blink when nothing
      * changed; shows "Scanning Library NN%" while parsing new files) so
      * Shuffle Songs and the library browse are ready. */
+    uipod_offline_mode_init();
     uipod_library_init();
     uipod_navidrome_init();
     uipod_jellyfin_init();
+    uipod_downloads_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */
     CHART(">root_menu");
@@ -222,6 +226,7 @@ static void init(void)
     dsp_init();
     settings_reset();
     settings_load();
+    uipod_theme_sync_startup();
     settings_apply(true);
     /* UIPod: m4b chapters ride the cuesheet engine, so force it on (the
      * setting is unexposed and stale configs may say off; must precede

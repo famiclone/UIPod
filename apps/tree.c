@@ -83,16 +83,6 @@ struct entry* tree_get_entry_at(struct tree_context *t, int index)
     return &entries[index];
 }
 
-static struct entry *get_valid_entry(const char* funcname,
-                                     struct tree_context *t, int index)
-{
-    struct entry *entry = tree_get_entry_at(t, index);
-    if (!entry)
-        panicf("Invalid tree entry %s", funcname);
-    /*DEBUGF("%s tc: %x idx: %d\n", funcname, t, index);*/
-    return entry;
-}
-
 static bool ext_stripit(bool isdir, int attr, int dirfilter)
 {
     if (!isdir)
@@ -122,13 +112,13 @@ static const char* tree_get_filename(int selected_item, void *data,
                                      char *buffer, size_t buffer_len)
 {
     struct tree_context * local_tc=(struct tree_context *)data;
-    char *name;
-    int attr=0;
-    {
-        struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
-        name = entry->name;
-        attr = entry->attr;
-    }
+    if (!local_tc || selected_item < 0 || selected_item >= local_tc->filesindir)
+        return "";
+    struct entry *entry = tree_get_entry_at(local_tc, selected_item);
+    if (!entry || !entry->name)
+        return "";
+    char *name = entry->name;
+    int attr = entry->attr;
 
     if(ext_stripit((attr & ATTR_DIRECTORY), attr, *(local_tc->dirfilter)))
     {
@@ -140,22 +130,32 @@ static const char* tree_get_filename(int selected_item, void *data,
 static const struct uipod_svg_icon *tree_get_svg_icon(int selected_item, void *data)
 {
     struct tree_context *local_tc = (struct tree_context *)data;
-    struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
+    if (!local_tc || selected_item < 0 || selected_item >= local_tc->filesindir)
+        return NULL;
+    struct entry *entry = tree_get_entry_at(local_tc, selected_item);
+    if (!entry || !entry->name)
+        return NULL;
     return uipod_svg_for_path(entry->name, (entry->attr & ATTR_DIRECTORY) != 0);
 }
 
 static bool tree_get_chevron(int selected_item, void *data)
 {
     struct tree_context *local_tc = (struct tree_context *)data;
-    struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
-    return (entry->attr & ATTR_DIRECTORY) != 0;
+    if (!local_tc || selected_item < 0 || selected_item >= local_tc->filesindir)
+        return false;
+    struct entry *entry = tree_get_entry_at(local_tc, selected_item);
+    return entry && ((entry->attr & ATTR_DIRECTORY) != 0);
 }
 
 #ifdef HAVE_LCD_COLOR
 static int tree_get_filecolor(int selected_item, void * data)
 {
     struct tree_context * local_tc=(struct tree_context *)data;
-    struct entry *entry = get_valid_entry(__func__, local_tc, selected_item);
+    if (!local_tc || selected_item < 0 || selected_item >= local_tc->filesindir)
+        return -1;
+    struct entry *entry = tree_get_entry_at(local_tc, selected_item);
+    if (!entry || !entry->name)
+        return -1;
 
     return filetype_get_color(entry->name, entry->attr);
 }

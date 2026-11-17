@@ -375,10 +375,29 @@ void gui_synclist_set_title(struct gui_synclist * gui_list,
 
 void gui_synclist_set_nb_items(struct gui_synclist * lists, int nb_items)
 {
+    if (nb_items < 0)
+        nb_items = 0;
     lists->nb_items = nb_items;
-    FOR_NB_SCREENS(i)
+    if (nb_items == 0)
     {
-        lists->offset_position[i] = 0;
+        lists->selected_item = 0;
+        FOR_NB_SCREENS(i)
+        {
+            lists->start_item[i] = 0;
+            lists->offset_position[i] = 0;
+        }
+    }
+    else
+    {
+        if (lists->selected_item >= nb_items)
+            lists->selected_item = nb_items - 1;
+        if (lists->selected_item < 0)
+            lists->selected_item = 0;
+        FOR_NB_SCREENS(i)
+        {
+            lists->offset_position[i] = 0;
+            gui_list_put_selection_on_screen(lists, i);
+        }
     }
 }
 int gui_synclist_get_nb_items(struct gui_synclist * lists)
@@ -698,6 +717,9 @@ bool list_do_action(int context, int timeout,
     timeout = list_do_action_timeout(lists, timeout);
     keyclick_set_callback(gui_synclist_keyclick_callback, lists);
     *action = get_action(context, timeout);
+    current_lists = NULL;
+    keyclick_set_callback(NULL, NULL);
+    remove_event_ex(GUI_EVENT_NEED_UI_UPDATE, _lists_uiviewport_update_callback, NULL);
     return gui_synclist_do_button(lists, action);
 }
 

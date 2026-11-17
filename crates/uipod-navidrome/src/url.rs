@@ -153,6 +153,11 @@ impl ParsedServerUrl {
         format!("{}/rest/getPlaylist.view?id={id}&{auth}", self.base_path)
     }
 
+    pub fn get_starred2_path(&self, username: &str, password: &str) -> String {
+        let auth = self.auth_query(username, password, true);
+        format!("{}/rest/getStarred2.view?{auth}", self.base_path)
+    }
+
     pub fn stream_path(
         &self,
         username: &str,

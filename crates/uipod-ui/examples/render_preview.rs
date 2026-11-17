@@ -99,8 +99,8 @@ use std::path::{Path, PathBuf};
 
 use uipod_ui::renderer::{HEIGHT, WIDTH};
 use uipod_ui::{
-    FileIconKind, HeaderState, ListRow, ListScreenState, NowPlayingState, PlayMode,
-    RightAccessory, ThemeColors, UiEngine,
+    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
+    ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
 };
 
 fn write_png(path: &Path, rgba: &[u8]) {
@@ -174,12 +174,16 @@ fn main() {
         let main_state = ListScreenState {
             theme: ThemeColors::default(),
             header: HeaderState {
-                title: "UIPod Mini",
+                title: "UIPod",
                 legend: "",
                 play_mode: PlayMode::Play,
                 battery_percent: 69,
                 is_charging: true,
                 is_hold: false,
+                is_downloading: true,
+                download_done: 3,
+                download_total: 12,
+                source_icon: HeaderSourceIcon::Navidrome,
             },
             rows: vec![
                 ListRow {
@@ -249,19 +253,26 @@ fn main() {
                 battery_percent: 54,
                 is_charging: false,
                 is_hold: false,
+                ..Default::default()
             },
             rows: vec![
                 ListRow {
                     label: "Тема",
                     selected: true,
                     file_icon: FileIconKind::None,
-                    right: RightAccessory::Value("UIPod Classic"),
+                    right: RightAccessory::CycleValue("UIPod Classic"),
+                },
+                ListRow {
+                    label: "Кастомізація теми",
+                    selected: false,
+                    file_icon: FileIconKind::None,
+                    right: RightAccessory::Chevron,
                 },
                 ListRow {
                     label: "Мова",
                     selected: false,
                     file_icon: FileIconKind::None,
-                    right: RightAccessory::Value("Українська"),
+                    right: RightAccessory::CycleValue("Українська"),
                 },
                 ListRow {
                     label: "Ч/Б обкладинка альбому",
@@ -276,7 +287,7 @@ fn main() {
                     right: RightAccessory::Chevron,
                 },
             ],
-            total_items: 4,
+            total_items: 5,
             start_item: 0,
             visible_items: 8,
         };
@@ -294,6 +305,7 @@ fn main() {
                 battery_percent: 69,
                 is_charging: true,
                 is_hold: false,
+                ..Default::default()
             },
             rows: vec![
                 ListRow {
@@ -340,6 +352,8 @@ fn main() {
                 battery_percent: 54,
                 is_charging: false,
                 is_hold: false,
+                source_icon: HeaderSourceIcon::MicroSd,
+                ..Default::default()
             },
             track_pos_label: "21 of 500",
             eq_enabled: true,
@@ -355,10 +369,40 @@ fn main() {
             center_status_label: "",
             art_rgb24: Some(&art),
             mono_album_art: true,
+            alt_layout: false,
         };
         let rgba_np = engine.render_now_playing_rgba(&np_state);
         let np_path = out_dir.join("preview_now_playing.png");
         write_png(&np_path, &rgba_np);
+
+        let qwerty_rows: [&[&str]; 5] = [
+            &["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+            &["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+            &["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+            &["Z", "X", "C", "V", "B", "N", "M", "-"],
+            &["CAPS", "sym", "space", "del", "enter"],
+        ];
+        let mut kbd_rows: [Vec<KeyboardKey>; 5] = Default::default();
+        for (ri, r) in qwerty_rows.iter().enumerate() {
+            kbd_rows[ri] = r
+                .iter()
+                .enumerate()
+                .map(|(ci, &lbl)| KeyboardKey {
+                    label: lbl,
+                    selected: ri == 1 && ci == 4,
+                    is_modifier: ri == 4,
+                    is_active_toggle: ri == 4 && ci == 0,
+                })
+                .collect();
+        }
+        let kbd_state = KeyboardState {
+            theme: ThemeColors::default(),
+            text: "#D6D8D5",
+            rows: kbd_rows,
+        };
+        let rgba_kbd = engine.render_keyboard_rgba(&kbd_state);
+        let kbd_path = out_dir.join("preview_keyboard.png");
+        write_png(&kbd_path, &rgba_kbd);
 
         println!("Rendered previews to {}", out_dir.display());
     }

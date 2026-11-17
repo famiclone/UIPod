@@ -394,8 +394,10 @@ struct user_settings
 #endif
 
 #ifdef HAVE_LCD_COLOR
-    int bg_color; /* background color native format */
-    int fg_color; /* foreground color native format */
+    int bg_color;  /* background color native format */
+    int fg_color;  /* foreground color native format */
+    int fg1_color; /* auxiliary shade 1 (fg-color-1) native format */
+    int fg2_color; /* auxiliary shade 2 (fg-color-2) native format */
     int lss_color; /* background color for the selector or start color for the gradient */
     int lse_color; /* end color for the selector gradient */
     int lst_color; /* color of the text for the selector */
@@ -528,6 +530,7 @@ struct user_settings
 
     int afr_enabled;
     bool mono_album_art;
+    int transition_style;
 
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \

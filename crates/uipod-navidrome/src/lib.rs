@@ -16,9 +16,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use cache::{CacheManager, HttpTransport};
 use config::{NavidromeConfig, StreamQuality};
-use json::{decode_ping, decode_playlist_detail, decode_playlists, decode_search3_songs, SubsonicSong};
+use json::{
+    decode_ping, decode_playlist_detail, decode_playlists, decode_search3_songs,
+    decode_starred_songs, SubsonicSong,
+};
 use tree::VirtualFolderTree;
 use url::ParsedServerUrl;
+
+pub const FAVOURITES_SENTINEL_NAME: &str = "\x01FAVOURITES";
 
 pub type TpNavCancelFn = Option<unsafe extern "C" fn(*mut c_void) -> u8>;
 
@@ -178,6 +183,7 @@ pub struct TpNavConfigC {
     pub url: [u8; 256],
     pub username: [u8; 128],
     pub password: [u8; 128],
+    pub cache_location: [u8; 256],
     pub quality: u8,
     pub allow_self_signed: u8,
     pub _pad: u16,
@@ -428,6 +434,32 @@ pub fn sync_catalog_with_cache(
         }
     }
 
+    // 4. Sync liked/starred songs (`getStarred2`) into synthetic Favourites playlist
+    let fav_req = url.get_starred2_path(&cfg.username, &cfg.password);
+    if let Ok(fav_body) = transport.get_bytes(
+        url.is_https,
+        &url.host,
+        url.port,
+        &fav_req,
+        cfg.allow_self_signed,
+        10_000,
+    ) {
+        if let Ok(fav_songs) = decode_starred_songs(&fav_body) {
+            let mut m3u = String::from("#EXTM3U\n");
+            for song in &fav_songs {
+                let (tp, is_new) = resolve_song_path(song);
+                if is_new {
+                    let cp = cache.cover_path_for_track(&tp, &song.cover_art);
+                    on_song(song, &tp, &cp);
+                    total_songs += 1;
+                }
+                m3u.push_str(&tp.to_string_lossy());
+                m3u.push('\n');
+            }
+            on_playlist(FAVOURITES_SENTINEL_NAME, &m3u);
+        }
+    }
+
     Ok(total_songs)
 }
 
@@ -467,16 +499,31 @@ pub extern "C" fn tp_navidrome_shutdown() {
     *guard = None;
 }
 
+fn apply_nav_config(cfg: NavidromeConfig) -> bool {
+    let maybe_root = cfg.effective_cache_root();
+    let mut guard = engine_slot().lock().unwrap();
+    let Some(eng) = guard.as_mut() else {
+        return false;
+    };
+    if let Some(desired_root) = maybe_root {
+        if eng.cache.cache_root() != desired_root.as_path() {
+            let transport = Arc::clone(eng.cache.transport());
+            let new_cache = Arc::new(CacheManager::new(desired_root, transport));
+            new_cache.set_config(cfg);
+            *cache_arc_slot().lock().unwrap() = Some(Arc::clone(&new_cache));
+            eng.cache = new_cache;
+            return true;
+        }
+    }
+    eng.cache.set_config(cfg);
+    true
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn tp_navidrome_load_config_text(ini_utf8: *const c_char) -> bool {
     let text = unsafe { opt_cstr(ini_utf8) };
     let cfg = NavidromeConfig::parse_ini(&text);
-    let guard = engine_slot().lock().unwrap();
-    let Some(eng) = guard.as_ref() else {
-        return false;
-    };
-    eng.cache.set_config(cfg);
-    true
+    apply_nav_config(cfg)
 }
 
 #[no_mangle]
@@ -503,20 +550,30 @@ pub unsafe extern "C" fn tp_navidrome_get_config(out_cfg: *mut TpNavConfigC) -> 
     if out_cfg.is_null() {
         return false;
     }
-    let cfg = {
+    let (cfg, cur_root) = {
         let guard = engine_slot().lock().unwrap();
         let Some(eng) = guard.as_ref() else {
             return false;
         };
-        eng.cache.get_config()
+        (
+            eng.cache.get_config(),
+            eng.cache.cache_root().to_string_lossy().into_owned(),
+        )
+    };
+    let loc = if cfg.cache_location.trim().is_empty() {
+        config::normalize_cache_location(&cur_root)
+    } else {
+        config::normalize_cache_location(&cfg.cache_location)
     };
     let dst = unsafe { &mut *out_cfg };
     dst.url.fill(0);
     dst.username.fill(0);
     dst.password.fill(0);
+    dst.cache_location.fill(0);
     write_str_to_c_buf(&cfg.url, &mut dst.url);
     write_str_to_c_buf(&cfg.username, &mut dst.username);
     write_str_to_c_buf(&cfg.password, &mut dst.password);
+    write_str_to_c_buf(&loc, &mut dst.cache_location);
     dst.quality = cfg.quality as u8;
     dst.allow_self_signed = if cfg.allow_self_signed { 1 } else { 0 };
     dst._pad = 0;
@@ -537,13 +594,37 @@ pub unsafe extern "C" fn tp_navidrome_set_config(in_cfg: *const TpNavConfigC) ->
         quality: StreamQuality::from_u8(src.quality),
         cache_limit_mb: src.cache_limit_mb,
         allow_self_signed: src.allow_self_signed != 0,
+        cache_location: config::normalize_cache_location(&c_buf_to_string(
+            &src.cache_location,
+            config::DEFAULT_CACHE_LOCATION,
+        )),
     };
+    apply_nav_config(cfg)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tp_navidrome_get_cache_root(
+    out_buf: *mut c_char,
+    out_cap: usize,
+) -> usize {
+    if out_buf.is_null() || out_cap == 0 {
+        return 0;
+    }
+    let root = {
+        let guard = engine_slot().lock().unwrap();
+        let Some(eng) = guard.as_ref() else {
+            return 0;
+        };
+        eng.cache.cache_root().to_string_lossy().into_owned()
+    };
+    let slice = unsafe { std::slice::from_raw_parts_mut(out_buf as *mut u8, out_cap) };
+    write_str_to_c_buf(&root, slice)
+}
+
+#[no_mangle]
+pub extern "C" fn tp_navidrome_is_busy() -> bool {
     let guard = engine_slot().lock().unwrap();
-    let Some(eng) = guard.as_ref() else {
-        return false;
-    };
-    eng.cache.set_config(cfg);
-    true
+    guard.as_ref().map(|e| e.cache.is_busy()).unwrap_or(false)
 }
 
 #[no_mangle]
@@ -866,7 +947,176 @@ unsafe fn tp_navidrome_sync_catalog_impl(
         }
     }
 
+    // Fetch liked/starred tracks (`getStarred2`) -> synthetic Favourites playlist
+    if !is_cancelled() {
+        let fav_req = url.get_starred2_path(&cfg.username, &cfg.password);
+        if let Ok(fav_body) = transport.get_bytes(
+            url.is_https,
+            &url.host,
+            url.port,
+            &fav_req,
+            cfg.allow_self_signed,
+            10_000,
+        ) {
+            if let Ok(fav_songs) = decode_starred_songs(&fav_body) {
+                let mut m3u = String::from("#EXTM3U\n");
+                for song in &fav_songs {
+                    let (tp, is_new) = resolve_song_path(song);
+                    if is_new {
+                        emit_song(song, &tp);
+                        total_songs += 1;
+                    }
+                    m3u.push_str(&tp.to_string_lossy());
+                    m3u.push('\n');
+                }
+                if let Some(pl_cb) = on_playlist {
+                    let c_name = to_cstring_lossy(FAVOURITES_SENTINEL_NAME);
+                    let c_m3u = to_cstring_lossy(&m3u);
+                    unsafe { pl_cb(user_ctx, c_name.as_ptr(), c_m3u.as_ptr()) };
+                }
+            }
+        }
+    }
+
     total_songs as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tp_navidrome_sync_starred(
+    on_song: TpNavOnSongFn,
+    on_playlist: TpNavOnPlaylistFn,
+    cancel_cb: TpNavCancelFn,
+    user_ctx: *mut c_void,
+    err_buf: *mut c_char,
+    err_cap: usize,
+) -> i32 {
+    let cache = {
+        let guard = match engine_slot().lock() {
+            Ok(g) => g,
+            Err(_) => {
+                unsafe { write_err_ptr(err_buf, err_cap, "Lock poisoned") };
+                return -1;
+            }
+        };
+        match guard.as_ref() {
+            Some(e) => Arc::clone(&e.cache),
+            None => {
+                unsafe { write_err_ptr(err_buf, err_cap, "Not initialized") };
+                return -1;
+            }
+        }
+    };
+
+    let cfg = cache.get_config();
+    let url = match ParsedServerUrl::parse(&cfg.url) {
+        Ok(u) => u,
+        Err(e) => {
+            unsafe { write_err_ptr(err_buf, err_cap, &e) };
+            return -1;
+        }
+    };
+
+    if let Some(ccb) = cancel_cb {
+        if unsafe { ccb(user_ctx) } != 0 {
+            unsafe { write_err_ptr(err_buf, err_cap, "Cancelled") };
+            return -2;
+        }
+    }
+
+    let transport = cache.transport();
+    let fav_req = url.get_starred2_path(&cfg.username, &cfg.password);
+    let fav_body = match transport.get_bytes(
+        url.is_https,
+        &url.host,
+        url.port,
+        &fav_req,
+        cfg.allow_self_signed,
+        6_000,
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            unsafe { write_err_ptr(err_buf, err_cap, &e) };
+            return -1;
+        }
+    };
+
+    let fav_songs = match decode_starred_songs(&fav_body) {
+        Ok(s) => s,
+        Err(e) => {
+            unsafe { write_err_ptr(err_buf, err_cap, &e) };
+            return -1;
+        }
+    };
+
+    let mut used_paths: HashSet<PathBuf> = HashSet::new();
+    let mut m3u = String::from("#EXTM3U\n");
+    for song in &fav_songs {
+        let artist_for_dir = if !song.album_artist.is_empty() {
+            &song.album_artist
+        } else {
+            &song.artist
+        };
+        let mut tp = cache.track_path_for_meta(
+            &song.server_path,
+            artist_for_dir,
+            &song.album,
+            song.track,
+            &song.title,
+            &song.id,
+            &song.suffix,
+            cfg.quality,
+        );
+        if !used_paths.insert(tp.clone()) {
+            tp = cache::disambiguate_track_path(&tp, &song.id, &song.suffix, cfg.quality);
+            used_paths.insert(tp.clone());
+        }
+        if let Some(cb) = on_song {
+            let cp = cache.cover_path_for_track(&tp, &song.cover_art);
+            let c_id = to_cstring_lossy(&song.id);
+            let c_tp = to_cstring_lossy(&tp.to_string_lossy());
+            let c_cp = to_cstring_lossy(&cp.to_string_lossy());
+            let c_cov = to_cstring_lossy(&song.cover_art);
+            let c_sp = to_cstring_lossy(&song.server_path);
+            let c_suf = to_cstring_lossy(&song.suffix);
+            let c_tit = to_cstring_lossy(&song.title);
+            let c_art = to_cstring_lossy(&song.artist);
+            let c_aa = to_cstring_lossy(&song.album_artist);
+            let c_alb = to_cstring_lossy(&song.album);
+            let c_gen = to_cstring_lossy(&song.genre);
+            let sc = TpNavSongC {
+                id: c_id.as_ptr(),
+                local_track_path: c_tp.as_ptr(),
+                local_cover_path: c_cp.as_ptr(),
+                cover_id: c_cov.as_ptr(),
+                server_path: c_sp.as_ptr(),
+                suffix: c_suf.as_ptr(),
+                title: c_tit.as_ptr(),
+                artist: c_art.as_ptr(),
+                album_artist: c_aa.as_ptr(),
+                album: c_alb.as_ptr(),
+                genre: c_gen.as_ptr(),
+                year: song.year,
+                track: song.track,
+                disc_number: song.disc_number,
+                duration_secs: song.duration_secs,
+                size: song.size,
+                bit_rate: song.bit_rate,
+                bit_depth: song.bit_depth,
+                sampling_rate: song.sampling_rate,
+            };
+            unsafe { cb(user_ctx, &sc) };
+        }
+        m3u.push_str(&tp.to_string_lossy());
+        m3u.push('\n');
+    }
+
+    if let Some(pl_cb) = on_playlist {
+        let c_name = to_cstring_lossy(FAVOURITES_SENTINEL_NAME);
+        let c_m3u = to_cstring_lossy(&m3u);
+        unsafe { pl_cb(user_ctx, c_name.as_ptr(), c_m3u.as_ptr()) };
+    }
+
+    fav_songs.len() as i32
 }
 
 #[no_mangle]
@@ -1112,23 +1362,57 @@ pub unsafe extern "C" fn tp_navidrome_enqueue_prefetch(
     song2_utf8: *const c_char,
     cover2_utf8: *const c_char,
 ) {
+    unsafe {
+        tp_navidrome_enqueue_prefetch3(
+            path1_utf8,
+            song1_utf8,
+            cover1_utf8,
+            path2_utf8,
+            song2_utf8,
+            cover2_utf8,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tp_navidrome_enqueue_prefetch3(
+    path1_utf8: *const c_char,
+    song1_utf8: *const c_char,
+    cover1_utf8: *const c_char,
+    path2_utf8: *const c_char,
+    song2_utf8: *const c_char,
+    cover2_utf8: *const c_char,
+    path3_utf8: *const c_char,
+    song3_utf8: *const c_char,
+    cover3_utf8: *const c_char,
+) {
     let Some(cache) = current_cache() else {
         return;
     };
     let mut targets = Vec::new();
-    let p1 = unsafe { opt_cstr(path1_utf8) };
-    let s1 = unsafe { opt_cstr(song1_utf8) };
-    let c1 = unsafe { opt_cstr(cover1_utf8) };
-    if !p1.is_empty() && !s1.is_empty() {
-        targets.push((PathBuf::from(p1), s1, c1));
-    }
-    let p2 = unsafe { opt_cstr(path2_utf8) };
-    let s2 = unsafe { opt_cstr(song2_utf8) };
-    let c2 = unsafe { opt_cstr(cover2_utf8) };
-    if !p2.is_empty() && !s2.is_empty() {
-        targets.push((PathBuf::from(p2), s2, c2));
+    for (p_ptr, s_ptr, c_ptr) in [
+        (path1_utf8, song1_utf8, cover1_utf8),
+        (path2_utf8, song2_utf8, cover2_utf8),
+        (path3_utf8, song3_utf8, cover3_utf8),
+    ] {
+        let p = unsafe { opt_cstr(p_ptr) };
+        let s = unsafe { opt_cstr(s_ptr) };
+        let c = unsafe { opt_cstr(c_ptr) };
+        if !p.is_empty() && !s.is_empty() {
+            targets.push((PathBuf::from(p), s, c));
+        }
     }
     cache.set_prefetch_targets(targets);
+}
+
+#[no_mangle]
+pub extern "C" fn tp_navidrome_take_prefetch_done() -> bool {
+    current_cache()
+        .map(|c| c.take_prefetch_done())
+        .unwrap_or(false)
 }
 
 #[no_mangle]

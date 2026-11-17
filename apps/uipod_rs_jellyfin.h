@@ -76,6 +76,7 @@ typedef struct TpJfConfigC {
     char     url[256];
     char     username[128];
     char     password[128];
+    char     cache_location[256];
     uint8_t  video_quality;     /* enum tp_jf_video_quality */
     uint8_t  audio_quality;     /* enum tp_jf_audio_quality */
     uint8_t  allow_self_signed; /* 0 or 1 */
@@ -171,6 +172,9 @@ bool   tp_jellyfin_load_config_text(const char *ini_utf8);
 size_t tp_jellyfin_format_config_text(char *out_buf, size_t out_cap);
 bool   tp_jellyfin_get_config(TpJfConfigC *out_cfg);
 bool   tp_jellyfin_set_config(const TpJfConfigC *in_cfg);
+bool   tp_jellyfin_get_roots(char *video_out, size_t video_cap,
+                             char *audio_out, size_t audio_cap);
+bool   tp_jellyfin_is_busy(void);
 bool   tp_jellyfin_is_configured(void);
 
 int32_t tp_jellyfin_sync_catalog(tp_jf_on_view_fn on_view,
@@ -243,6 +247,8 @@ void    tp_jellyfin_prefetch_audio(const char *local_path_utf8,
                                    const char *song_id_utf8,
                                    const char *suffix_utf8,
                                    const char *cover_id_utf8);
+void    tp_jellyfin_clear_prefetches(void);
+bool    tp_jellyfin_take_prefetch_done(void);
 size_t  tp_jellyfin_cover_path_for(const char *local_track_path_utf8,
                                    const char *cover_id_utf8,
                                    char *out_buf,

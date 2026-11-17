@@ -92,13 +92,13 @@
   desc: main menu title
   user: core
   <source>
-    *: "UIPod Mini"
+    *: "UIPod"
   </source>
   <dest>
-    *: "UIPod Mini"
+    *: "UIPod"
   </dest>
   <voice>
-    *: "UIPod Mini"
+    *: "UIPod"
   </voice>
 </phrase>
 <phrase>
@@ -18818,5 +18818,425 @@
   </dest>
   <voice>
     *: "Downloaded videos"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOURCES
+  desc: Settings -> Sources menu item and title
+  user: core
+  <source>
+    *: "Sources"
+  </source>
+  <dest>
+    *: "Sources"
+  </dest>
+  <voice>
+    *: "Sources"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CACHE_LOCATION
+  desc: Source settings Cache Location folder picker row
+  user: core
+  <source>
+    *: "Cache Location"
+  </source>
+  <dest>
+    *: "Cache Location"
+  </dest>
+  <voice>
+    *: "Cache Location"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LARGE_ART
+  desc: Now Playing menu toggle for large centered album art view
+  user: core
+  <source>
+    *: "Large Album Art"
+  </source>
+  <dest>
+    *: "Large Album Art"
+  </dest>
+  <voice>
+    *: "Large Album Art"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REFRESH
+  desc: Refresh remote playlist or feed action
+  user: core
+  <source>
+    *: "Refresh"
+  </source>
+  <dest>
+    *: "Refresh"
+  </dest>
+  <voice>
+    *: "Refresh"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FAVOURITES
+  desc: Synthetic Navidrome starred tracks playlist name
+  user: core
+  <source>
+    *: "Favourites"
+  </source>
+  <dest>
+    *: "Favourites"
+  </dest>
+  <voice>
+    *: "Favourites"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FAV_EMPTY_HINT
+  desc: Hint shown when opening an empty Favourites playlist
+  user: core
+  <source>
+    *: "Star tracks in Navidrome, then Hold A -> Refresh."
+  </source>
+  <dest>
+    *: "Star tracks in Navidrome, then Hold A -> Refresh."
+  </dest>
+  <voice>
+    *: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_OFFLINE_MODE
+  desc: Toggle for Offline Mode (local & cached media only)
+  user: core
+  <source>
+    *: "Offline Mode"
+  </source>
+  <dest>
+    *: "Offline Mode"
+  </dest>
+  <voice>
+    *: "Offline Mode"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DOWNLOADS
+  desc: Settings menu item & screen title for persistent download queue
+  user: core
+  <source>
+    *: "Downloads"
+  </source>
+  <dest>
+    *: "Downloads"
+  </dest>
+  <voice>
+    *: "Downloads"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_EMPTY
+  desc: Placeholder row when download queue is empty
+  user: core
+  <source>
+    *: "(No downloads)"
+  </source>
+  <dest>
+    *: "(No downloads)"
+  </dest>
+  <voice>
+    *: "No downloads"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_ACTIVE
+  desc: Download item status while actively downloading
+  user: core
+  <source>
+    *: "Downloading"
+  </source>
+  <dest>
+    *: "Downloading"
+  </dest>
+  <voice>
+    *: "Downloading"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_QUEUED
+  desc: Download item status while queued
+  user: core
+  <source>
+    *: "Queued"
+  </source>
+  <dest>
+    *: "Queued"
+  </dest>
+  <voice>
+    *: "Queued"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_PAUSED
+  desc: Download item status while paused in Offline Mode
+  user: core
+  <source>
+    *: "Paused"
+  </source>
+  <dest>
+    *: "Paused"
+  </dest>
+  <voice>
+    *: "Paused"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_DONE
+  desc: Download item status when completed
+  user: core
+  <source>
+    *: "Done"
+  </source>
+  <dest>
+    *: "Done"
+  </dest>
+  <voice>
+    *: "Done"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_FAILED
+  desc: Download item status when failed
+  user: core
+  <source>
+    *: "Failed"
+  </source>
+  <dest>
+    *: "Failed"
+  </dest>
+  <voice>
+    *: "Failed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_RETRY
+  desc: Action to retry a failed download
+  user: core
+  <source>
+    *: "Retry"
+  </source>
+  <dest>
+    *: "Retry"
+  </dest>
+  <voice>
+    *: "Retry"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_RETRY_FAILED
+  desc: Action to retry all failed downloads
+  user: core
+  <source>
+    *: "Retry Failed"
+  </source>
+  <dest>
+    *: "Retry Failed"
+  </dest>
+  <voice>
+    *: "Retry Failed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_CLEAR_DONE
+  desc: Action to clear completed entries from download list
+  user: core
+  <source>
+    *: "Clear Completed"
+  </source>
+  <dest>
+    *: "Clear Completed"
+  </dest>
+  <voice>
+    *: "Clear Completed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_CLEAR_ALL
+  desc: Action to cancel and clear all entries from download list
+  user: core
+  <source>
+    *: "Clear All"
+  </source>
+  <dest>
+    *: "Clear All"
+  </dest>
+  <voice>
+    *: "Clear All"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CUSTOMIZE_THEME
+  desc: Display menu item and screen title for custom 4-color theme editor
+  user: core
+  <source>
+    *: "Customize Theme"
+  </source>
+  <dest>
+    *: "Customize Theme"
+  </dest>
+  <voice>
+    *: "Customize Theme"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_BG
+  desc: Customize Theme row for background color
+  user: core
+  <source>
+    *: "Background"
+  </source>
+  <dest>
+    *: "Background"
+  </dest>
+  <voice>
+    *: "Background"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG
+  desc: Customize Theme row for primary foreground color
+  user: core
+  <source>
+    *: "Foreground"
+  </source>
+  <dest>
+    *: "Foreground"
+  </dest>
+  <voice>
+    *: "Foreground"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG1
+  desc: Customize Theme row for first auxiliary shade (fg-color-1)
+  user: core
+  <source>
+    *: "Secondary color 1"
+  </source>
+  <dest>
+    *: "Secondary color 1"
+  </dest>
+  <voice>
+    *: "Secondary color 1"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG2
+  desc: Customize Theme row for second auxiliary shade (fg-color-2)
+  user: core
+  <source>
+    *: "Secondary color 2"
+  </source>
+  <dest>
+    *: "Secondary color 2"
+  </dest>
+  <voice>
+    *: "Secondary color 2"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_INVALID_HEX
+  desc: Splash shown when user enters an invalid hex color code
+  user: core
+  <source>
+    *: "Invalid hex code"
+  </source>
+  <dest>
+    *: "Invalid hex code"
+  </dest>
+  <voice>
+    *: "Invalid hex code"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANSITION
+  desc: Display setting for screen transition animation style
+  user: core
+  <source>
+    *: "Screen Transition"
+  </source>
+  <dest>
+    *: "Screen Transition"
+  </dest>
+  <voice>
+    *: "Screen Transition"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_SLIDE
+  desc: Classic horizontal slide transition
+  user: core
+  <source>
+    *: "Slide"
+  </source>
+  <dest>
+    *: "Slide"
+  </dest>
+  <voice>
+    *: "Slide"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_COVER
+  desc: Parallax cover stack transition
+  user: core
+  <source>
+    *: "Cover"
+  </source>
+  <dest>
+    *: "Cover"
+  </dest>
+  <voice>
+    *: "Cover"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_FADE
+  desc: Crossfade transition
+  user: core
+  <source>
+    *: "Fade"
+  </source>
+  <dest>
+    *: "Fade"
+  </dest>
+  <voice>
+    *: "Fade"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_PIXELS
+  desc: Bayer LCD pixel dissolve transition
+  user: core
+  <source>
+    *: "Pixels"
+  </source>
+  <dest>
+    *: "Pixels"
+  </dest>
+  <voice>
+    *: "Pixels"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_BLINDS
+  desc: Horizontal shutter blinds transition
+  user: core
+  <source>
+    *: "Blinds"
+  </source>
+  <dest>
+    *: "Blinds"
+  </dest>
+  <voice>
+    *: "Blinds"
   </voice>
 </phrase>

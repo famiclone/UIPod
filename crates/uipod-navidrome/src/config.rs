@@ -56,6 +56,25 @@ impl StreamQuality {
     }
 }
 
+pub const DEFAULT_CACHE_LOCATION: &str = "/mnt/SDCARD/Media";
+
+pub fn normalize_cache_location(raw: &str) -> String {
+    let mut s = raw.trim().trim_end_matches('/').to_string();
+    if s.is_empty() {
+        return DEFAULT_CACHE_LOCATION.to_string();
+    }
+    if let Some(stripped) = s.strip_suffix("/navidrome") {
+        if stripped.starts_with('/') && !stripped.is_empty() {
+            s = stripped.to_string();
+        }
+    }
+    if s.is_empty() {
+        DEFAULT_CACHE_LOCATION.to_string()
+    } else {
+        s
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavidromeConfig {
     pub url: String,
@@ -65,6 +84,8 @@ pub struct NavidromeConfig {
     /// `0` means Unlimited; default `1024` MB (1 GB).
     pub cache_limit_mb: u32,
     pub allow_self_signed: bool,
+    /// Base media directory (e.g. `"/mnt/SDCARD/Media"`); Navidrome caches into `<cache_location>/navidrome`.
+    pub cache_location: String,
 }
 
 impl Default for NavidromeConfig {
@@ -76,11 +97,22 @@ impl Default for NavidromeConfig {
             quality: StreamQuality::Original,
             cache_limit_mb: 1024,
             allow_self_signed: true,
+            cache_location: String::new(),
         }
     }
 }
 
 impl NavidromeConfig {
+    pub fn effective_cache_root(&self) -> Option<std::path::PathBuf> {
+        if self.cache_location.trim().is_empty() {
+            None
+        } else {
+            Some(
+                std::path::PathBuf::from(normalize_cache_location(&self.cache_location))
+                    .join("navidrome"),
+            )
+        }
+    }
     pub fn is_configured(&self) -> bool {
         !self.url.trim().is_empty()
             && !self.username.trim().is_empty()
@@ -128,6 +160,9 @@ impl NavidromeConfig {
                         "1" | "true" | "yes" | "on"
                     );
                 }
+                "cache_location" | "cache_dir" | "cache_root" => {
+                    cfg.cache_location = normalize_cache_location(val);
+                }
                 _ => {}
             }
         }
@@ -135,6 +170,14 @@ impl NavidromeConfig {
     }
 
     pub fn to_ini(&self) -> String {
+        let loc_line = if self.cache_location.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "cache_location={}\n",
+                normalize_cache_location(&self.cache_location)
+            )
+        };
         format!(
             "# UIPod Navidrome Configuration\n\
              # Quality options: original, mp3_320, mp3_192\n\
@@ -144,13 +187,15 @@ impl NavidromeConfig {
              password={}\n\
              quality={}\n\
              cache_limit_mb={}\n\
-             allow_self_signed={}\n",
+             allow_self_signed={}\n\
+             {}",
             self.url.trim(),
             self.username.trim(),
             self.password,
             self.quality.as_cfg_str(),
             self.cache_limit_mb,
-            if self.allow_self_signed { 1 } else { 0 }
+            if self.allow_self_signed { 1 } else { 0 },
+            loc_line
         )
     }
 }

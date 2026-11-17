@@ -584,9 +584,23 @@ static void np_mono_art_cycle(void *ctx, int dir)
 static const struct menu_value_cb np_mono_art_value =
     { np_mono_art_get, np_mono_art_cycle, NULL };
 
+static const char *np_large_art_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return uipod_toggle_str(uipod_nowplaying_is_alt());
+}
+static void np_large_art_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    uipod_nowplaying_toggle_alt();
+}
+static const struct menu_value_cb np_large_art_value =
+    { np_large_art_get, np_large_art_cycle, NULL };
+
 MENUITEM_VALUE(np_pause, "", &np_pause_value, Icon_NOICON);
 MENUITEM_VALUE(np_sleeptimer, ID2P(LANG_SLEEP_TIMER), &np_sleep_value, Icon_NOICON);
 MENUITEM_VALUE(np_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
+MENUITEM_VALUE(np_large_art, ID2P(LANG_UIPOD_LARGE_ART), &np_large_art_value, Icon_NOICON);
 /* Shuffle: an action, not a mode -- every pick reshuffles the live queue. */
 MENUITEM_RETURNVALUE(np_shuffle, ID2P(LANG_SHUFFLE), NP_SHUFFLE,
                      NULL, Icon_NOICON);
@@ -597,7 +611,7 @@ MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_UIPOD_START_VISUALIZER), NP_START_VIZ, NU
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
-          &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_mono_art, &np_addpl, &np_viz);
+          &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_mono_art, &np_large_art, &np_addpl, &np_viz);
 
 static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                                                    int button)
@@ -694,6 +708,12 @@ static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                     w->update = true;
                 }
                 break;
+            case ACTION_WPS_HOTKEY:
+                uipod_nowplaying_toggle_alt();
+                uipod_nowplaying_draw();
+                w->update = false;
+                break;
+
             /* menu key functions */
             case ACTION_WPS_MENU:
                 gwps_leave_wps();

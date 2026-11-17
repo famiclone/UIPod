@@ -47,12 +47,7 @@ MENUITEM_FUNCTION(tp_af_television, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_TELEVISIO
  * the reconcile's own Scanning screen. */
 static int uipod_library_rescan(void)
 {
-    if (uipod_source_is_navidrome())
-        uipod_navidrome_sync(true);
-    else if (uipod_source_is_jellyfin())
-        uipod_jellyfin_sync(true);
-    else
-        uipod_library_reconcile(true);
+    uipod_library_reconcile(true);
     return 0;
 }
 MENUITEM_FUNCTION(tp_af_rescan, 0, ID2P(LANG_UIPOD_RESCAN),

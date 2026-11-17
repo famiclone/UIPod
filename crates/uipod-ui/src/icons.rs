@@ -2,7 +2,7 @@
 
 use femtovg::{Align, Baseline, Canvas, Color, FontId, LineCap, LineJoin, Paint, Path, Renderer};
 
-use crate::{FileIconKind, PlayMode};
+use crate::{FileIconKind, HeaderSourceIcon, PlayMode};
 
 /// Builds a closed polygon path with circular corner rounding of `radius` at every vertex.
 pub fn rounded_polygon_path(pts: &[(f32, f32)], radius: f32) -> Path {
@@ -138,7 +138,88 @@ pub fn draw_play_mode_icon<R: Renderer>(
     }
 }
 
-/// Draws `icon_play_s` (`32x32` submenu chevron `[326]`/`[325]`).
+/// Draws `icon_arrow_s` (`32x32` submenu chevron `[1738]`/`[1737]`).
+pub fn draw_arrow_s<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
+    let ox = x + 6.055_625;
+    let oy = y + 0.999_941_4;
+    const V: [(f32, f32); 10] = [
+        (0.569_767_6, 0.911_383_5),
+        (4.088_759, 0.569_767_6),
+        (18.977_438, 12.823_519),
+        (19.888_632, 14.729_569),
+        (19.014_591, 16.652_94),
+        (4.125_911, 29.399_187),
+        (0.600_954_5, 29.125_912),
+        (0.874_231, 25.600_954),
+        (13.500_52, 14.791_546),
+        (0.911_383_5, 4.430_374_6),
+    ];
+    const SEGS: [(usize, usize, (f32, f32), (f32, f32)); 10] = [
+        (
+            0,
+            1,
+            (0.877_407_9, -1.066_077_2),
+            (-1.066_077_2, -0.877_407_9),
+        ),
+        (1, 2, (0.0, 0.0), (0.0, 0.0)),
+        (
+            2,
+            3,
+            (0.570_453_4, 0.469_497_26),
+            (-0.007_167_53, -0.738_778_3),
+        ),
+        (
+            3,
+            4,
+            (0.007_167_53, 0.738_778_3),
+            (0.561_236_86, -0.480_476_77),
+        ),
+        (4, 5, (0.0, 0.0), (0.0, 0.0)),
+        (
+            5,
+            6,
+            (-1.048_853_2, 0.897_926_7),
+            (0.897_926_7, 1.048_853_2),
+        ),
+        (
+            6,
+            7,
+            (-0.897_926_7, -1.048_853_2),
+            (-1.048_853_2, 0.897_926_7),
+        ),
+        (7, 8, (0.0, 0.0), (0.0, 0.0)),
+        (8, 9, (0.0, 0.0), (0.0, 0.0)),
+        (
+            9,
+            0,
+            (-1.066_077_2, -0.877_407_9),
+            (-0.877_407_9, 1.066_077_2),
+        ),
+    ];
+
+    let mut path = Path::new();
+    path.move_to(ox + V[0].0, oy + V[0].1);
+    for &(a, b, ta, tb) in &SEGS {
+        let va = V[a];
+        let vb = V[b];
+        if ta.0.abs() < 1e-5 && ta.1.abs() < 1e-5 && tb.0.abs() < 1e-5 && tb.1.abs() < 1e-5 {
+            path.line_to(ox + vb.0, oy + vb.1);
+        } else {
+            path.bezier_to(
+                ox + va.0 + ta.0,
+                oy + va.1 + ta.1,
+                ox + vb.0 + tb.0,
+                oy + vb.1 + tb.1,
+                ox + vb.0,
+                oy + vb.1,
+            );
+        }
+    }
+    path.close();
+    canvas.fill_path(&path, &Paint::color(color));
+}
+
+/// Draws `icon_play_s` (`32x32` cycle arrow `[326]`/`[325]`).
 pub fn draw_chevron_s<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
     // Exact Node [325] inside [326] (32x32): transform (4.0, 0.7462484), r = 2.0
     let ox = x + 4.0;
@@ -323,6 +404,284 @@ pub fn draw_hold_lock<R: Renderer>(
     canvas.fill_path(&kh, &Paint::color(bg));
 }
 
+/// Draws `icon_arrow_64` (`[1590]`/`[1589]`: `40x40` download arrow rotated 180° at `(x+52, y+52)`).
+pub fn draw_arrow_down_64<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
+    const V: [(f32, f32); 17] = [
+        (10.220_049, 37.564_68),
+        (10.220_049, 25.388_123),
+        (1.845_965_2, 25.388_123),
+        (0.195_599_12, 24.353_115),
+        (0.440_097_66, 22.404_865),
+        (18.105_135, 0.913_241_8),
+        (20.0, 0.0),
+        (21.894_865, 0.913_241_8),
+        (39.559_902, 22.404_865),
+        (39.804_4, 24.353_115),
+        (38.154_034, 25.388_123),
+        (29.779_951, 25.388_123),
+        (29.779_951, 37.564_68),
+        (29.075_794, 39.301_056),
+        (27.334_963, 39.999_992),
+        (12.665_037, 39.999_992),
+        (10.924_206, 39.298_622),
+    ];
+    const SEGS: [(usize, usize, (f32, f32), (f32, f32)); 17] = [
+        (0, 1, (0.0, 0.0), (0.0, 0.0)),
+        (1, 2, (0.0, 0.0), (0.0, 0.0)),
+        (2, 3, (-0.774_246, 0.0), (0.325_998, 0.690_005)),
+        (3, 4, (-0.325_998, -0.690_005), (-0.488_997, 0.608_828)),
+        (4, 5, (0.0, 0.0), (0.0, 0.0)),
+        (5, 6, (0.488_996, -0.608_828), (-0.774_247, 0.0)),
+        (6, 7, (0.774_247, 0.0), (-0.488_996, -0.608_828)),
+        (7, 8, (0.0, 0.0), (0.0, 0.0)),
+        (8, 9, (0.488_996, 0.608_828), (0.325_997, -0.690_005)),
+        (9, 10, (-0.326_0, 0.690_005), (0.774_247, 0.0)),
+        (10, 11, (0.0, 0.0), (0.0, 0.0)),
+        (11, 12, (0.0, 0.0), (0.0, 0.0)),
+        (12, 13, (0.0, 0.690_004), (0.469_438, -0.467_58)),
+        (13, 14, (-0.469_438, 0.467_58), (0.691_116, 0.001_623)),
+        (14, 15, (0.0, 0.0), (0.0, 0.0)),
+        (15, 16, (-0.692_747, 0.0), (0.467_807, 0.467_58)),
+        (16, 0, (-0.467_807, -0.467_58), (0.001_631, 0.688_381)),
+    ];
+
+    // Transform in [1589]: [-1, 0, 0, -1, 52, 52]
+    let tx = |px: f32| x + 52.0 - px;
+    let ty = |py: f32| y + 52.0 - py;
+
+    let mut path = Path::new();
+    path.move_to(tx(V[0].0), ty(V[0].1));
+    for &(a, b, ta, tb) in &SEGS {
+        let va = V[a];
+        let vb = V[b];
+        if ta.0.abs() < 1e-5 && ta.1.abs() < 1e-5 && tb.0.abs() < 1e-5 && tb.1.abs() < 1e-5 {
+            path.line_to(tx(vb.0), ty(vb.1));
+        } else {
+            path.bezier_to(
+                tx(va.0 + ta.0),
+                ty(va.1 + ta.1),
+                tx(vb.0 + tb.0),
+                ty(vb.1 + tb.1),
+                tx(vb.0),
+                ty(vb.1),
+            );
+        }
+    }
+    path.close();
+    canvas.fill_path(&path, &Paint::color(color));
+}
+
+/// Draws `64x64` `Header -> Group 3` source icon (`[1594]`, `[1591]`, `[1800]`, `[1804]`).
+pub fn draw_header_source_icon<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    kind: HeaderSourceIcon,
+    fg: Color,
+    bg: Color,
+) {
+    match kind {
+        HeaderSourceIcon::None => {}
+        HeaderSourceIcon::MicroSd => {
+            // [1594]/[1596] icon_microsd_64: 32.533x40.667 at (15.733, 11.667)
+            let ox = x + 15.733_334;
+            let oy = y + 11.666_667;
+            let mut body = Path::new();
+            body.move_to(ox + 8.133_333, oy + 0.0);
+            body.bezier_to(
+                ox + 8.133_333 - 2.245_958,
+                oy + 0.0,
+                ox + 4.066_666_6,
+                oy + 4.066_666_6 - 2.245_958,
+                ox + 4.066_666_6,
+                oy + 4.066_666_6,
+            );
+            body.line_to(ox + 4.066_666_6, oy + 18.3);
+            body.line_to(ox + 0.0, oy + 22.366_667);
+            body.line_to(ox + 0.0, oy + 36.6);
+            body.bezier_to(
+                ox + 0.0,
+                oy + 36.6 + 2.245_96,
+                ox + 4.066_666_6 - 2.245_958,
+                oy + 40.666_668,
+                ox + 4.066_666_6,
+                oy + 40.666_668,
+            );
+            body.line_to(ox + 28.466_667, oy + 40.666_668);
+            body.bezier_to(
+                ox + 28.466_667 + 2.245_96,
+                oy + 40.666_668,
+                ox + 32.533_333,
+                oy + 36.6 + 2.245_96,
+                ox + 32.533_333,
+                oy + 36.6,
+            );
+            body.line_to(ox + 32.533_333, oy + 4.066_666_6);
+            body.bezier_to(
+                ox + 32.533_333,
+                oy + 4.066_666_6 - 2.245_958,
+                ox + 28.466_667 + 2.245_96,
+                oy + 0.0,
+                ox + 28.466_667,
+                oy + 0.0,
+            );
+            body.close();
+            canvas.fill_path(&body, &Paint::color(fg));
+
+            let mut pins = Path::new();
+            pins.rect(ox + 10.166_667, oy + 4.066_666_6, 4.066_666_6, 8.133_333);
+            pins.rect(ox + 16.266_666, oy + 4.066_666_6, 4.066_666_6, 8.133_333);
+            pins.rect(ox + 22.366_667, oy + 4.066_666_6, 4.066_666_6, 8.133_333);
+            canvas.fill_path(&pins, &Paint::color(bg));
+        }
+        HeaderSourceIcon::Navidrome => {
+            // [1591]/[1593] icon_navidrome_64: 40x40 vinyl disc at (12.446, 13.391 -> center y=32)
+            let cx = x + 32.0;
+            let cy = y + 32.0;
+            let mut disc = Path::new();
+            disc.circle(cx, cy, 20.0);
+            canvas.fill_path(&disc, &Paint::color(fg));
+
+            // Center label ring + spindle cutout matching [1593] loops
+            let mut cut_ring = Path::new();
+            cut_ring.circle(cx, cy, 7.64);
+            canvas.fill_path(&cut_ring, &Paint::color(bg));
+
+            let mut inner_ring = Path::new();
+            inner_ring.circle(cx, cy, 6.07);
+            canvas.fill_path(&inner_ring, &Paint::color(fg));
+
+            let mut label_hole = Path::new();
+            label_hole.circle(cx, cy, 2.2);
+            canvas.fill_path(&label_hole, &Paint::color(bg));
+
+            let mut spindle = Path::new();
+            spindle.circle(cx, cy, 0.75);
+            canvas.fill_path(&spindle, &Paint::color(fg));
+
+            // Curved groove highlights (top-left & bottom-right arcs in bg)
+            let mut grooves = Paint::color(bg);
+            grooves.set_line_width(1.6);
+            grooves.set_line_cap(LineCap::Round);
+            for &r in &[11.5_f32, 15.2_f32] {
+                let mut g1 = Path::new();
+                g1.arc(
+                    cx,
+                    cy,
+                    r,
+                    std::f32::consts::PI,
+                    std::f32::consts::PI * 1.5,
+                    femtovg::Solidity::Solid,
+                );
+                canvas.stroke_path(&g1, &grooves);
+
+                let mut g2 = Path::new();
+                g2.arc(
+                    cx,
+                    cy,
+                    r,
+                    0.0,
+                    std::f32::consts::PI * 0.5,
+                    femtovg::Solidity::Solid,
+                );
+                canvas.stroke_path(&g2, &grooves);
+            }
+        }
+        HeaderSourceIcon::Jellyfin => {
+            // [1800]/[1799] icon_jellyfin_64: exact 3 concentric rounded Bezier triangles at (12.0, 11.667)
+            let ox = x + 11.999_262;
+            let oy = y + 11.666_667;
+
+            let mut outer = Path::new();
+            outer.move_to(ox + 20.000_738, oy + 0.003_333_4);
+            outer.bezier_to(
+                ox + 20.000_738 - 5.29,
+                oy + 0.003_333_4,
+                ox + 0.267_406_67 - 2.596_666_3,
+                oy + 36.110_535 - 5.215_077,
+                ox + 0.267_406_67,
+                oy + 36.110_535,
+            );
+            outer.bezier_to(
+                ox + 0.267_406_67 + 2.6,
+                oy + 36.110_535 + 5.215_077,
+                ox + 39.737_4 - 2.57,
+                oy + 36.110_535 + 5.156_743,
+                ox + 39.737_4,
+                oy + 36.110_535,
+            );
+            outer.bezier_to(
+                ox + 39.737_4 + 2.570_002_6,
+                oy + 36.110_535 - 5.156_743,
+                ox + 20.000_738 + 5.295,
+                oy + 0.0,
+                ox + 20.000_738,
+                oy + 0.0,
+            );
+            outer.close();
+            canvas.fill_path(&outer, &Paint::color(fg));
+
+            let mut mid = Path::new();
+            mid.move_to(ox + 32.934_07, oy + 31.585_47);
+            mid.bezier_to(
+                ox + 32.934_07 - 1.679_998_9,
+                oy + 31.585_47 + 3.380_05,
+                ox + 7.077_405_5 + 1.701_667_1,
+                oy + 31.585_47 + 3.416_716,
+                ox + 7.077_405_5,
+                oy + 31.585_47,
+            );
+            mid.bezier_to(
+                ox + 7.077_405_5 - 1.703_332_9,
+                oy + 31.585_47 - 3.418_385,
+                ox + 20.005_737 - 3.471_666_6,
+                oy + 7.925_118,
+                ox + 20.005_737,
+                oy + 7.925_118,
+            );
+            mid.bezier_to(
+                ox + 20.005_737 + 3.468_331_8,
+                oy + 7.925_118,
+                ox + 32.937_4 + 1.685_002_4,
+                oy + 31.585_47 - 3.383_384_7,
+                ox + 32.937_4,
+                oy + 31.585_47,
+            );
+            mid.close();
+            canvas.fill_path(&mid, &Paint::color(bg));
+
+            let mut inner = Path::new();
+            inner.move_to(ox + 20.000_738, oy + 15.330_228);
+            inner.bezier_to(
+                ox + 20.000_738 - 1.756_666_3,
+                oy + 15.330_228,
+                ox + 13.450_738 - 0.859_999_54,
+                oy + 27.312_07 - 1.731_691_6,
+                ox + 13.450_738,
+                oy + 27.312_07,
+            );
+            inner.bezier_to(
+                ox + 13.450_738 + 0.863_334_24,
+                oy + 27.312_07 + 1.733_360_6,
+                ox + 26.550_737 - 0.853_333_35,
+                oy + 27.312_07 + 1.711_692_8,
+                ox + 26.550_737,
+                oy + 27.312_07,
+            );
+            inner.bezier_to(
+                ox + 26.550_737 + 0.851_666,
+                oy + 27.312_07 - 1.711_691_2,
+                ox + 20.000_738 + 1.759_999_4,
+                oy + 15.328_56,
+                ox + 20.000_738,
+                oy + 15.328_56,
+            );
+            inner.close();
+            canvas.fill_path(&inner, &Paint::color(fg));
+        }
+    }
+}
+
 /// Builds the outer contour of `Battery` shell `[1562]` (`64.0 x 38.4` at `(ox, oy)`).
 fn battery_shell_outer_path(ox: f32, oy: f32) -> Path {
     const V: [(f32, f32); 10] = [
@@ -379,19 +738,20 @@ pub fn draw_battery<R: Renderer>(
     y: f32,
     percent: u8,
     is_charging: bool,
-    fg: Color,
+    shell_color: Color,
+    bar_color: Color,
     bg: Color,
 ) {
-    // 1. Shell [1562]: outer body at (x, y + 12.8) + inner cavity cutout (x + 6.4, y + 19.2, 48.0, 25.6, r = 3.2)
+    // 1. Shell [1562]/[1567] in fg2 (`shell_color`): outer body at (x, y + 12.8) + inner cavity cutout in bg
     let shell = battery_shell_outer_path(x, y + 12.8);
-    canvas.fill_path(&shell, &Paint::color(fg));
+    canvas.fill_path(&shell, &Paint::color(shell_color));
     let cav_x = x + 6.4;
     let cav_y = y + 19.2;
     let cav_w = 48.0;
     let cav_h = 25.6;
     fill_rounded_rect(canvas, cav_x, cav_y, cav_w, cav_h, 3.2, bg);
 
-    // 2. Inner fill bar [1561]: (x + 9.6, y + 22.4, 41.6 * pct, 19.2), left corners r=3.2, right flat (r=3.2 at full)
+    // 2. Inner fill bar [1561]/[1566] in fg1 (`bar_color`): (x + 9.6, y + 22.4, 41.6 * pct, 19.2)
     let ix = x + 9.6;
     let iy = y + 22.4;
     let iw_max = 41.6;
@@ -405,10 +765,10 @@ pub fn draw_battery<R: Renderer>(
         let r_right = if clamped_pct >= 98 { r_left } else { 0.0 };
         let mut bar = Path::new();
         bar.rounded_rect_varying(ix, iy, fill_w, ih, r_left, r_right, r_right, r_left);
-        canvas.fill_path(&bar, &Paint::color(fg));
+        canvas.fill_path(&bar, &Paint::color(bar_color));
     }
 
-    // 3. Variant2 [1565]/[1570]: 12x16 charging bolt [1569] at (x + 25.0, y + 24.4), subtracted from fill bar
+    // 3. Variant2 [1565]/[1570]: 12x16 charging bolt [1569] at (x + 25.0, y + 24.4)
     if is_charging {
         let split_x = (ix + fill_w).clamp(cav_x, cav_x + cav_w);
         let filled_span = split_x - cav_x;
@@ -423,13 +783,13 @@ pub fn draw_battery<R: Renderer>(
         if empty_span > 0.0 {
             canvas.save();
             canvas.intersect_scissor(split_x, cav_y, empty_span, cav_h);
-            draw_charge_bolt_scaled(canvas, x + 25.0, y + 24.4, 2.0 / 3.0, fg);
+            draw_charge_bolt_scaled(canvas, x + 25.0, y + 24.4, 2.0 / 3.0, shell_color);
             canvas.restore();
         }
     }
 }
 
-/// Draws vertical `Scrollbar` (`16xh` component `[312]`): `r=8`, `stroke=4 inside`, `4px` inset `8px` thumb `r=4`.
+/// Draws vertical `Scrollbar` (`16xh` component `[312]`): `r=8`, `stroke=4 inside` (`fg1`), `4px` inset `8px` thumb `r=4` (`fg`).
 pub fn draw_scrollbar_v<R: Renderer>(
     canvas: &mut Canvas<R>,
     x: f32,
@@ -439,9 +799,10 @@ pub fn draw_scrollbar_v<R: Renderer>(
     total_items: usize,
     start_item: usize,
     visible_items: usize,
-    fg: Color,
+    border_color: Color,
+    thumb_color: Color,
 ) {
-    stroke_rounded_rect_inside(canvas, x, y, w, h, 8.0, 4.0, fg);
+    stroke_rounded_rect_inside(canvas, x, y, w, h, 8.0, 4.0, border_color);
     let inset = 4.0;
     let inner_w = (w - inset * 2.0).max(4.0); // 8.0 when w == 16.0
     let inner_h = (h - inset * 2.0).max(8.0);
@@ -458,10 +819,10 @@ pub fn draw_scrollbar_v<R: Renderer>(
         0.0
     };
     let thumb_y = y + inset + (inner_h - thumb_h) * scroll_ratio;
-    fill_rounded_rect(canvas, x + inset, thumb_y, inner_w, thumb_h, 4.0, fg);
+    fill_rounded_rect(canvas, x + inset, thumb_y, inner_w, thumb_h, 4.0, thumb_color);
 }
 
-/// Draws horizontal `Seekbar` track (`wx24` component `[641]`): `r=16` (pill), `stroke=4 inside`, `4px` inset `16px` fill `r=8`.
+/// Draws horizontal `Seekbar` track (`wx24` component `[641]`): `r=16` (pill), `stroke=4 inside` (`fg1`), `4px` inset `16px` fill `r=8` (`fg2`).
 pub fn draw_seekbar_track_h<R: Renderer>(
     canvas: &mut Canvas<R>,
     x: f32,
@@ -469,16 +830,17 @@ pub fn draw_seekbar_track_h<R: Renderer>(
     w: f32,
     h: f32,
     progress: f32,
-    fg: Color,
+    border_color: Color,
+    fill_color: Color,
 ) {
-    stroke_rounded_rect_inside(canvas, x, y, w, h, 16.0, 4.0, fg);
+    stroke_rounded_rect_inside(canvas, x, y, w, h, 16.0, 4.0, border_color);
     let inset = 4.0;
     let inner_w_max = (w - inset * 2.0).max(0.0);
     let inner_h = (h - inset * 2.0).max(4.0); // 16.0 when h == 24.0
     let p = progress.clamp(0.0, 1.0);
     let fill_w = inner_w_max * p;
     if fill_w >= 1.0 {
-        fill_rounded_rect(canvas, x + inset, y + inset, fill_w, inner_h, 8.0, fg);
+        fill_rounded_rect(canvas, x + inset, y + inset, fill_w, inner_h, 8.0, fill_color);
     }
 }
 

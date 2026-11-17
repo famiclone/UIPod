@@ -87,6 +87,25 @@ impl AudioQuality {
     }
 }
 
+pub const DEFAULT_CACHE_LOCATION: &str = "/mnt/SDCARD/Media";
+
+pub fn normalize_cache_location(raw: &str) -> String {
+    let mut s = raw.trim().trim_end_matches('/').to_string();
+    if s.is_empty() {
+        return DEFAULT_CACHE_LOCATION.to_string();
+    }
+    if let Some(stripped) = s.strip_suffix("/jellyfin") {
+        if stripped.starts_with('/') && !stripped.is_empty() {
+            s = stripped.to_string();
+        }
+    }
+    if s.is_empty() {
+        DEFAULT_CACHE_LOCATION.to_string()
+    } else {
+        s
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JellyfinConfig {
     pub url: String,
@@ -99,6 +118,8 @@ pub struct JellyfinConfig {
     /// `0` means unlimited; default is `2048` MB (2 GB).
     pub cache_limit_mb: u32,
     pub allow_self_signed: bool,
+    /// Base media directory (e.g. `"/mnt/SDCARD/Media"`); Jellyfin caches into `<cache_location>/jellyfin`.
+    pub cache_location: String,
 }
 
 impl Default for JellyfinConfig {
@@ -113,11 +134,22 @@ impl Default for JellyfinConfig {
             audio_quality: AudioQuality::Original,
             cache_limit_mb: 2048,
             allow_self_signed: false,
+            cache_location: String::new(),
         }
     }
 }
 
 impl JellyfinConfig {
+    pub fn effective_roots(&self) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        if self.cache_location.trim().is_empty() {
+            None
+        } else {
+            let jf_root = std::path::PathBuf::from(normalize_cache_location(&self.cache_location))
+                .join("jellyfin");
+            let audio_root = jf_root.join("Music");
+            Some((jf_root, audio_root))
+        }
+    }
     pub fn is_configured(&self) -> bool {
         !self.url.trim().is_empty()
             && (!self.username.trim().is_empty()
@@ -157,6 +189,9 @@ impl JellyfinConfig {
                 "allow_self_signed" => {
                     cfg.allow_self_signed = matches!(val, "1" | "true" | "yes" | "on");
                 }
+                "cache_location" | "cache_dir" | "cache_root" => {
+                    cfg.cache_location = normalize_cache_location(val);
+                }
                 _ => {}
             }
         }
@@ -167,6 +202,14 @@ impl JellyfinConfig {
         fn clean_line(s: &str) -> String {
             s.chars().filter(|&c| c != '\r' && c != '\n').collect()
         }
+        let loc_line = if self.cache_location.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "cache_location={}\n",
+                clean_line(&normalize_cache_location(&self.cache_location))
+            )
+        };
         format!(
             "# UIPod Jellyfin Configuration\n\
              url={}\n\
@@ -177,7 +220,8 @@ impl JellyfinConfig {
              video_quality={}\n\
              audio_quality={}\n\
              cache_limit_mb={}\n\
-             allow_self_signed={}\n",
+             allow_self_signed={}\n\
+             {}",
             clean_line(&self.url),
             clean_line(&self.username),
             clean_line(&self.password),
@@ -187,6 +231,7 @@ impl JellyfinConfig {
             self.audio_quality as u8,
             self.cache_limit_mb,
             if self.allow_self_signed { 1 } else { 0 },
+            loc_line,
         )
     }
 }

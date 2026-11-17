@@ -46,6 +46,9 @@
 #include "iap-usb.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_rs_navidrome.h"
+#include "uipod_rs_jellyfin.h"
+#include "uipod_playlists.h"
 #include <stdio.h>
 
 
@@ -1142,6 +1145,8 @@ static void audio_playlist_track_change(void)
         uipod_jellyfin_enrich_id3(id3);
         uipod_navidrome_on_track_change(id3->path);
         uipod_jellyfin_on_track_change(id3->path);
+        if (uipod_prefetch_on_track_change() && filling == STATE_FULL)
+            audio_queue_post(Q_AUDIO_BUFFERING, BUFFER_EVENT_BUFFER_LOW);
         send_track_event(PLAYBACK_EVENT_TRACK_CHANGE,
                          track_event_flags, id3);
         iap_on_track_playback_index(playlist_get_display_index() - 1, false);
@@ -1604,10 +1609,41 @@ static int audio_load_track(void)
         if (!path)
             break;
 
-        if (uipod_navidrome_is_track_path(path))
-            uipod_navidrome_prepare_track(path, false);
-        else if (uipod_jellyfin_is_track_path(path))
-            uipod_jellyfin_prepare_track(path, false);
+        bool is_nav = uipod_navidrome_is_track_path(path);
+        bool is_jf  = !is_nav && uipod_jellyfin_is_track_path(path);
+        if (is_nav || is_jf)
+        {
+            if (track_list_count() > 0 &&
+                (!uipod_prefetch_allow_peek_offset(playlist_peek_offset) ||
+                 !file_exists(path)))
+            {
+                /* Outside the active 3-track prefetch window, or still
+                 * downloading on the background prefetch worker while an
+                 * earlier track is already buffered/playing: pause RAM
+                 * buffering at STATE_FULL instead of blocking or skipping! */
+                struct mp3entry *ub_id3 = id3_get(UNBUFFERED_ID3);
+                playlist_peek_offset--;
+                id3_mutex_lock();
+                if (is_nav)
+                    uipod_navidrome_fill_id3(path, ub_id3);
+                else
+                    uipod_jellyfin_fill_id3(path, ub_id3);
+                id3_mutex_unlock();
+                if (filling != STATE_FULL)
+                {
+                    track_list_free_info(&info);
+                    filling = STATE_FULL;
+                }
+                return LOAD_TRACK_OK;
+            }
+            if (!file_exists(path))
+            {
+                if (is_nav)
+                    uipod_navidrome_prepare_track(path, false);
+                else
+                    uipod_jellyfin_prepare_track(path, false);
+            }
+        }
 
         /* Test for broken playlists by probing for the files */
         if (file_exists(path))
@@ -3068,6 +3104,12 @@ void audio_playback_handler(struct queue_event *ev)
 
         case SYS_TIMEOUT:
             LOGFQUEUE_SYS_TIMEOUT("playback < SYS_TIMEOUT");
+            {
+                bool nav_pf = tp_navidrome_take_prefetch_done();
+                bool jf_pf  = tp_jellyfin_take_prefetch_done();
+                if ((nav_pf || jf_pf) && filling == STATE_FULL)
+                    audio_on_buffering(BUFFER_EVENT_BUFFER_LOW);
+            }
             break;
 
         default:

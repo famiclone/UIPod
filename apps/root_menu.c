@@ -549,8 +549,6 @@ void root_menu(void)
     int previous_browser = global_status.last_browser;
 
     push_current_activity(ACTIVITY_MAINMENU);
-    if (!uipod_source_is_configured())
-        uipod_source_boot_page();
     next_screen = root_menu_setup_screens();
 
     while (true)

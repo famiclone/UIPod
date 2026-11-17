@@ -32,8 +32,11 @@ void uipod_source_set_navidrome(bool navidrome);
 /* ---- Lifecycle & Catalog Sync ----------------------------------------- */
 void uipod_navidrome_init(void);
 void uipod_navidrome_close(void);
+bool uipod_navidrome_is_configured(void);
 bool uipod_navidrome_has_tracks(void);
 bool uipod_navidrome_sync(bool show_summary_splash);
+bool uipod_navidrome_sync_favourites(bool show_summary_splash);
+const char *uipod_navidrome_favourites_path(void);
 
 /* Thread-safe borrowed access to `/tmp/uipod-navidrome.db` for
  * `uipod_library.c` enumerators when `uipod_source_is_navidrome()`. */
@@ -78,5 +81,6 @@ bool uipod_navidrome_get_cover_info(const char *path,
 /* Playback lifecycle notifications from `playback.c` (audio thread). */
 void uipod_navidrome_on_track_change(const char *cur_path);
 void uipod_navidrome_on_track_finish(const struct mp3entry *id3);
+void uipod_navidrome_prefetch_steps(int max_steps);
 
 #endif /* UIPOD_NAVIDROME_H */

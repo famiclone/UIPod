@@ -33,6 +33,8 @@ void uipod_playlists_pick(const char *sel, int sel_attr);
  * takes a path set (a library artist/album has no single path to expand). */
 bool uipod_music_context(const char *title, const char *path, int attr);
 bool uipod_music_context_tracks(const char *title, char **paths, int count);
+bool uipod_music_context_track_in_list(const char *title, char **paths,
+                                       int count, int sel);
 
 /* Put a track or directory (recursive) into the live queue at `position`:
  * PLAYLIST_INSERT (after the current track), PLAYLIST_INSERT_LAST (the end)
@@ -45,6 +47,17 @@ bool uipod_queue_add(const char *path, int attr, int position, bool shuffle);
  * position); the track already playing is shown, not restarted.  Returns true
  * when it is playing (caller -> Now Playing). */
 bool uipod_play_track(const char *path);
+
+/* Build a full queue from `paths[0 .. count-1]` and start playback at
+ * `start_idx` so album/playlist/folder tracks continue playing sequentially. */
+bool uipod_play_tracks_at(char *const *paths, int count, int start_idx);
+
+/* 3-by-3 windowed background prefetch coordinator for remote tracks:
+ * - On queue start at `pos`: prefetches `[pos+1, pos+2]` (3-track initial window `[pos..pos+2]`).
+ * - When the 3rd track (`pos+2`) begins playing: advances window by +3 and prefetches `[pos+3..pos+5]`. */
+void uipod_prefetch_on_queue_start(void);
+bool uipod_prefetch_on_track_change(void);
+bool uipod_prefetch_allow_peek_offset(int peek_offset);
 
 /* Now Playing's Shuffle: a fresh random order for the whole live queue every
  * time, played from its top (the current track stops). */

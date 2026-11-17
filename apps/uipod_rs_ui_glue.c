@@ -27,10 +27,27 @@
 #include "settings.h"
 #include "status.h"
 #include "string-extra.h"
+#include "uipod_downloads.h"
+#include "uipod_jellyfin.h"
+#include "uipod_navidrome.h"
+#include "uipod_rs_jellyfin.h"
+#include "uipod_rs_navidrome.h"
 #include "uipod_rs_ui.h"
 #include "uipod_svg.h"
 #include "uipod_ui.h"
 #include "window-sdl.h"
+
+static uint8_t s_header_source_override = UIPOD_SRC_ICON_NONE;
+
+void uipod_gpu_set_header_source(uint8_t src_icon)
+{
+    s_header_source_override = src_icon;
+}
+
+uint8_t uipod_gpu_get_header_source(void)
+{
+    return s_header_source_override;
+}
 
 bool uipod_gpu_ui_ensure_ready(void)
 {
@@ -44,11 +61,11 @@ bool uipod_gpu_ui_ensure_ready(void)
         return true;
 
     return uipod_rs_ui_init(sdl_gl_get_proc_address,
-                              ROCKBOX_DIR "/fonts/PixelMplus12-Regular.ttf");
+                            ROCKBOX_DIR "/fonts/PixelMplus12-Regular.ttf");
 }
 
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,
-                             const char *override_title)
+                           const char *override_title)
 {
     if (!out)
         return;
@@ -59,7 +76,7 @@ void uipod_gpu_fill_header(struct UIPodRsHeader *out,
     if (!title || !title[0])
         title = sb_get_title(SCREEN_MAIN);
     if (!title || !title[0])
-        title = "UIPod Mini";
+        title = "UIPod";
 
     out->title  = title;
     out->legend = uipod_get_header_legend();
@@ -95,6 +112,39 @@ void uipod_gpu_fill_header(struct UIPodRsHeader *out,
 #else
     out->is_hold = is_keys_locked();
 #endif
+
+    bool dl_active = false;
+    uint32_t dl_done = 0, dl_total = 0;
+    uipod_downloads_header_status(&dl_active, &dl_done, &dl_total);
+    if (dl_active)
+    {
+        out->is_downloading = true;
+        out->download_done  = dl_done;
+        out->download_total = dl_total;
+    }
+    else
+    {
+        out->is_downloading = !uipod_offline_mode_get() &&
+                              (tp_navidrome_is_busy() ||
+                               tp_jellyfin_is_busy());
+        out->download_done  = 0;
+        out->download_total = 0;
+    }
+
+    uint8_t src_icon = s_header_source_override;
+    if (src_icon == UIPOD_SRC_ICON_NONE &&
+        (audio_status() & AUDIO_STATUS_PLAY) &&
+        wstate && wstate->id3 && wstate->id3->path[0])
+    {
+        const char *p = wstate->id3->path;
+        if (uipod_navidrome_is_track_path(p))
+            src_icon = UIPOD_SRC_ICON_NAVIDROME;
+        else if (uipod_jellyfin_is_track_path(p))
+            src_icon = UIPOD_SRC_ICON_JELLYFIN;
+        else
+            src_icon = UIPOD_SRC_ICON_MICROSD;
+    }
+    out->source_icon = src_icon;
 }
 
 bool uipod_gpu_render_header(void)
@@ -111,9 +161,11 @@ bool uipod_gpu_render_header(void)
     struct viewport *prev_vp = lcd_set_viewport(NULL);
     fb_data *fb = FBADDR(0, 0);
     bool ok = uipod_rs_ui_render_header((uint32_t)global_settings.bg_color,
-                                          (uint32_t)global_settings.fg_color,
-                                          &hdr,
-                                          (uint8_t *)fb);
+                                        (uint32_t)global_settings.fg_color,
+                                        (uint32_t)global_settings.fg1_color,
+                                        (uint32_t)global_settings.fg2_color,
+                                        &hdr,
+                                        (uint8_t *)fb);
     lcd_set_viewport(prev_vp);
 
     if (ok)
@@ -205,6 +257,11 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
             {
                 right_kind = 1;
             }
+            else if (indic[0] == '\x1f')
+            {
+                strlcpy(rval_bufs[r], indic + 1, sizeof(rval_bufs[r]));
+                right_kind = 5;
+            }
             else
             {
                 strlcpy(rval_bufs[r], indic, sizeof(rval_bufs[r]));
@@ -229,6 +286,8 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
     memset(&sc, 0, sizeof(sc));
     sc.bg_rgb        = (uint32_t)global_settings.bg_color;
     sc.fg_rgb        = (uint32_t)global_settings.fg_color;
+    sc.fg1_rgb       = (uint32_t)global_settings.fg1_color;
+    sc.fg2_rgb       = (uint32_t)global_settings.fg2_color;
     uipod_gpu_fill_header(&sc.header, resolved_title);
     sc.rows          = rows;
     sc.row_count     = row_count;
@@ -239,6 +298,39 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
     struct viewport *prev_vp = lcd_set_viewport(NULL);
     fb_data *fb = FBADDR(0, 0);
     bool ok = uipod_rs_ui_render_list(&sc, (uint8_t *)fb);
+    lcd_set_viewport(prev_vp);
+
+    if (ok)
+        lcd_update();
+    return ok;
+}
+
+bool uipod_gpu_render_keyboard(const char *text,
+                               const size_t row_counts[5],
+                               const struct UIPodRsKeyboardKey *keys)
+{
+    if (!row_counts || !keys)
+        return false;
+
+    if (!uipod_gpu_ui_ensure_ready())
+        return false;
+
+    screens[SCREEN_MAIN].scroll_stop();
+
+    struct UIPodRsKeyboard kbd;
+    memset(&kbd, 0, sizeof(kbd));
+    kbd.bg_rgb  = (uint32_t)global_settings.bg_color;
+    kbd.fg_rgb  = (uint32_t)global_settings.fg_color;
+    kbd.fg1_rgb = (uint32_t)global_settings.fg1_color;
+    kbd.fg2_rgb = (uint32_t)global_settings.fg2_color;
+    kbd.text    = text ? text : "";
+    for (int i = 0; i < 5; i++)
+        kbd.row_counts[i] = row_counts[i];
+    kbd.keys = keys;
+
+    struct viewport *prev_vp = lcd_set_viewport(NULL);
+    fb_data *fb = FBADDR(0, 0);
+    bool ok = uipod_rs_ui_render_keyboard(&kbd, (uint8_t *)fb);
     lcd_set_viewport(prev_vp);
 
     if (ok)

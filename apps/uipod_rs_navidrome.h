@@ -55,6 +55,7 @@ typedef struct TpNavConfigC {
     char     url[256];
     char     username[128];
     char     password[128];
+    char     cache_location[256];
     uint8_t  quality;           /* enum tp_nav_quality */
     uint8_t  allow_self_signed; /* 0 or 1 */
     uint16_t _pad;
@@ -102,12 +103,20 @@ bool   tp_navidrome_load_config_text(const char *ini_utf8);
 size_t tp_navidrome_format_config_text(char *out_buf, size_t out_cap);
 bool   tp_navidrome_get_config(TpNavConfigC *out_cfg);
 bool   tp_navidrome_set_config(const TpNavConfigC *in_cfg);
+size_t tp_navidrome_get_cache_root(char *out_buf, size_t out_cap);
+bool   tp_navidrome_is_busy(void);
 bool   tp_navidrome_is_configured(void);
 
 bool   tp_navidrome_ping(char *err_buf, size_t err_cap);
 int32_t tp_navidrome_sync_catalog(tp_nav_on_song_fn on_song,
                                   tp_nav_on_playlist_fn on_playlist,
                                   tp_nav_on_progress_fn on_progress,
+                                  tp_nav_cancel_fn cancel_cb,
+                                  void *user_ctx,
+                                  char *err_buf,
+                                  size_t err_cap);
+int32_t tp_navidrome_sync_starred(tp_nav_on_song_fn on_song,
+                                  tp_nav_on_playlist_fn on_playlist,
                                   tp_nav_cancel_fn cancel_cb,
                                   void *user_ctx,
                                   char *err_buf,
@@ -154,6 +163,16 @@ void   tp_navidrome_enqueue_prefetch(const char *path1_utf8,
                                      const char *path2_utf8,
                                      const char *song2_utf8,
                                      const char *cover2_utf8);
+void   tp_navidrome_enqueue_prefetch3(const char *path1_utf8,
+                                      const char *song1_utf8,
+                                      const char *cover1_utf8,
+                                      const char *path2_utf8,
+                                      const char *song2_utf8,
+                                      const char *cover2_utf8,
+                                      const char *path3_utf8,
+                                      const char *song3_utf8,
+                                      const char *cover3_utf8);
+bool   tp_navidrome_take_prefetch_done(void);
 
 void   tp_navidrome_notify_track_start(const char *song_id_utf8);
 void   tp_navidrome_notify_track_played(const char *song_id_utf8,

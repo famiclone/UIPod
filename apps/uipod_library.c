@@ -21,6 +21,7 @@
 
 #include "config.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>   /* strncasecmp */
@@ -41,6 +42,7 @@
 #include "kernel.h"    /* yield */
 #include "backlight.h" /* backlight_on */
 #include "uipod_folders.h"
+#include "uipod_downloads.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_ui.h" /* uipod_fullscreen_message */
@@ -48,6 +50,10 @@
 #define SCHEMA_VERSION 4
 
 static sqlite3 *db;
+static uint32_t s_local_gen          = 1;
+static uint32_t s_remote_gen         = 1;
+static uint32_t s_merged_local_gen   = 0;
+static uint32_t s_merged_remote_gen  = 0;
 
 /* "Scanning Library NN%" held over the synchronous scan.  Hidden until the walk
  * finds work (a forced rescan shows it up front): 0% from then, the percent
@@ -388,7 +394,8 @@ static int scan_dir(struct scan_stmts *s, const char *path, const char *parent,
             ps_add(&seen_dirs, child);
             touched += scan_dir(s, child, path, root_id, category, force);
         }
-        else if ((filetype_get_attr(e->d_name) & FILE_ATTR_MASK) == FILE_ATTR_AUDIO)
+        else if ((filetype_get_attr(e->d_name) & FILE_ATTR_MASK) == FILE_ATTR_AUDIO &&
+                 !filetype_is_video(e->d_name))
         {
             ps_add(&seen_files, child);
             if (!track_unchanged(s->track_sel, child, info.mtime, info.size))
@@ -575,52 +582,296 @@ int uipod_library_reconcile(bool force_full)
     pend_free();
     scan_stmts_close(&s);
     db_exec("COMMIT;");
+    s_local_gen++;
     if (changed) db_writeback();
     return touched;
 }
 
 extern bool retrohh_usb_host_connected(void);   /* power-target.c */
 
-static bool library_stale;
+static bool     library_stale;
+static uint32_t s_seen_dl_seq;
 
 void uipod_library_mark_stale(void)
 {
     library_stale = true;
 }
 
+void uipod_library_bump_remote_gen(void)
+{
+    s_remote_gen++;
+}
+
 void uipod_library_refresh_if_stale(void)
 {
-    if (uipod_source_is_navidrome() || uipod_source_is_jellyfin()) return;
+    uint32_t dl_seq = uipod_downloads_completed_seq();
+    if (dl_seq != s_seen_dl_seq)
+    {
+        s_seen_dl_seq = dl_seq;
+        s_remote_gen++;
+        library_stale = true;
+    }
     /* A computer still attached may be mid-copy: wait for the unplug. */
     if (!library_stale || retrohh_usb_host_connected()) return;
     library_stale = false;
     uipod_library_reconcile(false);
 }
 
-enum { QDB_LOCAL = 0, QDB_NAVIDROME = 1, QDB_JELLYFIN = 2 };
+/* ---- Unified Local + Navidrome + Jellyfin Merged Music Table ---------- */
 
-static sqlite3 *active_query_db(int *lock_kind)
+static const char MERGED_SCHEMA_SQL[] =
+    "CREATE TEMP TABLE IF NOT EXISTS merged_tracks("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  path TEXT NOT NULL UNIQUE,"
+    "  dedup_key TEXT NOT NULL,"
+    "  category INTEGER NOT NULL,"
+    "  title TEXT,"
+    "  browse_artist TEXT,"
+    "  sort_artist TEXT,"
+    "  album TEXT,"
+    "  genre TEXT,"
+    "  year INTEGER,"
+    "  tracknum INTEGER,"
+    "  discnum INTEGER,"
+    "  UNIQUE(category, dedup_key));"
+    "CREATE INDEX IF NOT EXISTS temp.idx_mt_artist ON merged_tracks(category, sort_artist, album, discnum, tracknum);"
+    "CREATE INDEX IF NOT EXISTS temp.idx_mt_album  ON merged_tracks(category, album, discnum, tracknum);"
+    "CREATE INDEX IF NOT EXISTS temp.idx_mt_browse ON merged_tracks(category, browse_artist, album, discnum, tracknum);"
+    "CREATE INDEX IF NOT EXISTS temp.idx_mt_title  ON merged_tracks(category, title, path);"
+    "CREATE INDEX IF NOT EXISTS temp.idx_mt_genre  ON merged_tracks(category, genre);";
+
+static void norm_dedup_token(const char *src, char *dst, size_t cap)
 {
-    if (uipod_source_is_navidrome())
+    if (cap == 0)
+        return;
+    if (!src)
     {
-        *lock_kind = QDB_NAVIDROME;
-        return uipod_navidrome_db_lock();
+        dst[0] = '\0';
+        return;
     }
-    if (uipod_source_is_jellyfin())
+
+    while (*src && (unsigned char)*src <= ' ')
+        src++;
+
+    size_t w = 0;
+    bool in_ws = false;
+    for (size_t i = 0; src[i] && w + 3 < cap; )
     {
-        *lock_kind = QDB_JELLYFIN;
-        return uipod_jellyfin_db_lock();
+        unsigned char c = (unsigned char)src[i];
+        if (c <= ' ')
+        {
+            in_ws = true;
+            i++;
+            continue;
+        }
+        if (in_ws && w > 0)
+        {
+            dst[w++] = ' ';
+            in_ws = false;
+        }
+        if (c >= 'A' && c <= 'Z')
+        {
+            dst[w++] = (char)(c + 32);
+            i++;
+        }
+        else if (c == 0xD0 && src[i + 1])
+        {
+            unsigned char c2 = (unsigned char)src[i + 1];
+            /* Cyrillic uppercase А..П (D0 90..9F) -> а..п (D0 B0..BF) */
+            if (c2 >= 0x90 && c2 <= 0x9F)
+            {
+                dst[w++] = (char)0xD0;
+                dst[w++] = (char)(c2 + 0x20);
+                i += 2;
+            }
+            /* Cyrillic uppercase Р..Я (D0 A0..AF) -> р..я (D1 80..8F) */
+            else if (c2 >= 0xA0 && c2 <= 0xAF)
+            {
+                dst[w++] = (char)0xD1;
+                dst[w++] = (char)(c2 - 0x20);
+                i += 2;
+            }
+            /* Ukrainian І, Ї, Є (D0 86, D0 87, D0 84) -> і, ї, є (D1 96, D1 97, D1 94) */
+            else if (c2 == 0x81 || c2 == 0x84 || c2 == 0x86 || c2 == 0x87)
+            {
+                dst[w++] = (char)0xD1;
+                dst[w++] = (char)(c2 + 0x10);
+                i += 2;
+            }
+            else
+            {
+                dst[w++] = (char)c;
+                i++;
+            }
+        }
+        else if (c == 0xD2 && (unsigned char)src[i + 1] == 0x90)
+        {
+            /* Ukrainian Ґ (D2 90) -> ґ (D2 91) */
+            dst[w++] = (char)0xD2;
+            dst[w++] = (char)0x91;
+            i += 2;
+        }
+        else
+        {
+            dst[w++] = (char)c;
+            i++;
+        }
     }
-    *lock_kind = QDB_LOCAL;
-    return db;
+    dst[w] = '\0';
 }
 
-static void release_query_db(int lock_kind)
+static void build_track_dedup_key(int category,
+                                  const char *path,
+                                  const char *browse_artist,
+                                  const char *album,
+                                  int discnum,
+                                  int tracknum,
+                                  const char *title,
+                                  char *out,
+                                  size_t cap)
 {
-    if (lock_kind == QDB_NAVIDROME)
+    char n_title[192];
+    norm_dedup_token(title, n_title, sizeof(n_title));
+    if (category != TP_CAT_MUSIC || !n_title[0])
+    {
+        snprintf(out, cap, "p:%s", path ? path : "");
+        return;
+    }
+
+    char n_artist[160], n_album[160];
+    norm_dedup_token(browse_artist, n_artist, sizeof(n_artist));
+    norm_dedup_token(album, n_album, sizeof(n_album));
+    int ndisc = (discnum <= 1) ? 1 : discnum;
+    int ntrk  = (tracknum > 0) ? tracknum : 0;
+    snprintf(out, cap, "m:%s\x1f%s\x1f%d\x1f%d\x1f%s",
+             n_artist, n_album, ndisc, ntrk, n_title);
+}
+
+static void merge_copy_from_db(sqlite3 *src_db,
+                               sqlite3_stmt *ins_stmt,
+                               bool require_file_exists)
+{
+    if (!src_db || !ins_stmt)
+        return;
+
+    sqlite3_stmt *sel = NULL;
+    if (sqlite3_prepare_v2(
+            src_db,
+            "SELECT path, category, title, browse_artist, sort_artist,"
+            " album, genre, year, tracknum, discnum FROM tracks;",
+            -1, &sel, NULL) != SQLITE_OK)
+    {
+        return;
+    }
+
+    while (sqlite3_step(sel) == SQLITE_ROW)
+    {
+        const char *path  = (const char *)sqlite3_column_text(sel, 0);
+        int category      = sqlite3_column_int(sel, 1);
+        const char *title = (const char *)sqlite3_column_text(sel, 2);
+        const char *ba    = (const char *)sqlite3_column_text(sel, 3);
+        const char *sa    = (const char *)sqlite3_column_text(sel, 4);
+        const char *album = (const char *)sqlite3_column_text(sel, 5);
+        const char *genre = (const char *)sqlite3_column_text(sel, 6);
+        int year          = sqlite3_column_int(sel, 7);
+        int tracknum      = sqlite3_column_int(sel, 8);
+        int discnum       = sqlite3_column_int(sel, 9);
+
+        if (!path || !path[0])
+            continue;
+        if (filetype_is_video(path))
+            continue;
+        if (require_file_exists)
+        {
+            struct stat st;
+            if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0)
+                continue;
+        }
+
+        char dkey[512];
+        build_track_dedup_key(category, path, ba, album, discnum, tracknum,
+                              title, dkey, sizeof(dkey));
+
+        sqlite3_bind_text(ins_stmt,  1, path, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(ins_stmt,  2, dkey, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int (ins_stmt,  3, category);
+        if (title && title[0]) sqlite3_bind_text(ins_stmt, 4, title, -1, SQLITE_TRANSIENT);
+        else                   sqlite3_bind_null(ins_stmt, 4);
+        sqlite3_bind_text(ins_stmt,  5, ba ? ba : "", -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(ins_stmt,  6, sa ? sa : "", -1, SQLITE_TRANSIENT);
+        if (album && album[0]) sqlite3_bind_text(ins_stmt, 7, album, -1, SQLITE_TRANSIENT);
+        else                   sqlite3_bind_null(ins_stmt, 7);
+        if (genre && genre[0]) sqlite3_bind_text(ins_stmt, 8, genre, -1, SQLITE_TRANSIENT);
+        else                   sqlite3_bind_null(ins_stmt, 8);
+        sqlite3_bind_int (ins_stmt,  9, year);
+        sqlite3_bind_int (ins_stmt, 10, tracknum);
+        sqlite3_bind_int (ins_stmt, 11, discnum);
+
+        sqlite3_step(ins_stmt);
+        sqlite3_reset(ins_stmt);
+    }
+
+    sqlite3_finalize(sel);
+}
+
+static bool ensure_merged_tracks(void)
+{
+    if (!db)
+        return false;
+
+    uint32_t dl_seq = uipod_downloads_completed_seq();
+    if (dl_seq != s_seen_dl_seq)
+    {
+        s_seen_dl_seq = dl_seq;
+        s_remote_gen++;
+        library_stale = true;
+    }
+
+    if (s_merged_local_gen == s_local_gen &&
+        s_merged_remote_gen == s_remote_gen)
+    {
+        return true;
+    }
+
+    if (db_exec(MERGED_SCHEMA_SQL) != SQLITE_OK)
+        return false;
+
+    bool offline = uipod_offline_mode_get();
+
+    db_exec("BEGIN;");
+    db_exec("DELETE FROM temp.merged_tracks;");
+
+    sqlite3_stmt *ins = NULL;
+    if (sqlite3_prepare_v2(
+            db,
+            "INSERT OR IGNORE INTO temp.merged_tracks("
+            "path, dedup_key, category, title, browse_artist, sort_artist,"
+            "album, genre, year, tracknum, discnum)"
+            " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11);",
+            -1, &ins, NULL) == SQLITE_OK)
+    {
+        /* 1) Local SD tracks first (already on disk -> instant local playback) */
+        merge_copy_from_db(db, ins, false);
+
+        /* 2) Navidrome catalog (in Offline Mode, only cached/downloaded files) */
+        sqlite3 *nav_db = uipod_navidrome_db_lock();
+        if (nav_db)
+            merge_copy_from_db(nav_db, ins, offline);
         uipod_navidrome_db_unlock();
-    else if (lock_kind == QDB_JELLYFIN)
+
+        /* 3) Jellyfin music catalog (in Offline Mode, only cached/downloaded files) */
+        sqlite3 *jf_db = uipod_jellyfin_db_lock();
+        if (jf_db)
+            merge_copy_from_db(jf_db, ins, offline);
         uipod_jellyfin_db_unlock();
+
+        sqlite3_finalize(ins);
+    }
+
+    db_exec("COMMIT;");
+    s_merged_local_gen  = s_local_gen;
+    s_merged_remote_gen = s_remote_gen;
+    return true;
 }
 
 /* ---- Shuffle All's track set ------------------------------------------ */
@@ -628,19 +879,15 @@ static void release_query_db(int lock_kind)
 void uipod_library_music_paths(bool (*cb)(const char *path, void *ctx),
                                  void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     /* Title order is what Shuffle Off restores.  The LIMIT is the queue cap, so
      * an over-cap library yields a random sample, not its alphabetical head. */
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb,
-            "SELECT path FROM (SELECT path, title FROM tracks WHERE category=?"
+    if (sqlite3_prepare_v2(db,
+            "SELECT path FROM (SELECT path, title FROM temp.merged_tracks WHERE category=?"
             " ORDER BY RANDOM() LIMIT ?) ORDER BY title, path;", -1, &st, NULL)
             != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     sqlite3_bind_int(st, 1, TP_CAT_MUSIC);
@@ -652,50 +899,40 @@ void uipod_library_music_paths(bool (*cb)(const char *path, void *ctx),
             break;
     }
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 void uipod_library_artists(int category,
         void (*cb)(const char *, int, void *), void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb,
-            "SELECT browse_artist, COUNT(*) FROM tracks WHERE category=?"
+    if (sqlite3_prepare_v2(db,
+            "SELECT browse_artist, COUNT(*) FROM temp.merged_tracks WHERE category=?"
             " GROUP BY sort_artist ORDER BY sort_artist;", -1, &st, NULL) != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     sqlite3_bind_int(st, 1, category);
     while (sqlite3_step(st) == SQLITE_ROW)
         cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 void uipod_library_albums(int category, const char *ba,
         void (*cb)(const char *, int, void *), void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     /* One artist -> chronological (year, then title); ba==NULL -> every album in
      * the library, alphabetical (the flat "Albums" facet). */
-    char sql[160];
+    char sql[192];
     snprintf(sql, sizeof sql,
-        "SELECT album, MAX(year) FROM tracks WHERE category=?%s"
+        "SELECT album, MAX(year) FROM temp.merged_tracks WHERE category=?%s"
         " GROUP BY album ORDER BY %s;",
         ba ? " AND browse_artist=?" : "",
         ba ? "MAX(year), album" : "album");
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb, sql, -1, &st, NULL) != SQLITE_OK)
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     sqlite3_bind_int(st, 1, category);
@@ -703,16 +940,12 @@ void uipod_library_albums(int category, const char *ba,
     while (sqlite3_step(st) == SQLITE_ROW)
         cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 void uipod_library_tracks(int category, const char *ba, const char *album,
         void (*cb)(const char *title, const char *path, void *ctx), void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     /* Deterministic order: the browse queues rows as listed, so a row index is
      * its playlist index.  album==NULL -> the artist's whole library; ba==NULL
      * too -> the "Songs" facet. */
@@ -721,14 +954,13 @@ void uipod_library_tracks(int category, const char *ba, const char *album,
                       :         " ORDER BY title, path";
     char sql[256];
     snprintf(sql, sizeof sql,
-        "SELECT title, path FROM tracks WHERE category=?%s%s%s;",
+        "SELECT title, path FROM temp.merged_tracks WHERE category=?%s%s%s;",
         ba ? " AND browse_artist=?" : "",
         album ? " AND album=?" : "",
         order);
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb, sql, -1, &st, NULL) != SQLITE_OK)
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     int bi = 1;
@@ -739,48 +971,38 @@ void uipod_library_tracks(int category, const char *ba, const char *album,
         cb((const char *)sqlite3_column_text(st, 0),
            (const char *)sqlite3_column_text(st, 1), ctx);
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 void uipod_library_genres(int category,
         void (*cb)(const char *genre, int track_count, void *ctx), void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb,
-            "SELECT COALESCE(genre, ''), COUNT(*) FROM tracks WHERE category=?"
+    if (sqlite3_prepare_v2(db,
+            "SELECT COALESCE(genre, ''), COUNT(*) FROM temp.merged_tracks WHERE category=?"
             " GROUP BY COALESCE(genre, '')"
             " ORDER BY CASE WHEN genre IS NULL OR genre='' THEN 1 ELSE 0 END,"
             " genre COLLATE NOCASE;", -1, &st, NULL) != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     sqlite3_bind_int(st, 1, category);
     while (sqlite3_step(st) == SQLITE_ROW)
         cb((const char *)sqlite3_column_text(st, 0), sqlite3_column_int(st, 1), ctx);
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 void uipod_library_genre_tracks(int category, const char *genre,
         void (*cb)(const char *title, const char *path, void *ctx), void *ctx)
 {
-    if (!cb) return;
-    int lock_kind = QDB_LOCAL;
-    sqlite3 *qdb = active_query_db(&lock_kind);
-    if (!qdb) { release_query_db(lock_kind); return; }
+    if (!cb || !ensure_merged_tracks()) return;
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(qdb,
-            "SELECT title, path FROM tracks"
+    if (sqlite3_prepare_v2(db,
+            "SELECT title, path FROM temp.merged_tracks"
             " WHERE category=? AND COALESCE(genre, '')=?"
             " ORDER BY album COLLATE NOCASE, discnum, tracknum, title COLLATE NOCASE, path;",
             -1, &st, NULL) != SQLITE_OK)
     {
-        release_query_db(lock_kind);
         return;
     }
     sqlite3_bind_int (st, 1, category);
@@ -789,7 +1011,6 @@ void uipod_library_genre_tracks(int category, const char *genre,
         cb((const char *)sqlite3_column_text(st, 0),
            (const char *)sqlite3_column_text(st, 1), ctx);
     sqlite3_finalize(st);
-    release_query_db(lock_kind);
 }
 
 /* ---- open / migrate / init ------------------------------------------- */
@@ -866,6 +1087,8 @@ void uipod_library_init(void)
             return;                              /* app still runs without the index */
         }
     }
+    s_merged_local_gen  = 0;
+    s_merged_remote_gen = 0;
     /* Reconciled on first use, not at boot: a big library's walk is seconds.
      * Every reader refreshes first (uipod_library_refresh_if_stale). */
     uipod_library_mark_stale();

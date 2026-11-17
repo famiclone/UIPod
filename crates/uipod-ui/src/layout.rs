@@ -579,6 +579,37 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct NowPlayingAltBoxes {
+    pub art_box: LayoutBox,
+    pub seekbar_track: LayoutBox,
+    pub seekbar_labels: LayoutBox,
+}
+
+/// Computes `Now Playing (Alt)` layout (`[1805]`: `534x534` cover at `(245, 64)` + `Seekbar` at `(32, 670)`).
+pub fn compute_now_playing_alt_layout() -> NowPlayingAltBoxes {
+    NowPlayingAltBoxes {
+        art_box: LayoutBox {
+            x: 245.0,
+            y: 64.0,
+            w: 534.0,
+            h: 534.0,
+        },
+        seekbar_track: LayoutBox {
+            x: 32.0,
+            y: 670.0,
+            w: 960.0,
+            h: 24.0,
+        },
+        seekbar_labels: LayoutBox {
+            x: 32.0,
+            y: 704.0,
+            w: 960.0,
+            h: 40.0,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

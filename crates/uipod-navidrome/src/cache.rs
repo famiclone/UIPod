@@ -5,7 +5,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
@@ -344,6 +344,7 @@ pub struct CacheManager {
     cache_root: PathBuf,
     transport: Arc<dyn HttpTransport>,
     shared: Arc<(Mutex<SharedState>, Condvar)>,
+    prefetch_done: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -364,13 +365,15 @@ impl CacheManager {
             }),
             Condvar::new(),
         ));
+        let prefetch_done = Arc::new(AtomicBool::new(false));
 
         let worker_transport = Arc::clone(&transport);
         let worker_shared = Arc::clone(&shared);
+        let worker_pf_done = Arc::clone(&prefetch_done);
         let worker = thread::Builder::new()
             .name("tp-navidrome-bg".to_string())
             .spawn(move || {
-                Self::worker_loop(worker_transport, worker_shared);
+                Self::worker_loop(worker_transport, worker_shared, worker_pf_done);
             })
             .ok();
 
@@ -378,7 +381,16 @@ impl CacheManager {
             cache_root,
             transport,
             shared,
+            prefetch_done,
             worker,
+        }
+    }
+
+    pub fn take_prefetch_done(&self) -> bool {
+        if self.prefetch_done.load(Ordering::Acquire) {
+            self.prefetch_done.swap(false, Ordering::AcqRel)
+        } else {
+            false
         }
     }
 
@@ -468,6 +480,10 @@ impl CacheManager {
 
     pub fn is_pinned(&self, local_path: &Path) -> bool {
         self.shared.0.lock().unwrap().pinned.contains(local_path)
+    }
+
+    pub fn is_busy(&self) -> bool {
+        !self.shared.0.lock().unwrap().in_flight.is_empty()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -676,13 +692,17 @@ impl CacheManager {
         }
     }
 
-    /// Replace stale upcoming-track prefetches with the new next 1-2 tracks in the queue,
+    /// Replace stale upcoming-track prefetches with the new next 1-3 tracks in the queue,
     /// while preserving any queued Subsonic scrobbles.
     pub fn set_prefetch_targets(&self, targets: Vec<(PathBuf, String, String)>) {
         let mut st = self.shared.0.lock().unwrap();
         st.bg_queue
             .retain(|job| matches!(job, BgJob::Scrobble { .. } | BgJob::FetchCover { .. }));
+        let mut seen_paths = HashSet::new();
         for (local_path, song_id, cover_id) in targets {
+            if !seen_paths.insert(local_path.clone()) {
+                continue;
+            }
             let cover_dest = self.cover_path_for_track(&local_path, &cover_id);
             if song_id.is_empty() || Self::file_ready(&local_path) {
                 if !cover_id.is_empty()
@@ -1039,6 +1059,7 @@ impl CacheManager {
     fn worker_loop(
         transport: Arc<dyn HttpTransport>,
         shared: Arc<(Mutex<SharedState>, Condvar)>,
+        prefetch_done: Arc<AtomicBool>,
     ) {
         loop {
             let (job, cfg) = {
@@ -1119,6 +1140,7 @@ impl CacheManager {
                             quality,
                             None,
                         );
+                        let ok = res.is_ok();
                         {
                             let mut st = shared.0.lock().unwrap();
                             st.in_flight.remove(&local_path);
@@ -1126,6 +1148,9 @@ impl CacheManager {
                                 st.recent_err = Some((local_path.clone(), e));
                             }
                             shared.1.notify_all();
+                        }
+                        if ok {
+                            prefetch_done.store(true, Ordering::Release);
                         }
                     }
                 }
@@ -1260,6 +1285,7 @@ mod tests {
             quality: StreamQuality::Mp3_320,
             cache_limit_mb: 512,
             allow_self_signed: true,
+            ..Default::default()
         });
 
         let p_pinned = mgr.track_path_for_meta(

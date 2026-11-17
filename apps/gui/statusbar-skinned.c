@@ -34,9 +34,11 @@
 #include "statusbar.h"
 #include "statusbar-skinned.h"
 #include "debug.h"
+#include "file.h"
 #include "font.h"
 #include "icon.h"
 #include "icons.h"
+#include "lang.h"
 #include "option_select.h"
 #include "misc.h"
 #include "string-extra.h"
@@ -46,8 +48,9 @@
 static int update_delay = DEFAULT_UPDATE_DELAY;
 
 static bool sbs_has_title[NB_SCREENS];
-static const char* sbs_title[NB_SCREENS];
-static char sbs_persistent_title[NB_SCREENS][80];
+static bool sbs_title_valid[NB_SCREENS];
+static bool sbs_title_is_persistent[NB_SCREENS];
+static char sbs_title_buf[NB_SCREENS][MAX_PATH];
 static enum themable_icons sbs_icon[NB_SCREENS];
 static bool sbs_loaded[NB_SCREENS] = { false };
 
@@ -55,7 +58,29 @@ void sb_set_info_vp(enum screen_type screen, OFFSETTYPE(char*) label);
 
 bool sb_set_title_text(const char* title, enum themable_icons icon, enum screen_type screen)
 {
-    sbs_title[screen] = title;
+    sbs_title_is_persistent[screen] = false;
+    if (!title)
+    {
+        sbs_title_valid[screen] = false;
+        sbs_title_buf[screen][0] = '\0';
+    }
+    else
+    {
+        const char *resolved = NULL;
+        if (P2ID((const unsigned char *)title) <= VOICEONLY_DELIMITER)
+            resolved = (const char *)P2STR((const unsigned char *)title);
+        if (resolved)
+        {
+            if (resolved != sbs_title_buf[screen])
+                strlcpy(sbs_title_buf[screen], resolved, sizeof(sbs_title_buf[screen]));
+            sbs_title_valid[screen] = true;
+        }
+        else
+        {
+            sbs_title_valid[screen] = false;
+            sbs_title_buf[screen][0] = '\0';
+        }
+    }
     /* Icon_NOICON == -1 which the skin engine wants at position 1, so + 2 */
     sbs_icon[screen] = icon + 2;
     return sbs_has_title[screen];
@@ -63,11 +88,9 @@ bool sb_set_title_text(const char* title, enum themable_icons icon, enum screen_
 
 bool sb_set_persistent_title(const char* title, enum themable_icons icon, enum screen_type screen)
 {
-    if (!title)
-        return sb_set_title_text(title, icon, screen);
-
-    strlcpy(sbs_persistent_title[screen], title, sizeof(*sbs_persistent_title));
-    return sb_set_title_text((const char *) sbs_persistent_title[screen], icon, screen);
+    bool ret = sb_set_title_text(title, icon, screen);
+    sbs_title_is_persistent[screen] = (title != NULL && sbs_title_valid[screen]);
+    return ret;
 }
 
 void sb_skin_has_title(enum screen_type screen)
@@ -77,15 +100,15 @@ void sb_skin_has_title(enum screen_type screen)
 
 const char* sb_get_title(enum screen_type screen)
 {
-    return sbs_has_title[screen] ? sbs_title[screen] : NULL;
+    return (sbs_has_title[screen] && sbs_title_valid[screen])
+        ? sbs_title_buf[screen] : NULL;
 }
 
 const char* sb_get_persistent_title(enum screen_type screen)
 {
-    return (sbs_has_title[screen] &&
-            sbs_title[screen] == sbs_persistent_title[screen]) ?
-            sbs_title[screen] : NULL;
-
+    return (sbs_has_title[screen] && sbs_title_valid[screen] &&
+            sbs_title_is_persistent[screen])
+        ? sbs_title_buf[screen] : NULL;
 }
 
 enum themable_icons sb_get_icon(enum screen_type screen)

@@ -7,7 +7,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
@@ -384,6 +384,7 @@ pub struct JfCacheManager {
     inflight: Mutex<HashSet<PathBuf>>,
     inflight_cv: Condvar,
     part_seq: AtomicU64,
+    prefetch_done: AtomicBool,
     transport: Arc<dyn JfHttpTransport>,
     queue: Mutex<WorkerQueue>,
     queue_cv: Condvar,
@@ -398,10 +399,6 @@ impl JfCacheManager {
     ) -> Arc<Self> {
         let covers_fallback_dir = audio_root.join(COVERS_FALLBACK_DIR);
         let pinned_manifest_path = audio_root.join(PINNED_MANIFEST_NAME);
-        let _ = fs::create_dir_all(&video_root);
-        let _ = fs::create_dir_all(&audio_root);
-        let _ = fs::create_dir_all(&covers_fallback_dir);
-
         let initial_pinned = Self::load_pinned_manifest(&pinned_manifest_path, &audio_root);
 
         let mgr = Arc::new(Self {
@@ -414,6 +411,7 @@ impl JfCacheManager {
             inflight: Mutex::new(HashSet::new()),
             inflight_cv: Condvar::new(),
             part_seq: AtomicU64::new(1),
+            prefetch_done: AtomicBool::new(false),
             transport,
             queue: Mutex::new(WorkerQueue {
                 jobs: VecDeque::new(),
@@ -462,6 +460,10 @@ impl JfCacheManager {
 
     pub fn transport(&self) -> &Arc<dyn JfHttpTransport> {
         &self.transport
+    }
+
+    pub fn is_busy(&self) -> bool {
+        !self.inflight.lock().unwrap().is_empty()
     }
 
     pub fn set_config(&self, mut new_cfg: JellyfinConfig) {
@@ -1050,6 +1052,20 @@ impl JfCacheManager {
         self.queue_cv.notify_one();
     }
 
+    pub fn clear_audio_prefetches(&self) {
+        let mut q = self.queue.lock().unwrap();
+        q.jobs
+            .retain(|job| !matches!(job, WorkerJob::PrefetchAudio { .. }));
+    }
+
+    pub fn take_prefetch_done(&self) -> bool {
+        if self.prefetch_done.load(Ordering::Acquire) {
+            self.prefetch_done.swap(false, Ordering::AcqRel)
+        } else {
+            false
+        }
+    }
+
     pub fn enqueue_prefetch(
         &self,
         local_path: PathBuf,
@@ -1062,6 +1078,16 @@ impl JfCacheManager {
         }
         let mut q = self.queue.lock().unwrap();
         if q.stopped || q.jobs.len() >= 24 {
+            return;
+        }
+        let already_queued = q.jobs.iter().any(|job| match job {
+            WorkerJob::PrefetchAudio {
+                local_path: existing,
+                ..
+            } => existing == &local_path,
+            _ => false,
+        });
+        if already_queued {
             return;
         }
         q.jobs.push_back(WorkerJob::PrefetchAudio {
@@ -1117,14 +1143,21 @@ impl JfCacheManager {
                     original_suffix,
                     cover_id,
                 } => {
-                    let _ = self.prepare_audio_track(
-                        &local_path,
-                        &song_id,
-                        &original_suffix,
-                        &cover_id,
-                        false,
-                        None,
-                    );
+                    let was_ready = Self::file_ready(&local_path);
+                    if self
+                        .prepare_audio_track(
+                            &local_path,
+                            &song_id,
+                            &original_suffix,
+                            &cover_id,
+                            false,
+                            None,
+                        )
+                        .is_ok()
+                        && !was_ready
+                    {
+                        self.prefetch_done.store(true, Ordering::Release);
+                    }
                 }
                 WorkerJob::FetchCover {
                     local_track_path,

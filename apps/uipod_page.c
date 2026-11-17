@@ -11,7 +11,9 @@
  *   - lets system events (USB, poweroff) through to default_event_handler.
  ****************************************************************************/
 #include "config.h"
+#include "file.h"
 #include "kernel.h"
+#include "string-extra.h"
 #include "system.h"
 #include "action.h"
 #include "misc.h"
@@ -77,20 +79,31 @@ static void page_render_cb(void *ctx)
 void uipod_page_run(struct uipod_page *page)
 {
     const char *prev = uipod_get_header_legend();
-    const char *prev_title[NB_SCREENS] = { NULL };
+    bool had_prev_title[NB_SCREENS] = { false };
+    char prev_title[NB_SCREENS][MAX_PATH];
     enum themable_icons prev_icon[NB_SCREENS] = { Icon_NOICON };
 
-    /* Publish the page's own header title, remembering the one underneath (the
-     * parent list's) so it is back in place before the parent redraws.  The
-     * stored icon is biased by +2 for the skin engine -- undo that on the way
-     * out and it round-trips. */
-    if (page->title)
-        FOR_NB_SCREENS(i)
+    /* Always snapshot the parent's header title & icon by value so any child
+     * page (even one with page->title == NULL that updates its title dynamically
+     * via gui_synclist_set_title, such as the directory browser) cleanly
+     * restores the parent's title before returning. */
+    FOR_NB_SCREENS(i)
+    {
+        const char *cur_t = sb_get_title(i);
+        prev_icon[i] = (enum themable_icons)(sb_get_icon(i) - 2);
+        if (cur_t)
         {
-            prev_title[i] = sb_get_title(i);
-            prev_icon[i]  = (enum themable_icons)(sb_get_icon(i) - 2);
-            sb_set_title_text(page->title, Icon_NOICON, i);
+            strlcpy(prev_title[i], cur_t, sizeof(prev_title[i]));
+            had_prev_title[i] = true;
         }
+        else
+        {
+            prev_title[i][0] = '\0';
+            had_prev_title[i] = false;
+        }
+        if (page->title)
+            sb_set_title_text(page->title, Icon_NOICON, i);
+    }
 
     /* swallow the keypress that opened this page */
     action_wait_for_release();
@@ -222,10 +235,10 @@ void uipod_page_run(struct uipod_page *page)
         FOR_NB_SCREENS(i)
             viewportmanager_theme_undo(i, false);
 
-    /* put the parent's title back */
-    if (page->title)
-        FOR_NB_SCREENS(i)
-            sb_set_title_text(prev_title[i], prev_icon[i], i);
+    /* put the parent's title back unconditionally */
+    FOR_NB_SCREENS(i)
+        sb_set_title_text(had_prev_title[i] ? prev_title[i] : NULL,
+                          prev_icon[i], i);
 
     /* restore the header the parent page had, then (unless told not to) arm a
      * back slide so the screen we return to slides us away and itself back in.

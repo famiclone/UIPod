@@ -1,16 +1,16 @@
-# UIPod Mini / UIPod Ukrainian localization (synced with ui.figcraft mode2 = "ua")
+# UIPod Ukrainian localization (synced with ui.figcraft mode2 = "ua")
 <phrase>
   id: LANG_ROCKBOX_TITLE
   desc: main menu title
   user: core
   <source>
-    *: "UIPod Mini"
+    *: "UIPod"
   </source>
   <dest>
-    *: "UIPod Mini"
+    *: "UIPod"
   </dest>
   <voice>
-    *: "UIPod Mini"
+    *: "UIPod"
   </voice>
 </phrase>
 <phrase>
@@ -1018,10 +1018,10 @@
     *: "Server URL"
   </source>
   <dest>
-    *: "URL сервера"
+    *: "Адреса сервера"
   </dest>
   <voice>
-    *: "URL сервера"
+    *: "Адреса сервера"
   </voice>
 </phrase>
 <phrase>
@@ -1032,10 +1032,10 @@
     *: "Username"
   </source>
   <dest>
-    *: "Логін"
+    *: "Імʼя користувача"
   </dest>
   <voice>
-    *: "Логін"
+    *: "Імʼя користувача"
   </voice>
 </phrase>
 <phrase>
@@ -1144,10 +1144,10 @@
     *: "Self-Signed TLS"
   </source>
   <dest>
-    *: "Самопідписаний TLS"
+    *: "Self-Signed TLS"
   </dest>
   <voice>
-    *: "Самопідписаний TLS"
+    *: "Self-Signed TLS"
   </voice>
 </phrase>
 <phrase>
@@ -1158,10 +1158,10 @@
     *: "Connect & Sync"
   </source>
   <dest>
-    *: "З'єднати й синхр."
+    *: "Вхід та синхронізація"
   </dest>
   <voice>
-    *: "З'єднати й синхронізувати"
+    *: "Вхід та синхронізація"
   </voice>
 </phrase>
 <phrase>
@@ -1666,5 +1666,425 @@
   </dest>
   <voice>
     *: "Завантажено відео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOURCES
+  desc: Settings -> Sources menu item and title
+  user: core
+  <source>
+    *: "Sources"
+  </source>
+  <dest>
+    *: "Джерела"
+  </dest>
+  <voice>
+    *: "Джерела"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CACHE_LOCATION
+  desc: Source settings Cache Location folder picker row
+  user: core
+  <source>
+    *: "Cache Location"
+  </source>
+  <dest>
+    *: "Місце для кешу"
+  </dest>
+  <voice>
+    *: "Місце для кешу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LARGE_ART
+  desc: Now Playing menu toggle for large centered album art view
+  user: core
+  <source>
+    *: "Large Album Art"
+  </source>
+  <dest>
+    *: "Великий кавер"
+  </dest>
+  <voice>
+    *: "Великий кавер"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REFRESH
+  desc: Refresh remote playlist or feed action
+  user: core
+  <source>
+    *: "Refresh"
+  </source>
+  <dest>
+    *: "Оновити"
+  </dest>
+  <voice>
+    *: "Оновити"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FAVOURITES
+  desc: Synthetic Navidrome starred tracks playlist name
+  user: core
+  <source>
+    *: "Favourites"
+  </source>
+  <dest>
+    *: "Favourites"
+  </dest>
+  <voice>
+    *: "Улюблені"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FAV_EMPTY_HINT
+  desc: Hint shown when opening an empty Favourites playlist
+  user: core
+  <source>
+    *: "Star tracks in Navidrome, then Hold A -> Refresh."
+  </source>
+  <dest>
+    *: "Вподобайте треки в Navidrome та натисніть Утр. A -> Оновити."
+  </dest>
+  <voice>
+    *: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_OFFLINE_MODE
+  desc: Toggle for Offline Mode (local & cached media only)
+  user: core
+  <source>
+    *: "Offline Mode"
+  </source>
+  <dest>
+    *: "Офлайн-режим"
+  </dest>
+  <voice>
+    *: "Офлайн-режим"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DOWNLOADS
+  desc: Settings menu item & screen title for persistent download queue
+  user: core
+  <source>
+    *: "Downloads"
+  </source>
+  <dest>
+    *: "Завантаження"
+  </dest>
+  <voice>
+    *: "Завантаження"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_EMPTY
+  desc: Placeholder row when download queue is empty
+  user: core
+  <source>
+    *: "(No downloads)"
+  </source>
+  <dest>
+    *: "(Немає завантажень)"
+  </dest>
+  <voice>
+    *: "Немає завантажень"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_ACTIVE
+  desc: Download item status while actively downloading
+  user: core
+  <source>
+    *: "Downloading"
+  </source>
+  <dest>
+    *: "Завантаження"
+  </dest>
+  <voice>
+    *: "Завантаження"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_QUEUED
+  desc: Download item status while queued
+  user: core
+  <source>
+    *: "Queued"
+  </source>
+  <dest>
+    *: "У черзі"
+  </dest>
+  <voice>
+    *: "У черзі"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_PAUSED
+  desc: Download item status while paused in Offline Mode
+  user: core
+  <source>
+    *: "Paused"
+  </source>
+  <dest>
+    *: "Пауза"
+  </dest>
+  <voice>
+    *: "Пауза"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_DONE
+  desc: Download item status when completed
+  user: core
+  <source>
+    *: "Done"
+  </source>
+  <dest>
+    *: "Готово"
+  </dest>
+  <voice>
+    *: "Готово"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_STATE_FAILED
+  desc: Download item status when failed
+  user: core
+  <source>
+    *: "Failed"
+  </source>
+  <dest>
+    *: "Помилка"
+  </dest>
+  <voice>
+    *: "Помилка"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_RETRY
+  desc: Action to retry a failed download
+  user: core
+  <source>
+    *: "Retry"
+  </source>
+  <dest>
+    *: "Повторити"
+  </dest>
+  <voice>
+    *: "Повторити"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_RETRY_FAILED
+  desc: Action to retry all failed downloads
+  user: core
+  <source>
+    *: "Retry Failed"
+  </source>
+  <dest>
+    *: "Повторити помилкові"
+  </dest>
+  <voice>
+    *: "Повторити помилкові"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_CLEAR_DONE
+  desc: Action to clear completed entries from download list
+  user: core
+  <source>
+    *: "Clear Completed"
+  </source>
+  <dest>
+    *: "Очистити завершені"
+  </dest>
+  <voice>
+    *: "Очистити завершені"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DL_CLEAR_ALL
+  desc: Action to cancel and clear all entries from download list
+  user: core
+  <source>
+    *: "Clear All"
+  </source>
+  <dest>
+    *: "Очистити все"
+  </dest>
+  <voice>
+    *: "Очистити все"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CUSTOMIZE_THEME
+  desc: Display menu item and screen title for custom 4-color theme editor
+  user: core
+  <source>
+    *: "Customize Theme"
+  </source>
+  <dest>
+    *: "Кастомізація теми"
+  </dest>
+  <voice>
+    *: "Кастомізація теми"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_BG
+  desc: Customize Theme row for background color
+  user: core
+  <source>
+    *: "Background"
+  </source>
+  <dest>
+    *: "Колір фону"
+  </dest>
+  <voice>
+    *: "Колір фону"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG
+  desc: Customize Theme row for primary foreground color
+  user: core
+  <source>
+    *: "Foreground"
+  </source>
+  <dest>
+    *: "Основний колір"
+  </dest>
+  <voice>
+    *: "Основний колір"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG1
+  desc: Customize Theme row for first auxiliary shade (fg-color-1)
+  user: core
+  <source>
+    *: "Secondary color 1"
+  </source>
+  <dest>
+    *: "Допоміжний колір 1"
+  </dest>
+  <voice>
+    *: "Допоміжний колір 1"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COLOR_FG2
+  desc: Customize Theme row for second auxiliary shade (fg-color-2)
+  user: core
+  <source>
+    *: "Secondary color 2"
+  </source>
+  <dest>
+    *: "Допоміжний колір 2"
+  </dest>
+  <voice>
+    *: "Допоміжний колір 2"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_INVALID_HEX
+  desc: Splash shown when user enters an invalid hex color code
+  user: core
+  <source>
+    *: "Invalid hex code"
+  </source>
+  <dest>
+    *: "Невірний HEX-код"
+  </dest>
+  <voice>
+    *: "Невірний HEX-код"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANSITION
+  desc: Display setting for screen transition animation style
+  user: core
+  <source>
+    *: "Screen Transition"
+  </source>
+  <dest>
+    *: "Анімація переходу"
+  </dest>
+  <voice>
+    *: "Анімація переходу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_SLIDE
+  desc: Classic horizontal slide transition
+  user: core
+  <source>
+    *: "Slide"
+  </source>
+  <dest>
+    *: "Зсув"
+  </dest>
+  <voice>
+    *: "Зсув"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_COVER
+  desc: Parallax cover stack transition
+  user: core
+  <source>
+    *: "Cover"
+  </source>
+  <dest>
+    *: "Каскад"
+  </dest>
+  <voice>
+    *: "Каскад"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_FADE
+  desc: Crossfade transition
+  user: core
+  <source>
+    *: "Fade"
+  </source>
+  <dest>
+    *: "Затухання"
+  </dest>
+  <voice>
+    *: "Затухання"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_PIXELS
+  desc: Bayer LCD pixel dissolve transition
+  user: core
+  <source>
+    *: "Pixels"
+  </source>
+  <dest>
+    *: "Пікселі"
+  </dest>
+  <voice>
+    *: "Пікселі"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TRANS_BLINDS
+  desc: Horizontal shutter blinds transition
+  user: core
+  <source>
+    *: "Blinds"
+  </source>
+  <dest>
+    *: "Жалюзі"
+  </dest>
+  <voice>
+    *: "Жалюзі"
   </voice>
 </phrase>

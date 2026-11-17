@@ -178,12 +178,14 @@ int ft_load(struct tree_context* c, const char* tempdir)
     if (!c->is_browsing)
         c->browse = NULL;
 
+    c->filesindir = 0;
+    c->dirsindir = 0;
+    c->dirlength = 0;
+    c->dirfull = false;
+
     dir = opendir(tempdir ? tempdir : c->currdir);
     if(!dir)
         return -1; /* not a directory */
-
-    c->dirsindir = 0;
-    c->dirfull = false;
 
     tree_lock_cache(c);
     while ((entry = readdir(dir))) {
@@ -232,7 +234,8 @@ int ft_load(struct tree_context* c, const char* tempdir)
 #define CHK_FT(show,attr) (*c->dirfilter == (show) && file_attr != (attr))
         /* filter out non-visible files */
         if ((!(dir_attr) && (CHK_FT(SHOW_PLAYLIST, FILE_ATTR_M3U) ||
-            (CHK_FT(SHOW_MUSIC, FILE_ATTR_AUDIO) && file_attr != FILE_ATTR_M3U) ||
+            (CHK_FT(SHOW_MUSIC, FILE_ATTR_AUDIO) && file_attr != FILE_ATTR_M3U &&
+             !filetype_is_video((char *)entry->d_name)) ||
             (*c->dirfilter == SHOW_VIDEO && !filetype_is_video((char *)entry->d_name)) ||
             (*c->dirfilter == SHOW_SUPPORTED && !filetype_supported(dptr->attr)))) ||
             CHK_FT(SHOW_WPS,  FILE_ATTR_WPS)  ||

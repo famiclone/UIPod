@@ -50,6 +50,7 @@
 #include "uipod_library.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_downloads.h"
 #include "uipod_page.h"
 #include "uipod_transition.h"
 #include "uipod_ui.h"
@@ -131,87 +132,29 @@ static int uipod_controls_page(void)
 
 static int uipod_exit_app(void)
 {
+    uipod_downloads_shutdown();
     sys_poweroff();
     return 0;
 }
 
-/* ---- Source type (#646): Local / Navidrome / Jellyfin ----------------- */
+/* ---- Sources (#646): Offline Mode + Navidrome / Jellyfin ------------ */
 
-static bool s_source_boot_mode;
+MENUITEM_VALUE(tp_set_offline, ID2P(LANG_UIPOD_OFFLINE_MODE),
+               &uipod_offline_mode_value_cb, Icon_NOICON);
 
-static int tp_source_select_local(void)
-{
-    uipod_source_set(UIPOD_SOURCE_LOCAL);
-    uipod_library_mark_stale();
-    if (!s_source_boot_mode)
-        uipod_home_pending = true;    /* Settings -> Source -> Local => Main */
-    return 1;
-}
-
-static int tp_source_select_navidrome(void)
-{
-    if (uipod_navidrome_has_tracks())
-    {
-        uipod_source_set(UIPOD_SOURCE_NAVIDROME);
-        if (!s_source_boot_mode)
-            uipod_home_pending = true;
-        return 1;
-    }
-    if (uipod_navidrome_settings_page(true))
-    {
-        if (!s_source_boot_mode)
-            uipod_home_pending = true;
-        return 1;
-    }
-    return 0;
-}
-
-static int tp_source_select_jellyfin(void)
-{
-    if (uipod_jellyfin_has_media())
-    {
-        uipod_source_set(UIPOD_SOURCE_JELLYFIN);
-        if (!s_source_boot_mode)
-            uipod_home_pending = true;
-        return 1;
-    }
-    if (uipod_jellyfin_settings_page(true))
-    {
-        if (!s_source_boot_mode)
-            uipod_home_pending = true;
-        return 1;
-    }
-    return 0;
-}
-
-MENUITEM_FUNCTION(tp_src_local, MENU_SHOW_CHEVRON | MENU_FUNC_CHECK_RETVAL,
-                  ID2P(LANG_UIPOD_SOURCE_LOCAL), tp_source_select_local,
+MENUITEM_FUNCTION(tp_src_navidrome, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_SOURCE_NAVIDROME), uipod_navidrome_menu_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_src_navidrome, MENU_SHOW_CHEVRON | MENU_FUNC_CHECK_RETVAL,
-                  ID2P(LANG_UIPOD_SOURCE_NAVIDROME), tp_source_select_navidrome,
+MENUITEM_FUNCTION(tp_src_jellyfin, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_SOURCE_JELLYFIN), uipod_jellyfin_menu_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_src_jellyfin, MENU_SHOW_CHEVRON | MENU_FUNC_CHECK_RETVAL,
-                  ID2P(LANG_UIPOD_SOURCE_JELLYFIN), tp_source_select_jellyfin,
-                  NULL, Icon_NOICON);
-MAKE_MENU(uipod_source_menu, ID2P(LANG_UIPOD_SOURCE_TYPE), NULL,
-          Icon_Submenu_Entered, &tp_src_local, &tp_src_navidrome, &tp_src_jellyfin);
+MAKE_MENU(uipod_sources_menu, ID2P(LANG_UIPOD_SOURCES), NULL,
+          Icon_Submenu_Entered,
+          &tp_set_offline, &tp_src_navidrome, &tp_src_jellyfin);
 
-int uipod_source_page(void)
+int uipod_sources_page(void)
 {
-    s_source_boot_mode = false;
-    do_menu(&uipod_source_menu, NULL, NULL, false);
-    return 0;
-}
-
-int uipod_source_boot_page(void)
-{
-    s_source_boot_mode = true;
-    int r = do_menu(&uipod_source_menu, NULL, NULL, false);
-    if (!uipod_source_is_configured())
-        uipod_source_set(UIPOD_SOURCE_LOCAL);
-    if (r == GO_TO_PREVIOUS)
-        uipod_transition_take_back(); /* boot: slide forward into Main */
-    s_source_boot_mode = false;
+    do_menu(&uipod_sources_menu, NULL, NULL, false);
     return 0;
 }
 
@@ -258,14 +201,11 @@ int uipod_extras_page(void)
 MENUITEM_FUNCTION(tp_set_appearance, MENU_SHOW_CHEVRON,
                   ID2P(LANG_UIPOD_APPEARANCE), uipod_appearance_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_set_source, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_SOURCE_TYPE), uipod_source_page,
+MENUITEM_FUNCTION(tp_set_downloads, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_DOWNLOADS), uipod_downloads_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_set_navidrome, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_SOURCE_NAVIDROME), uipod_navidrome_menu_page,
-                  NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_set_jellyfin, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_SOURCE_JELLYFIN), uipod_jellyfin_menu_page,
+MENUITEM_FUNCTION(tp_set_sources, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_SOURCES), uipod_sources_page,
                   NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_audio, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_LIBRARY),
                   uipod_audio_folders_page, NULL, Icon_NOICON);
@@ -280,8 +220,9 @@ MENUITEM_FUNCTION(tp_set_about, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_ABOUT),
 MENUITEM_FUNCTION(tp_set_exit, 0, ID2P(LANG_UIPOD_EXIT),
                   uipod_exit_app, NULL, Icon_NOICON);
 MAKE_MENU(uipod_settings_menu, ID2P(LANG_SETTINGS), NULL, Icon_Submenu_Entered,
-          &tp_set_appearance, &sound_settings, &tp_set_source,
-          &tp_set_navidrome, &tp_set_jellyfin, &tp_set_audio, &tp_set_viz,
+          &tp_set_appearance, &sound_settings, &tp_set_offline,
+          &tp_set_downloads, &tp_set_sources,
+          &tp_set_audio, &tp_set_viz,
           &tp_set_power, &tp_set_controls, &tp_set_about, &tp_set_exit);
 int uipod_settings_page(void)
 {

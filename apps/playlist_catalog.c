@@ -49,17 +49,6 @@ static size_t playlist_dir_length;
 
 static size_t get_directory(char* dirbuf, size_t dirbuf_sz)
 {
-    if (uipod_source_is_navidrome())
-    {
-        return path_append(dirbuf, ROCKBOX_DIR "/Playlists_Navidrome",
-                           PA_SEP_SOFT, dirbuf_sz);
-    }
-    if (uipod_source_is_jellyfin())
-    {
-        return path_append(dirbuf, ROCKBOX_DIR "/Playlists_Jellyfin",
-                           PA_SEP_SOFT, dirbuf_sz);
-    }
-
     const char *pl_dir = PLAYLIST_CATALOG_DEFAULT_DIR;
 
     /* directory config is of the format: "dir: /path/to/dir" */

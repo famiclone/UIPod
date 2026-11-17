@@ -55,6 +55,7 @@
 #include "uipod_playlists.h"    /* uipod_resume_if_current */
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_downloads.h"
 #include "uipod_svg.h"
 
 
@@ -623,11 +624,9 @@ static enum pv_context_result context_menu(int index)
 
     char name[MAX_PATH];
     format_name(name, current_track->name, sizeof(name));
-    bool is_nav = uipod_source_is_navidrome() &&
-                  uipod_navidrome_is_track_path(current_track->name);
-    bool is_jf  = uipod_source_is_jellyfin() &&
-                  uipod_jellyfin_is_track_path(current_track->name);
-    bool can_dl = is_nav || is_jf;
+    bool is_nav = uipod_navidrome_is_track_path(current_track->name);
+    bool is_jf  = uipod_jellyfin_is_track_path(current_track->name);
+    bool can_dl = !uipod_offline_mode_get() && (is_nav || is_jf);
     static const char *const opts[] =
         { ID2P(LANG_UIPOD_REMOVE_FROM_PLAYLIST), ID2P(LANG_MOVE),
           ID2P(LANG_UIPOD_DOWNLOAD) };
@@ -957,8 +956,9 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                         audio_resume();
                     update_playlist(false);
                 }
-                else if (uipod_resume_if_current(current_track->name))
-                    goto exit;      /* already playing: just show it */
+                else if (playlist_amount() == viewer.num_tracks &&
+                         uipod_resume_if_current(current_track->name))
+                    goto exit;      /* already playing this full playlist: show it */
                 else if (warn_on_pl_erase())
                 {
                     /* Turn it into the current playlist */

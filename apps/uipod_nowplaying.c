@@ -90,6 +90,7 @@ extern char *realpath(const char *path, char *resolved);
 
 static char    s_cached_path[MAX_PATH];
 static bool    s_has_art;
+static bool    s_alt_layout;
 static int     s_bit_depth;      /* >0 when lossless/PCM bit depth known */
 static bool    s_is_alac;
 static uint8_t s_art_rgb[NP_ART_SIZE * NP_ART_SIZE * 3];
@@ -2227,8 +2228,10 @@ void uipod_nowplaying_draw(void)
 
         struct UIPodRsNowPlaying np;
         memset(&np, 0, sizeof(np));
-        np.bg_rgb = (uint32_t)global_settings.bg_color;
-        np.fg_rgb = (uint32_t)global_settings.fg_color;
+        np.bg_rgb  = (uint32_t)global_settings.bg_color;
+        np.fg_rgb  = (uint32_t)global_settings.fg_color;
+        np.fg1_rgb = (uint32_t)global_settings.fg1_color;
+        np.fg2_rgb = (uint32_t)global_settings.fg2_color;
         uipod_gpu_fill_header(&np.header, hdr_title);
         np.track_pos_label     = pos_buf;
         np.eq_enabled          = global_settings.eq_enabled;
@@ -2244,6 +2247,7 @@ void uipod_nowplaying_draw(void)
         np.center_status_label = vol_str;
         np.art_rgb24           = s_has_art ? s_art_rgb : NULL;
         np.mono_album_art      = global_settings.mono_album_art;
+        np.alt_layout          = s_alt_layout;
 
         struct viewport *prev_vp = lcd_set_viewport(NULL);
         fb_data *fb_gpu = FBADDR(0, 0);
@@ -2522,4 +2526,14 @@ void uipod_nowplaying_draw(void)
     s->set_drawmode(DRMODE_SOLID);
     s->update_viewport();
     s->set_viewport(NULL);
+}
+
+bool uipod_nowplaying_is_alt(void)
+{
+    return s_alt_layout;
+}
+
+void uipod_nowplaying_toggle_alt(void)
+{
+    s_alt_layout = !s_alt_layout;
 }

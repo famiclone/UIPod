@@ -48,5 +48,6 @@ bool uipod_jellyfin_get_cover_info(const char *path,
                                      int *out_bit_depth);
 void uipod_jellyfin_on_track_change(const char *cur_path);
 void uipod_jellyfin_on_track_finish(const struct mp3entry *id3);
+void uipod_jellyfin_prefetch_steps(int max_steps);
 
 #endif /* UIPOD_JELLYFIN_H */

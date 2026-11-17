@@ -384,7 +384,7 @@ static enum uipod_page_result lib_on_action(struct uipod_page *self, int action)
 
             case LVL_TRACKS:                        /* paths are row-aligned */
                 if (sel >= 0 && sel < p->paths.n &&
-                    uipod_play_track(p->paths.v[sel]))
+                    uipod_play_tracks_at(p->paths.v, p->paths.n, sel))
                 {
                     remember_track(p, sel);
                     p->result = GO_TO_WPS;          /* no arm_back: WPS slides in */
@@ -458,8 +458,9 @@ static enum uipod_page_result lib_on_action(struct uipod_page *self, int action)
             {
                 if (sel < 0 || sel >= p->paths.n || !p->paths.v[sel][0])
                     break;
-                if (uipod_music_context(p->rows.v[sel], p->paths.v[sel],
-                                          FILE_ATTR_AUDIO))
+                if (uipod_music_context_track_in_list(p->rows.v[sel],
+                                                      p->paths.v, p->paths.n,
+                                                      sel))
                 {
                     remember_track(p, sel);
                     p->result = GO_TO_WPS;          /* no arm_back: WPS slides in */

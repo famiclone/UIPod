@@ -78,6 +78,7 @@
 #include "uipod_m4b.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_playlists.h"
 #include "ata_idle_notify.h"
 #include "file.h"
 #include "fs_attr.h"
@@ -3435,6 +3436,8 @@ void playlist_start(int start_index, unsigned long elapsed,
                 return;
         }
     }
+
+    uipod_prefetch_on_queue_start();
 
     audio_play(elapsed, offset);
     audio_resume();

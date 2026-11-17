@@ -951,7 +951,7 @@ static int perform_http_stream_ex(
     bool cur_https = init_https;
     char cur_host[256];
     uint16_t cur_port = init_port;
-    char *cur_pq = malloc(4096);
+    char *cur_pq = malloc(8192);
     uint8_t *rx = malloc(65536);
     if (!cur_pq || !rx)
     {
@@ -962,7 +962,7 @@ static int perform_http_stream_ex(
     }
 
     snprintf(cur_host, sizeof(cur_host), "%s", init_host);
-    snprintf(cur_pq, 4096, "%s", init_pq);
+    snprintf(cur_pq, 8192, "%s", init_pq);
 
     int idle_ms = (idle_timeout_ms > 2000) ? idle_timeout_ms : 8000;
     if (idle_ms > 30000)
@@ -986,27 +986,37 @@ static int perform_http_stream_ex(
             snprintf(cl_hdr, sizeof(cl_hdr), "Content-Length: %zu\r\n", req_body_len);
 
         const char *xhdr = extra_headers ? extra_headers : "";
-        char req_hdr[8192];
+        bool has_custom_ua = false;
+        for (const char *p = xhdr; *p; p++)
+        {
+            if ((p == xhdr || p[-1] == '\n') && strncasecmp(p, "User-Agent:", 11) == 0)
+            {
+                has_custom_ua = true;
+                break;
+            }
+        }
+        const char *ua_hdr = has_custom_ua ? "" : "User-Agent: UIPod/1.0\r\n";
+        char req_hdr[12288];
         bool default_port = (cur_https && cur_port == 443) || (!cur_https && cur_port == 80);
         int req_len = default_port
             ? snprintf(req_hdr, sizeof(req_hdr),
                        "%s %s HTTP/1.1\r\n"
                        "Host: %s\r\n"
-                       "User-Agent: UIPod/1.0\r\n"
+                       "%s"
                        "Accept: */*\r\n"
                        "Accept-Encoding: identity\r\n"
                        "%s%s"
                        "Connection: close\r\n\r\n",
-                       verb, cur_pq, cur_host, cl_hdr, xhdr)
+                       verb, cur_pq, cur_host, ua_hdr, cl_hdr, xhdr)
             : snprintf(req_hdr, sizeof(req_hdr),
                        "%s %s HTTP/1.1\r\n"
                        "Host: %s:%u\r\n"
-                       "User-Agent: UIPod/1.0\r\n"
+                       "%s"
                        "Accept: */*\r\n"
                        "Accept-Encoding: identity\r\n"
                        "%s%s"
                        "Connection: close\r\n\r\n",
-                       verb, cur_pq, cur_host, (unsigned)cur_port, cl_hdr, xhdr);
+                       verb, cur_pq, cur_host, (unsigned)cur_port, ua_hdr, cl_hdr, xhdr);
 
         if (req_len <= 0 || (size_t)req_len >= sizeof(req_hdr))
         {
@@ -1068,7 +1078,7 @@ static int perform_http_stream_ex(
             *out_status = status_code;
 
         size_t hdr_len = body_off - 4;
-        if (status_code == 301 || status_code == 302 ||
+        if (status_code == 301 || status_code == 302 || status_code == 303 ||
             status_code == 307 || status_code == 308)
         {
             const char *loc = find_hdr_ci(hbuf, hdr_len, "Location");
@@ -1079,7 +1089,7 @@ static int perform_http_stream_ex(
                 final_rc = -1;
                 break;
             }
-            if (status_code == 301 || status_code == 302)
+            if (status_code == 301 || status_code == 302 || status_code == 303)
             {
                 verb = "GET";
                 is_post_like = false;
@@ -1089,7 +1099,7 @@ static int perform_http_stream_ex(
             const char *leol = memchr(loc, '\n', (size_t)((hbuf + hdr_len) - loc));
             size_t llen = leol ? (size_t)(leol - loc) : strlen(loc);
             if (!parse_redirect_url(loc, llen, &cur_https, cur_host, sizeof(cur_host),
-                                    &cur_port, cur_pq, 4096))
+                                    &cur_port, cur_pq, 8192))
             {
                 put_err(err_buf, err_cap, "Bad redirect URL");
                 final_rc = -1;
@@ -1586,7 +1596,7 @@ static struct {
     bool     is_https;
     char     host[256];
     uint16_t port;
-    char     pq[3072];
+    char     pq[8192];
     char     extra_headers[1024];
     bool     allow_self_signed;
 } s_proxy_cfg;
@@ -1711,9 +1721,20 @@ static void *proxy_client_worker(void *arg)
     bool is_https = s_proxy_cfg.is_https;
     bool allow_self_signed = s_proxy_cfg.allow_self_signed;
     uint16_t port = s_proxy_cfg.port;
-    char host[256], pq[3072], base_hdrs[1024];
+    char *pq = malloc(8192);
+    if (!pq)
+    {
+        pthread_mutex_unlock(&s_proxy_mtx);
+        close(client_fd);
+        pthread_mutex_lock(&s_proxy_mtx);
+        if (--s_proxy_active_clients <= 0)
+            pthread_cond_broadcast(&s_proxy_cv);
+        pthread_mutex_unlock(&s_proxy_mtx);
+        return NULL;
+    }
+    char host[256], base_hdrs[1024];
     snprintf(host, sizeof(host), "%s", s_proxy_cfg.host);
-    snprintf(pq, sizeof(pq), "%s", s_proxy_cfg.pq);
+    snprintf(pq, 8192, "%s", s_proxy_cfg.pq);
     snprintf(base_hdrs, sizeof(base_hdrs), "%s", s_proxy_cfg.extra_headers);
     pthread_mutex_unlock(&s_proxy_mtx);
 
@@ -1769,6 +1790,7 @@ static void *proxy_client_worker(void *arg)
             proxy_cancel_cb, &pc, err_unused, sizeof(err_unused));
     }
 
+    free(pq);
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
 

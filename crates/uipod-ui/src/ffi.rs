@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use crate::renderer::{HEADER_BAND_ROWS, HEIGHT, WIDTH};
 use crate::{
-    FileIconKind, HeaderState, ListRow, ListScreenState, NowPlayingState, PlayMode,
-    RightAccessory, ThemeColors, UiEngine,
+    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
+    ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
 };
 
 // Safety: UiEngine is accessed exclusively from the serialized Rockbox thread holding the SDL GL context.
@@ -30,6 +30,11 @@ pub struct UIPodRsHeader {
     pub battery_percent: u8,
     pub is_charging: bool,
     pub is_hold: bool,
+    pub is_downloading: bool,
+    /// `0=None`, `1=MicroSd`, `2=Navidrome`, `3=Jellyfin`
+    pub source_icon: u8,
+    pub download_done: u32,
+    pub download_total: u32,
 }
 
 #[repr(C)]
@@ -39,7 +44,7 @@ pub struct UIPodRsListRow {
     pub right_value: *const c_char,
     pub file_tag: *const c_char,
     pub selected: bool,
-    /// `0 = None`, `1 = Chevron`, `2 = Toggle(false)`, `3 = Toggle(true)`, `4 = Value(right_value)`
+    /// `0=None`, `1=Chevron`, `2=Toggle(false)`, `3=Toggle(true)`, `4=CycleValue(<val>)`, `5=Value(val)`
     pub right_kind: u8,
 }
 
@@ -47,6 +52,8 @@ pub struct UIPodRsListRow {
 pub struct UIPodRsListScreen {
     pub bg_rgb: u32,
     pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
     pub header: UIPodRsHeader,
     pub rows: *const UIPodRsListRow,
     pub row_count: usize,
@@ -59,6 +66,8 @@ pub struct UIPodRsListScreen {
 pub struct UIPodRsNowPlaying {
     pub bg_rgb: u32,
     pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
     pub header: UIPodRsHeader,
     pub track_pos_label: *const c_char,
     pub eq_enabled: bool,
@@ -74,6 +83,27 @@ pub struct UIPodRsNowPlaying {
     pub center_status_label: *const c_char,
     pub art_rgb24: *const u8,
     pub mono_album_art: bool,
+    pub alt_layout: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UIPodRsKeyboardKey {
+    pub label: *const c_char,
+    pub selected: bool,
+    pub is_modifier: bool,
+    pub is_active_toggle: bool,
+}
+
+#[repr(C)]
+pub struct UIPodRsKeyboard {
+    pub bg_rgb: u32,
+    pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
+    pub text: *const c_char,
+    pub row_counts: [usize; 5],
+    pub keys: *const UIPodRsKeyboardKey,
 }
 
 #[inline]
@@ -93,6 +123,16 @@ fn decode_play_mode(raw: u32) -> PlayMode {
         3 => PlayMode::FastForward,
         4 => PlayMode::Rewind,
         _ => PlayMode::Stop,
+    }
+}
+
+#[inline]
+fn decode_source_icon(raw: u8) -> HeaderSourceIcon {
+    match raw {
+        1 => HeaderSourceIcon::MicroSd,
+        2 => HeaderSourceIcon::Navidrome,
+        3 => HeaderSourceIcon::Jellyfin,
+        _ => HeaderSourceIcon::None,
     }
 }
 
@@ -146,11 +186,13 @@ pub extern "C" fn uipod_rs_ui_shutdown() {
     }
 }
 
-/// Renders only the top `Header` band (`1024 x 124`) into `fb_bgr` (`{b, g, r}`).
+/// Renders only the top `Header` band (`1024 x 120`) into `fb_bgr` (`{b, g, r}`).
 #[no_mangle]
 pub unsafe extern "C" fn uipod_rs_ui_render_header(
     bg_rgb: u32,
     fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
     header: *const UIPodRsHeader,
     fb_bgr: *mut u8,
 ) -> bool {
@@ -175,10 +217,23 @@ pub unsafe extern "C" fn uipod_rs_ui_render_header(
         battery_percent: h.battery_percent,
         is_charging: h.is_charging,
         is_hold: h.is_hold,
+        is_downloading: h.is_downloading,
+        download_done: h.download_done,
+        download_total: h.download_total,
+        source_icon: decode_source_icon(h.source_icon),
     };
 
     let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEADER_BAND_ROWS * 3);
-    wrap.0.render_header_into_bgr(ThemeColors { bg_rgb, fg_rgb }, &hs, fb_slice);
+    wrap.0.render_header_into_bgr(
+        ThemeColors {
+            bg_rgb,
+            fg_rgb,
+            fg1_rgb,
+            fg2_rgb,
+        },
+        &hs,
+        fb_slice,
+    );
     true
 }
 
@@ -220,7 +275,8 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list(
             1 => RightAccessory::Chevron,
             2 => RightAccessory::Toggle(false),
             3 => RightAccessory::Toggle(true),
-            4 => RightAccessory::Value(&rvals[i]),
+            4 => RightAccessory::CycleValue(&rvals[i]),
+            5 => RightAccessory::Value(&rvals[i]),
             _ => RightAccessory::None,
         };
         rows.push(ListRow {
@@ -235,6 +291,8 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list(
         theme: ThemeColors {
             bg_rgb: sc.bg_rgb,
             fg_rgb: sc.fg_rgb,
+            fg1_rgb: sc.fg1_rgb,
+            fg2_rgb: sc.fg2_rgb,
         },
         header: HeaderState {
             title: &title,
@@ -243,6 +301,10 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list(
             battery_percent: sc.header.battery_percent,
             is_charging: sc.header.is_charging,
             is_hold: sc.header.is_hold,
+            is_downloading: sc.header.is_downloading,
+            download_done: sc.header.download_done,
+            download_total: sc.header.download_total,
+            source_icon: decode_source_icon(sc.header.source_icon),
         },
         rows,
         total_items: sc.total_items,
@@ -296,6 +358,8 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
         theme: ThemeColors {
             bg_rgb: n.bg_rgb,
             fg_rgb: n.fg_rgb,
+            fg1_rgb: n.fg1_rgb,
+            fg2_rgb: n.fg2_rgb,
         },
         header: HeaderState {
             title: &h_title,
@@ -304,6 +368,10 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
             battery_percent: n.header.battery_percent,
             is_charging: n.header.is_charging,
             is_hold: n.header.is_hold,
+            is_downloading: n.header.is_downloading,
+            download_done: n.header.download_done,
+            download_total: n.header.download_total,
+            source_icon: decode_source_icon(n.header.source_icon),
         },
         track_pos_label: &track_pos,
         eq_enabled: n.eq_enabled,
@@ -319,9 +387,73 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
         center_status_label: &center_status,
         art_rgb24: art_slice,
         mono_album_art: n.mono_album_art,
+        alt_layout: n.alt_layout,
     };
 
     let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
     wrap.0.render_now_playing_into_bgr(&state, fb_slice);
+    true
+}
+
+/// Renders the full `1024 x 768` QWERTY keyboard screen into `fb_bgr` (`{b, g, r}`).
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_keyboard(
+    kbd: *const UIPodRsKeyboard,
+    fb_bgr: *mut u8,
+) -> bool {
+    if kbd.is_null() || fb_bgr.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let k = &*kbd;
+    let text = cstr_lossy(k.text);
+    let total_keys: usize = k.row_counts.iter().sum();
+    let raw_keys = if k.keys.is_null() || total_keys == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(k.keys, total_keys)
+    };
+    let key_labels: Vec<Cow<str>> = raw_keys.iter().map(|rk| cstr_lossy(rk.label)).collect();
+
+    let mut rows: [Vec<KeyboardKey>; 5] = Default::default();
+    let mut offset = 0usize;
+    for r_idx in 0..5 {
+        let cnt = k.row_counts[r_idx];
+        let mut row_vec = Vec::with_capacity(cnt);
+        for i in 0..cnt {
+            if offset + i < raw_keys.len() {
+                let rk = &raw_keys[offset + i];
+                row_vec.push(KeyboardKey {
+                    label: &key_labels[offset + i],
+                    selected: rk.selected,
+                    is_modifier: rk.is_modifier,
+                    is_active_toggle: rk.is_active_toggle,
+                });
+            }
+        }
+        offset += cnt;
+        rows[r_idx] = row_vec;
+    }
+
+    let state = KeyboardState {
+        theme: ThemeColors {
+            bg_rgb: k.bg_rgb,
+            fg_rgb: k.fg_rgb,
+            fg1_rgb: k.fg1_rgb,
+            fg2_rgb: k.fg2_rgb,
+        },
+        text: &text,
+        rows,
+    };
+
+    let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
+    wrap.0.render_keyboard_into_bgr(&state, fb_slice);
     true
 }

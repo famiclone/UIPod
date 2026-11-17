@@ -210,8 +210,10 @@ static const char graphic_numeric[] = "graphic,numeric";
 /* UIPod: the Classic Dark pairing (power_menu.c's theme table), so a config
  * with a missing colour line still lands on a named theme, not stock Rockbox's
  * grey-on-black (which the Theme knob would show as "Custom"). */
-#define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0x18, 0x1C, 0x18)
-#define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0xd8, 0xdc, 0xd0)
+#define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0x3C, 0x36, 0x37)
+#define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0xD6, 0xD8, 0xD5)
+#define DEFAULT_THEME_FG1        LCD_RGBPACK(0xA8, 0xA8, 0xA8)
+#define DEFAULT_THEME_FG2        LCD_RGBPACK(0x59, 0x59, 0x59)
 #define DEFAULT_THEME_SELECTOR_START LCD_RGBPACK(0xff, 0xeb, 0x9c)
 #define DEFAULT_THEME_SELECTOR_END LCD_RGBPACK(0xb5, 0x8e, 0x00)
 #define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0x00, 0x00, 0x00)
@@ -730,6 +732,10 @@ const struct settings_list settings[] = {
         INT(DEFAULT_THEME_FOREGROUND),"foreground color",UNUSED},
     {F_T_INT|F_RGB|F_THEMESETTING ,&global_settings.bg_color,-1,
         INT(DEFAULT_THEME_BACKGROUND),"background color",UNUSED},
+    {F_T_INT|F_RGB|F_THEMESETTING ,&global_settings.fg1_color,-1,
+        INT(DEFAULT_THEME_FG1),"foreground color 1",UNUSED},
+    {F_T_INT|F_RGB|F_THEMESETTING ,&global_settings.fg2_color,-1,
+        INT(DEFAULT_THEME_FG2),"foreground color 2",UNUSED},
     {F_T_INT|F_RGB|F_THEMESETTING ,&global_settings.lss_color,-1,
         INT(DEFAULT_THEME_SELECTOR_START),"line selector start color",UNUSED},
     {F_T_INT|F_RGB|F_THEMESETTING ,&global_settings.lse_color,-1,
@@ -1034,6 +1040,15 @@ const struct settings_list settings[] = {
 
     OFFON_SETTING(0, mono_album_art, LANG_UIPOD_MONO_ALBUM_ART, true,
                   "mono album art", NULL),
+    CHOICE_SETTING(0, transition_style, LANG_UIPOD_TRANSITION, 0,
+                   "screen transition", "slide,cover,fade,pixels,blinds,off",
+                   NULL, 6,
+                   ID2P(LANG_UIPOD_TRANS_SLIDE),
+                   ID2P(LANG_UIPOD_TRANS_COVER),
+                   ID2P(LANG_UIPOD_TRANS_FADE),
+                   ID2P(LANG_UIPOD_TRANS_PIXELS),
+                   ID2P(LANG_UIPOD_TRANS_BLINDS),
+                   ID2P(LANG_OFF)),
 
 };
 

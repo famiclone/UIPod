@@ -13,17 +13,18 @@ use imgref::ImgRef;
 use rgb::RGBA8;
 
 use crate::icons::{
-    draw_battery, draw_chevron_left_s, draw_chevron_s, draw_filetype_icon, draw_hold_lock,
-    draw_play_mode_icon, draw_scrollbar_v, draw_seekbar_track_h, draw_toggle, fill_rounded_rect,
+    draw_arrow_down_64, draw_arrow_s, draw_battery, draw_chevron_left_s, draw_chevron_s,
+    draw_filetype_icon, draw_header_source_icon, draw_hold_lock, draw_play_mode_icon,
+    draw_scrollbar_v, draw_seekbar_track_h, draw_toggle, fill_rounded_rect,
     stroke_rounded_rect_inside,
 };
 use crate::layout::{
-    compute_header_layout, compute_list_layout, compute_now_playing_layout, HeaderBoxes,
-    LIST_VISIBLE_ROWS, SCREEN_H, SCREEN_W,
+    compute_header_layout, compute_list_layout, compute_now_playing_alt_layout,
+    compute_now_playing_layout, HeaderBoxes, LIST_VISIBLE_ROWS, SCREEN_H, SCREEN_W,
 };
 use crate::{
-    FileIconKind, HeaderState, ListRow, ListScreenState, NowPlayingState, RightAccessory,
-    ThemeColors,
+    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardState, ListRow, ListScreenState,
+    NowPlayingState, RightAccessory, ThemeColors,
 };
 
 pub const WIDTH: usize = 1024;
@@ -44,6 +45,14 @@ static FONT_GEOLOGICA_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Geolog
 /// to the top of the FBO (`gl_y = height - 1`), so `glReadPixels` row `0` is the bottom scanline.
 const FBO_ORIGIN_BOTTOM: bool = true;
 
+#[derive(Clone, Copy)]
+struct ResolvedTheme {
+    bg: Color,
+    fg: Color,
+    fg1: Color,
+    fg2: Color,
+}
+
 #[inline]
 fn rgb_u32_to_color(rgb: u32) -> Color {
     let r = ((rgb >> 16) & 0xFF) as u8;
@@ -53,12 +62,24 @@ fn rgb_u32_to_color(rgb: u32) -> Color {
 }
 
 #[inline]
+fn resolve_theme(t: ThemeColors) -> ResolvedTheme {
+    ResolvedTheme {
+        bg: rgb_u32_to_color(t.bg_rgb),
+        fg: rgb_u32_to_color(t.fg_rgb),
+        fg1: rgb_u32_to_color(t.fg1_rgb),
+        fg2: rgb_u32_to_color(t.fg2_rgb),
+    }
+}
+
+#[inline]
 fn fnv1a_art_hash(bytes: &[u8], mono: bool, theme: ThemeColors) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     h ^= u64::from(mono);
     h = h.wrapping_mul(0x0100_0000_01b3);
     if mono {
         h ^= ((theme.bg_rgb as u64) << 24) ^ (theme.fg_rgb as u64);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+        h ^= ((theme.fg1_rgb as u64) << 24) ^ (theme.fg2_rgb as u64);
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
     // Stride by 4 bytes for ultra-fast cache invalidation (<0.02 ms on Cortex-A53)
@@ -73,10 +94,19 @@ fn fnv1a_art_hash(bytes: &[u8], mono: bool, theme: ThemeColors) -> u64 {
     h
 }
 
-/// Quantizes a `256x256` `RGB24` album cover into the active theme's exact 3 LCD shades
-/// (`dark`, `50% mid`, `light` derived from `theme.bg_rgb` and `theme.fg_rgb`) with
+#[inline]
+fn rgb_u32_with_luma(rgb: u32) -> (u32, RGBA8) {
+    let r = ((rgb >> 16) & 0xFF) as u8;
+    let g = ((rgb >> 8) & 0xFF) as u8;
+    let b = (rgb & 0xFF) as u8;
+    let luma = 54u32 * (r as u32) + 183u32 * (g as u32) + 19u32 * (b as u32);
+    (luma, RGBA8::new(r, g, b, 255))
+}
+
+/// Quantizes a `256x256` `RGB24` album cover into the active theme's exact 4 iPod Mini LCD shades
+/// (`bg_rgb`, `fg1_rgb`, `fg2_rgb`, `fg_rgb` sorted darkest -> lightest) with
 /// 2nd–98th percentile auto-levels and 4x4 Bayer ordered dithering.
-pub fn quantize_mono_art_3shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut [RGBA8]) {
+pub fn quantize_mono_art_4shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut [RGBA8]) {
     const BAYER4: [[u8; 4]; 4] = [
         [0, 8, 2, 10],
         [12, 4, 14, 6],
@@ -84,28 +114,14 @@ pub fn quantize_mono_art_3shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut
         [15, 7, 13, 5],
     ];
 
-    let br = ((theme.bg_rgb >> 16) & 0xFF) as u8;
-    let bg = ((theme.bg_rgb >> 8) & 0xFF) as u8;
-    let bb = (theme.bg_rgb & 0xFF) as u8;
-    let fr = ((theme.fg_rgb >> 16) & 0xFF) as u8;
-    let fg = ((theme.fg_rgb >> 8) & 0xFF) as u8;
-    let fb = (theme.fg_rgb & 0xFF) as u8;
-
-    let bg_luma = 54u32 * (br as u32) + 183u32 * (bg as u32) + 19u32 * (bb as u32);
-    let fg_luma = 54u32 * (fr as u32) + 183u32 * (fg as u32) + 19u32 * (fb as u32);
-
-    let (dark, light) = if bg_luma >= fg_luma {
-        (RGBA8::new(fr, fg, fb, 255), RGBA8::new(br, bg, bb, 255))
-    } else {
-        (RGBA8::new(br, bg, bb, 255), RGBA8::new(fr, fg, fb, 255))
-    };
-    let mid = RGBA8::new(
-        ((dark.r as u16 + light.r as u16 + 1) / 2) as u8,
-        ((dark.g as u16 + light.g as u16 + 1) / 2) as u8,
-        ((dark.b as u16 + light.b as u16 + 1) / 2) as u8,
-        255,
-    );
-    let palette = [dark, mid, light];
+    let mut shades = [
+        rgb_u32_with_luma(theme.bg_rgb),
+        rgb_u32_with_luma(theme.fg1_rgb),
+        rgb_u32_with_luma(theme.fg2_rgb),
+        rgb_u32_with_luma(theme.fg_rgb),
+    ];
+    shades.sort_by_key(|&(luma, _)| luma);
+    let palette = [shades[0].1, shades[1].1, shades[2].1, shades[3].1];
 
     let npx = 256 * 256;
     let mut hist = [0u32; 256];
@@ -151,22 +167,16 @@ pub fn quantize_mono_art_3shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut
                 + 128)
                 >> 8) as i32;
             let norm = ((raw_l - lo) as f32 * inv_span).clamp(0.0, 1.0);
-            let g_l = norm.powf(1.15);
+            let g_l = norm.powf(1.10);
 
-            let tone = if g_l <= 0.14 {
+            let tone = if g_l <= 0.10 {
                 0
-            } else if g_l >= 0.86 {
-                2
+            } else if g_l >= 0.90 {
+                3
             } else {
                 let bval = (bayer_row[x & 3] as f32 / 16.0) - 0.5 + (1.0 / 32.0);
-                let v = g_l + bval * 0.16;
-                if v < 0.36 {
-                    0
-                } else if v < 0.72 {
-                    1
-                } else {
-                    2
-                }
+                let v = (g_l * 3.0 + bval * 0.48).round().clamp(0.0, 3.0);
+                v as usize
             };
             out_rgba[i] = palette[tone];
         }
@@ -195,7 +205,10 @@ impl UiEngine {
     /// # Safety
     /// A valid OpenGL ES 3.0 (or Desktop OpenGL 3.2+) context must be current on the calling thread,
     /// and `get_proc_address` must return valid function pointers for the active context.
-    pub unsafe fn new<F>(mut get_proc_address: F, cjk_font_path: Option<&Path>) -> Result<Self, String>
+    pub unsafe fn new<F>(
+        mut get_proc_address: F,
+        cjk_font_path: Option<&Path>,
+    ) -> Result<Self, String>
     where
         F: FnMut(&std::ffi::CStr) -> *const c_void,
     {
@@ -314,6 +327,27 @@ impl UiEngine {
         best
     }
 
+    /// Returns the trailing UTF-8 slice of `text` whose rendered width fits within `max_width`.
+    fn visible_tail_utf8(&mut self, text: &str, max_width: f32, paint: &Paint) -> String {
+        if text.is_empty() || max_width <= 4.0 {
+            return String::new();
+        }
+        if let Ok(m) = self.canvas.measure_text(0.0, 0.0, text, paint) {
+            if m.width() <= max_width + 0.5 {
+                return text.to_string();
+            }
+        }
+        for (byte_idx, _) in text.char_indices() {
+            let sub = &text[byte_idx..];
+            if let Ok(m) = self.canvas.measure_text(0.0, 0.0, sub, paint) {
+                if m.width() <= max_width + 0.5 {
+                    return sub.to_string();
+                }
+            }
+        }
+        String::new()
+    }
+
     /// Optical baseline Y for mixed-case labels (leaves clean clearance for descenders like g/p/y/у/р).
     #[inline]
     fn text_row_baseline(center_y: f32, font_size: f32) -> f32 {
@@ -396,7 +430,8 @@ impl UiEngine {
 
         for y in 0..rows {
             let src_row = if FBO_ORIGIN_BOTTOM { rows - 1 - y } else { y };
-            let src_line = &self.readback_rgba[src_row * row_bytes_src..(src_row + 1) * row_bytes_src];
+            let src_line =
+                &self.readback_rgba[src_row * row_bytes_src..(src_row + 1) * row_bytes_src];
             let dst_line = &mut out_bgr[y * row_bytes_dst..(y + 1) * row_bytes_dst];
             for (rgba, bgr) in src_line.chunks_exact(4).zip(dst_line.chunks_exact_mut(3)) {
                 bgr[0] = rgba[2]; // B
@@ -425,33 +460,79 @@ impl UiEngine {
         }
     }
 
-    /// Draws the shared `Header` (`[271]`: `960x80` at `(32, 32)` + `4px` bottom border at `y=112..116`).
-    fn draw_header_component(&mut self, boxes: &HeaderBoxes, state: &HeaderState, fg: Color, bg: Color) {
+    /// Draws the shared `Header` (`[271]`: `960x80` at `(32, 32)` + `4px` bottom border in `fg1`).
+    fn draw_header_component(
+        &mut self,
+        boxes: &HeaderBoxes,
+        state: &HeaderState,
+        pal: ResolvedTheme,
+    ) {
         let semibold = self.fonts_semibold.clone();
 
-        // Right-side Battery [1564] (64x64) + optional Hold padlock to its left
+        // Right-side Battery [1564] (64x64): shell in fg2, bar in fg1, cavity/bolt cutout in bg
         draw_battery(
             &mut self.canvas,
             boxes.right_slot.x,
             boxes.right_slot.y,
             state.battery_percent,
             state.is_charging,
-            fg,
-            bg,
+            pal.fg2,
+            pal.fg1,
+            pal.bg,
         );
 
-        let right_guard_x = if state.is_hold {
-            let lock_x = boxes.right_slot.x - 40.0;
+        let mut right_guard_x = boxes.right_slot.x - 16.0;
+        let icon_y = boxes.right_slot.y;
+
+        if state.source_icon != HeaderSourceIcon::None {
+            let sx = right_guard_x + 16.0 - 16.0 - 64.0;
+            draw_header_source_icon(
+                &mut self.canvas,
+                sx,
+                icon_y,
+                state.source_icon,
+                pal.fg2,
+                pal.bg,
+            );
+            right_guard_x = sx - 16.0;
+        }
+
+        if state.is_downloading {
+            if state.download_total > 0 {
+                let done = state.download_done.min(state.download_total);
+                let dl_label = format!("{done}/{}", state.download_total);
+                let mut dp = Paint::color(pal.fg2);
+                dp.set_font(&semibold);
+                dp.set_font_size(28.0);
+                dp.set_text_align(Align::Right);
+                dp.set_text_baseline(Baseline::Alphabetic);
+                let text_w = self
+                    .canvas
+                    .measure_text(0.0, 0.0, &dl_label, &dp)
+                    .map(|m| m.width())
+                    .unwrap_or(48.0);
+                let base_y = Self::cap_centered_baseline(boxes.right_slot.center_y(), 28.0);
+                let _ = self.canvas.fill_text(right_guard_x, base_y, &dl_label, &dp);
+                let ax = right_guard_x - text_w - 6.0 - 52.0;
+                draw_arrow_down_64(&mut self.canvas, ax, icon_y, pal.fg2);
+                right_guard_x = (ax + 12.0) - 16.0;
+            } else {
+                let ax = right_guard_x + 16.0 - 16.0 - 64.0;
+                draw_arrow_down_64(&mut self.canvas, ax, icon_y, pal.fg2);
+                right_guard_x = ax - 16.0;
+            }
+        }
+
+        if state.is_hold {
+            let lock_x = right_guard_x + 16.0 - 40.0;
             let lock_y = boxes.right_slot.center_y() - 18.0;
-            draw_hold_lock(&mut self.canvas, lock_x, lock_y, fg, bg);
-            lock_x - 16.0
-        } else {
-            boxes.right_slot.x - 16.0
-        };
+            draw_hold_lock(&mut self.canvas, lock_x, lock_y, pal.fg2, pal.bg);
+            right_guard_x = lock_x - 16.0;
+        }
 
         if !state.legend.trim().is_empty() {
             // Header button-legend (%Tl) overrides left icon + centered title
-            let mut lp = Paint::color(fg);
+            let mut lp = Paint::color(pal.fg);
             lp.set_font(&semibold);
             lp.set_font_size(40.0);
             lp.set_text_align(Align::Left);
@@ -461,28 +542,28 @@ impl UiEngine {
             let base_y = Self::text_row_baseline(boxes.title_slot.center_y(), 40.0);
             let _ = self.canvas.fill_text(boxes.container.x, base_y, &txt, &lp);
         } else {
-            // Left play-mode icon (48x48 inside 85x48 Frame 4 [1572])
+            // Left play-mode icon [90]/[91] in fg2 (48x48 inside Header left slot)
             draw_play_mode_icon(
                 &mut self.canvas,
                 boxes.left_slot.x,
                 boxes.left_slot.y,
                 state.play_mode,
-                fg,
+                pal.fg2,
             );
 
-            // Centered screen title: Geologica SemiBold 48px centered in spaceBetween slot (x_center = 522.5)
+            // Centered screen title: Geologica SemiBold 48px in fg centered at x_center = 512.0
             let title = if state.title.trim().is_empty() {
-                "UIPod Mini"
+                "UIPod"
             } else {
                 state.title
             };
-            let mut tp = Paint::color(fg);
+            let mut tp = Paint::color(pal.fg);
             tp.set_font(&semibold);
             tp.set_font_size(48.0);
             tp.set_text_align(Align::Center);
             tp.set_text_baseline(Baseline::Alphabetic);
 
-            let title_cx = boxes.title_slot.center_x();
+            let title_cx = boxes.container.center_x();
             let half_avail = (title_cx - (boxes.left_slot.x + 56.0))
                 .min(right_guard_x - title_cx)
                 .max(60.0);
@@ -491,34 +572,45 @@ impl UiEngine {
             let _ = self.canvas.fill_text(title_cx, base_y, &fitted, &tp);
         }
 
-        // 4px outside bottom stroke spanning (32, 112, 960, 4)
+        // 4px outside bottom stroke spanning (32, 112, 960, 4) in fg1 (`VariableID:42`)
         let mut line = VgPath::new();
         line.rect(boxes.container.x, boxes.border_y, boxes.container.w, 4.0);
-        self.canvas.fill_path(&line, &Paint::color(fg));
+        self.canvas.fill_path(&line, &Paint::color(pal.fg1));
     }
 
     /// Draws a single `MenuItem` row (`h=60`, `r=8`, `padding=[0,16,0,16]` per `ui.figcraft` `[353]`).
-    fn draw_menu_item(&mut self, bx: crate::layout::LayoutBox, row: &ListRow, fg: Color, bg: Color) {
-        let (ink, cutout) = if row.selected {
-            fill_rounded_rect(&mut self.canvas, bx.x, bx.y, bx.w, bx.h, 8.0, fg);
-            (bg, fg)
+    fn draw_menu_item(&mut self, bx: crate::layout::LayoutBox, row: &ListRow, pal: ResolvedTheme) {
+        let text_ink = if row.selected {
+            fill_rounded_rect(&mut self.canvas, bx.x, bx.y, bx.w, bx.h, 8.0, pal.fg);
+            pal.bg
         } else {
-            (fg, bg)
+            pal.fg
         };
 
         let bold = self.fonts_bold.clone();
         let semibold = self.fonts_semibold.clone();
         let medium = self.fonts_medium.clone();
 
-        // Left filetype icon (32x32 at x + 16, gap = 16 before label) if present
+        // Left filetype icon (32x32 at x + 16, gap = 16 before label) if present:
+        // On unselected rows, `icon_dir` ([712]/[716]) uses `fg`, while `icon_filetype` ([849]/[925]) uses `fg2`.
         let text_x = if row.file_icon != FileIconKind::None {
+            let (f_ink, f_cutout) = if row.selected {
+                (pal.bg, pal.fg)
+            } else if matches!(
+                row.file_icon,
+                FileIconKind::Folder | FileIconKind::AddFolder
+            ) {
+                (pal.fg, pal.bg)
+            } else {
+                (pal.fg2, pal.bg)
+            };
             draw_filetype_icon(
                 &mut self.canvas,
                 bx.x + 16.0,
                 bx.y + (bx.h - 32.0) * 0.5,
                 &row.file_icon,
-                ink,
-                cutout,
+                f_ink,
+                f_cutout,
                 &bold,
             );
             bx.x + 16.0 + 32.0 + 16.0
@@ -526,28 +618,35 @@ impl UiEngine {
             bx.x + 16.0
         };
 
-        // Right accessory (icon_play_s chevron, toggle switch, or Active4/NotActive4 value)
+        // Right accessory (icon_arrow_s chevron, toggle switch, Active4 <Value>, or Active5 plain Value)
         let inner_right = bx.x + bx.w - 16.0;
         let right_limit = match row.right {
             RightAccessory::None => inner_right,
             RightAccessory::Chevron => {
                 let cx = inner_right - 32.0;
                 let cy = bx.y + (bx.h - 32.0) * 0.5;
-                draw_chevron_s(&mut self.canvas, cx, cy, ink);
+                let chev_ink = if row.selected { pal.bg } else { pal.fg2 };
+                draw_arrow_s(&mut self.canvas, cx, cy, chev_ink);
                 cx - 16.0
             }
             RightAccessory::Toggle(enabled) => {
                 let tx = inner_right - 64.0;
                 let ty = bx.y + (bx.h - 32.0) * 0.5;
-                draw_toggle(&mut self.canvas, tx, ty, enabled, ink, cutout);
+                // [50] enabled=True knob is fg1 inside fg pill when unselected; inverted to fg2 inside bg pill when selected
+                let (t_ink, t_knob) = if row.selected {
+                    (pal.bg, pal.fg2)
+                } else {
+                    (pal.fg, pal.fg1)
+                };
+                draw_toggle(&mut self.canvas, tx, ty, enabled, t_ink, t_knob);
                 tx - 16.0
             }
-            RightAccessory::Value(val) => {
+            RightAccessory::CycleValue(val) => {
                 let trimmed = val.trim();
                 if trimmed.is_empty() {
                     inner_right
                 } else {
-                    let mut vp = Paint::color(ink);
+                    let mut vp = Paint::color(text_ink);
                     vp.set_font(&medium);
                     vp.set_font_size(36.0);
                     vp.set_text_align(Align::Right);
@@ -558,7 +657,7 @@ impl UiEngine {
                         // ui.figcraft [1293]/[1186] Type=Active4: [icon_play_s_left] 10px [Value] 10px [icon_play_s]
                         let arrow_y = bx.y + (bx.h - 32.0) * 0.5;
                         let right_arrow_x = inner_right - 32.0;
-                        draw_chevron_s(&mut self.canvas, right_arrow_x, arrow_y, ink);
+                        draw_chevron_s(&mut self.canvas, right_arrow_x, arrow_y, text_ink);
 
                         let val_right_x = right_arrow_x - 10.0;
                         let max_val_w = (bx.w * 0.46).max(80.0);
@@ -571,7 +670,7 @@ impl UiEngine {
                         let _ = self.canvas.fill_text(val_right_x, base_y, &val_fitted, &vp);
 
                         let left_arrow_x = val_right_x - val_w - 10.0 - 32.0;
-                        draw_chevron_left_s(&mut self.canvas, left_arrow_x, arrow_y, ink);
+                        draw_chevron_left_s(&mut self.canvas, left_arrow_x, arrow_y, text_ink);
 
                         (left_arrow_x - 16.0).max(text_x)
                     } else {
@@ -588,12 +687,35 @@ impl UiEngine {
                     }
                 }
             }
+            RightAccessory::Value(val) => {
+                // ui.figcraft [2035] Type=Active5 / [1318] NotActive4: plain right-aligned value without < > arrows
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    inner_right
+                } else {
+                    let mut vp = Paint::color(text_ink);
+                    vp.set_font(&medium);
+                    vp.set_font_size(36.0);
+                    vp.set_text_align(Align::Right);
+                    vp.set_text_baseline(Baseline::Alphabetic);
+                    let base_y = Self::text_row_baseline(bx.center_y(), 36.0);
+                    let max_val_w = (bx.w * 0.50).max(80.0);
+                    let val_fitted = self.truncate_ellipsis(trimmed, max_val_w, &vp);
+                    let val_w = self
+                        .canvas
+                        .measure_text(0.0, 0.0, &val_fitted, &vp)
+                        .map(|m| m.width())
+                        .unwrap_or(0.0);
+                    let _ = self.canvas.fill_text(inner_right, base_y, &val_fitted, &vp);
+                    (inner_right - val_w - 24.0).max(text_x)
+                }
+            }
         };
 
         // Main item label: Geologica SemiBold 48px
         let avail_w = (right_limit - text_x).max(0.0);
         if avail_w > 8.0 && !row.label.is_empty() {
-            let mut lp = Paint::color(ink);
+            let mut lp = Paint::color(text_ink);
             lp.set_font(&semibold);
             lp.set_font_size(48.0);
             lp.set_text_align(Align::Left);
@@ -621,7 +743,7 @@ impl UiEngine {
         }
 
         if mono {
-            quantize_mono_art_3shade(&rgb24[..256 * 256 * 3], theme, &mut self.art_rgba_scratch);
+            quantize_mono_art_4shade(&rgb24[..256 * 256 * 3], theme, &mut self.art_rgba_scratch);
         } else {
             for (src, dst) in rgb24[..256 * 256 * 3]
                 .chunks_exact(3)
@@ -647,32 +769,30 @@ impl UiEngine {
         Some(id)
     }
 
-    /// Draws `AlbumCover` `Type=NoCover` (`[1400]`): `256x256` `r=8` `stroke=4 inside` + filled vinyl disc (`180` / `78` / `8`).
-    fn draw_album_art_placeholder(&mut self, x: f32, y: f32, w: f32, h: f32, fg: Color, bg: Color) {
-        stroke_rounded_rect_inside(&mut self.canvas, x, y, w, h, 8.0, 4.0, fg);
+    /// Draws `AlbumCover` `Type=NoCover` (`[1400]`): `r=8` `stroke=4 inside` (`fg1`),
+    /// outer disc (`fg2`), inner label (`fg1`), center spindle (`fg`).
+    fn draw_album_art_placeholder(&mut self, x: f32, y: f32, w: f32, h: f32, pal: ResolvedTheme) {
+        stroke_rounded_rect_inside(&mut self.canvas, x, y, w, h, 8.0, 4.0, pal.fg1);
         let cx = x + w * 0.5;
         let cy = y + h * 0.5;
+        let scale = (w.min(h) / 256.0).max(0.25);
 
-        // [1397] Outer vinyl disc: 180x180 (radius 90) filled in fg
         let mut outer_disc = VgPath::new();
-        outer_disc.circle(cx, cy, 90.0);
-        self.canvas.fill_path(&outer_disc, &Paint::color(fg));
+        outer_disc.circle(cx, cy, 90.0 * scale);
+        self.canvas.fill_path(&outer_disc, &Paint::color(pal.fg2));
 
-        // [1398] Center label cutout: 78x78 (radius 39) filled in bg
         let mut label_cut = VgPath::new();
-        label_cut.circle(cx, cy, 39.0);
-        self.canvas.fill_path(&label_cut, &Paint::color(bg));
+        label_cut.circle(cx, cy, 39.0 * scale);
+        self.canvas.fill_path(&label_cut, &Paint::color(pal.fg1));
 
-        // [1399] Spindle dot: 8x8 (radius 4) filled in fg
         let mut spindle = VgPath::new();
-        spindle.circle(cx, cy, 4.0);
-        self.canvas.fill_path(&spindle, &Paint::color(fg));
+        spindle.circle(cx, cy, 4.0 * scale);
+        self.canvas.fill_path(&spindle, &Paint::color(pal.fg));
     }
 
     fn draw_list_screen(&mut self, state: &ListScreenState) {
-        let bg = rgb_u32_to_color(state.theme.bg_rgb);
-        let fg = rgb_u32_to_color(state.theme.fg_rgb);
-        self.begin_offscreen(HEIGHT, bg);
+        let pal = resolve_theme(state.theme);
+        self.begin_offscreen(HEIGHT, pal.bg);
 
         let vis = if state.visible_items > 0 {
             state.visible_items
@@ -684,10 +804,10 @@ impl UiEngine {
         let show_scrollbar = state.total_items > vis;
         let boxes = compute_list_layout(state.rows.len(), show_scrollbar);
 
-        self.draw_header_component(&boxes.header, &state.header, fg, bg);
+        self.draw_header_component(&boxes.header, &state.header, pal);
 
         for (row_data, row_box) in state.rows.iter().zip(boxes.rows.iter()) {
-            self.draw_menu_item(*row_box, row_data, fg, bg);
+            self.draw_menu_item(*row_box, row_data, pal);
         }
 
         if let Some(sb) = boxes.scrollbar {
@@ -700,25 +820,126 @@ impl UiEngine {
                 state.total_items,
                 state.start_item,
                 vis,
-                fg,
+                pal.fg1,
+                pal.fg,
             );
         }
     }
 
     fn draw_now_playing_screen(&mut self, state: &NowPlayingState) {
-        let bg = rgb_u32_to_color(state.theme.bg_rgb);
-        let fg = rgb_u32_to_color(state.theme.fg_rgb);
-        self.begin_offscreen(HEIGHT, bg);
+        let pal = resolve_theme(state.theme);
+        self.begin_offscreen(HEIGHT, pal.bg);
+
+        if state.alt_layout {
+            let alt = compute_now_playing_alt_layout();
+            let semibold = self.fonts_semibold.clone();
+
+            let art_drawn = if let Some(rgb24) = state.art_rgb24 {
+                if let Some(img_id) =
+                    self.ensure_album_art_uploaded(rgb24, state.mono_album_art, state.theme)
+                {
+                    let paint = Paint::image(
+                        img_id,
+                        alt.art_box.x,
+                        alt.art_box.y,
+                        alt.art_box.w,
+                        alt.art_box.h,
+                        0.0,
+                        1.0,
+                    );
+                    let mut rect = VgPath::new();
+                    rect.rounded_rect(
+                        alt.art_box.x,
+                        alt.art_box.y,
+                        alt.art_box.w,
+                        alt.art_box.h,
+                        8.0,
+                    );
+                    self.canvas.fill_path(&rect, &paint);
+                    stroke_rounded_rect_inside(
+                        &mut self.canvas,
+                        alt.art_box.x,
+                        alt.art_box.y,
+                        alt.art_box.w,
+                        alt.art_box.h,
+                        8.0,
+                        4.0,
+                        pal.fg,
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !art_drawn {
+                self.draw_album_art_placeholder(
+                    alt.art_box.x,
+                    alt.art_box.y,
+                    alt.art_box.w,
+                    alt.art_box.h,
+                    pal,
+                );
+            }
+
+            draw_seekbar_track_h(
+                &mut self.canvas,
+                alt.seekbar_track.x,
+                alt.seekbar_track.y,
+                alt.seekbar_track.w,
+                alt.seekbar_track.h,
+                state.progress,
+                pal.fg1,
+                pal.fg2,
+            );
+
+            let label_base_y = Self::cap_centered_baseline(alt.seekbar_labels.center_y(), 32.0);
+            let mut lp = Paint::color(pal.fg);
+            lp.set_font(&semibold);
+            lp.set_font_size(32.0);
+            lp.set_text_baseline(Baseline::Alphabetic);
+
+            if !state.center_status_label.trim().is_empty() {
+                lp.set_text_align(Align::Center);
+                let _ = self.canvas.fill_text(
+                    alt.seekbar_labels.center_x(),
+                    label_base_y,
+                    state.center_status_label,
+                    &lp,
+                );
+            } else {
+                if !state.elapsed_label.is_empty() {
+                    lp.set_text_align(Align::Left);
+                    let _ = self.canvas.fill_text(
+                        alt.seekbar_labels.x,
+                        label_base_y,
+                        state.elapsed_label,
+                        &lp,
+                    );
+                }
+                if !state.remaining_label.is_empty() {
+                    lp.set_text_align(Align::Right);
+                    let _ = self.canvas.fill_text(
+                        alt.seekbar_labels.x + alt.seekbar_labels.w,
+                        label_base_y,
+                        state.remaining_label,
+                        &lp,
+                    );
+                }
+            }
+            return;
+        }
 
         let np = compute_now_playing_layout();
-        self.draw_header_component(&np.header, &state.header, fg, bg);
+        self.draw_header_component(&np.header, &state.header, pal);
 
         let regular = self.fonts_regular.clone();
         let semibold = self.fonts_semibold.clone();
 
         // 1. Sub-header row [247] (y = 144, h = 40): "21 of 500" (Regular 32px, ls=2%) + optional [EQ] badge
         if !state.track_pos_label.is_empty() {
-            let mut pp = Paint::color(fg);
+            let mut pp = Paint::color(pal.fg);
             pp.set_font(&regular);
             pp.set_font_size(32.0);
             pp.set_letter_spacing(32.0 * 0.02); // 2% letter-spacing per [248]
@@ -736,15 +957,26 @@ impl UiEngine {
             let eq_h = 34.0;
             let eq_x = np.subheader_row.x + np.subheader_row.w - eq_w;
             let eq_y = np.subheader_row.y + (np.subheader_row.h - eq_h) * 0.5;
-            stroke_rounded_rect_inside(&mut self.canvas, eq_x, eq_y, eq_w, eq_h, 4.0, 2.0, fg);
+            stroke_rounded_rect_inside(
+                &mut self.canvas,
+                eq_x,
+                eq_y,
+                eq_w,
+                eq_h,
+                4.0,
+                2.0,
+                pal.fg,
+            );
 
-            let mut eqp = Paint::color(fg);
+            let mut eqp = Paint::color(pal.fg);
             eqp.set_font(&semibold);
             eqp.set_font_size(24.0);
             eqp.set_text_align(Align::Center);
             eqp.set_text_baseline(Baseline::Alphabetic);
             let base_y = Self::cap_centered_baseline(eq_y + eq_h * 0.5, 24.0);
-            let _ = self.canvas.fill_text(eq_x + eq_w * 0.5, base_y, "EQ", &eqp);
+            let _ = self
+                .canvas
+                .fill_text(eq_x + eq_w * 0.5, base_y, "EQ", &eqp);
         }
 
         // 2. Album Art [1402] Type=Cover (32, 256, 256, 256): r=8 image + 4px inside rounded border [1403]
@@ -772,7 +1004,7 @@ impl UiEngine {
                     np.art_box.h,
                     8.0,
                     4.0,
-                    fg,
+                    pal.fg,
                 );
                 true
             } else {
@@ -787,14 +1019,13 @@ impl UiEngine {
                 np.art_box.y,
                 np.art_box.w,
                 np.art_box.h,
-                fg,
-                bg,
+                pal,
             );
         }
 
         // 3. Metadata column [253]: Title (SemiBold 48), Artist (Regular 36 ls=2%), Album (Regular 36 ls=2%), Specs row
         if !state.title.is_empty() {
-            let mut tp = Paint::color(fg);
+            let mut tp = Paint::color(pal.fg);
             tp.set_font(&semibold);
             tp.set_font_size(48.0);
             tp.set_text_align(Align::Left);
@@ -805,7 +1036,7 @@ impl UiEngine {
         }
 
         if !state.artist.is_empty() {
-            let mut ap = Paint::color(fg);
+            let mut ap = Paint::color(pal.fg);
             ap.set_font(&regular);
             ap.set_font_size(36.0);
             ap.set_letter_spacing(36.0 * 0.02);
@@ -819,7 +1050,7 @@ impl UiEngine {
         }
 
         if !state.album.is_empty() {
-            let mut alp = Paint::color(fg);
+            let mut alp = Paint::color(pal.fg);
             alp.set_font(&regular);
             alp.set_font_size(36.0);
             alp.set_letter_spacing(36.0 * 0.02);
@@ -839,7 +1070,7 @@ impl UiEngine {
 
         let codec = state.codec_label.trim();
         if !codec.is_empty() {
-            let mut cp = Paint::color(fg);
+            let mut cp = Paint::color(pal.fg);
             cp.set_font(&semibold);
             cp.set_font_size(24.0);
             cp.set_text_align(Align::Center);
@@ -861,7 +1092,7 @@ impl UiEngine {
                 badge_h,
                 4.0,
                 2.0,
-                fg,
+                pal.fg,
             );
             let _ = self
                 .canvas
@@ -869,7 +1100,7 @@ impl UiEngine {
             cursor_x += badge_w + 21.0;
         }
 
-        let mut sp = Paint::color(fg);
+        let mut sp = Paint::color(pal.fg);
         sp.set_font(&regular);
         sp.set_font_size(24.0);
         sp.set_text_align(Align::Left);
@@ -891,7 +1122,7 @@ impl UiEngine {
             let _ = self.canvas.fill_text(cursor_x, specs_base_y, srate, &sp);
         }
 
-        // 4. Seekbar [640] (32, 594, 960, 84): horizontal track 960x34 + labels row 960x40
+        // 4. Seekbar [640] (32, 594, 960, 84): horizontal track 960x24 (`fg1` border, `fg2` fill) + labels
         draw_seekbar_track_h(
             &mut self.canvas,
             np.seekbar_track.x,
@@ -899,11 +1130,12 @@ impl UiEngine {
             np.seekbar_track.w,
             np.seekbar_track.h,
             state.progress,
-            fg,
+            pal.fg1,
+            pal.fg2,
         );
 
         let label_base_y = Self::cap_centered_baseline(np.seekbar_labels.center_y(), 32.0);
-        let mut lp = Paint::color(fg);
+        let mut lp = Paint::color(pal.fg);
         lp.set_font(&semibold);
         lp.set_font_size(32.0);
         lp.set_text_baseline(Baseline::Alphabetic);
@@ -935,14 +1167,119 @@ impl UiEngine {
         }
     }
 
-    /// Renders only the top `Header` band (`1024x124`) into Rockbox's `{b, g, r}` framebuffer,
-    /// leaving rows `124..768` untouched for non-list screens (dialogs, sliders, keyboard).
-    pub fn render_header_into_bgr(&mut self, theme: ThemeColors, state: &HeaderState, fb_bgr: &mut [u8]) {
-        let bg = rgb_u32_to_color(theme.bg_rgb);
-        let fg = rgb_u32_to_color(theme.fg_rgb);
-        self.begin_offscreen(HEADER_BAND_ROWS, bg);
+    fn draw_keyboard_screen(&mut self, state: &KeyboardState) {
+        let pal = resolve_theme(state.theme);
+        self.begin_offscreen(HEIGHT, pal.bg);
+
+        let semibold = self.fonts_semibold.clone();
+        let margin = 32.0_f32;
+        let inner_w = (WIDTH as f32) - margin * 2.0; // 960.0
+
+        // 1. Input box (32, 32, 960, 96): r=8, 4px inside border in fg1, text in fg, caret in fg2
+        let fx = margin;
+        let fy = 32.0_f32;
+        let fw = inner_w;
+        let fh = 96.0_f32;
+        stroke_rounded_rect_inside(&mut self.canvas, fx, fy, fw, fh, 8.0, 4.0, pal.fg1);
+
+        let mut ip = Paint::color(pal.fg);
+        ip.set_font(&semibold);
+        ip.set_font_size(46.0);
+        ip.set_text_align(Align::Left);
+        ip.set_text_baseline(Baseline::Alphabetic);
+
+        let text_pad = 20.0_f32;
+        let vis = self.visible_tail_utf8(state.text, fw - text_pad * 2.0 - 16.0, &ip);
+        let tw = if vis.is_empty() {
+            0.0
+        } else {
+            self.canvas
+                .measure_text(0.0, 0.0, &vis, &ip)
+                .map(|m| m.width())
+                .unwrap_or(0.0)
+        };
+        if !vis.is_empty() {
+            let base_y = Self::text_row_baseline(fy + fh * 0.5, 46.0);
+            let _ = self.canvas.fill_text(fx + text_pad, base_y, &vis, &ip);
+        }
+        let caret_x = (fx + text_pad + tw + 4.0).min(fx + fw - text_pad - 6.0);
+        fill_rounded_rect(&mut self.canvas, caret_x, fy + 20.0, 6.0, fh - 40.0, 3.0, pal.fg2);
+
+        // 2. Staggered 5-row QWERTY key grid
+        let gap = 12.0_f32;
+        let grid_top = 156.0_f32;
+        let key_h = 106.0_f32;
+        let row_step = key_h + gap;
+        let char_key_w = (inner_w - 9.0 * gap) / 10.0;
+
+        for (r_idx, row) in state.rows.iter().enumerate() {
+            let n = row.len();
+            if n == 0 {
+                continue;
+            }
+            let kw = if r_idx == 4 {
+                (inner_w - ((n - 1) as f32) * gap) / (n as f32)
+            } else {
+                char_key_w
+            };
+            let row_w = (n as f32) * kw + ((n - 1) as f32) * gap;
+            let start_x = ((WIDTH as f32) - row_w) * 0.5;
+            let y = grid_top + (r_idx as f32) * row_step;
+
+            for (c_idx, key) in row.iter().enumerate() {
+                let x = start_x + (c_idx as f32) * (kw + gap);
+                let text_color = if key.selected {
+                    fill_rounded_rect(&mut self.canvas, x, y, kw, key_h, 8.0, pal.fg);
+                    pal.bg
+                } else if key.is_active_toggle {
+                    fill_rounded_rect(&mut self.canvas, x, y, kw, key_h, 8.0, pal.fg2);
+                    pal.bg
+                } else {
+                    stroke_rounded_rect_inside(
+                        &mut self.canvas,
+                        x,
+                        y,
+                        kw,
+                        key_h,
+                        8.0,
+                        4.0,
+                        pal.fg1,
+                    );
+                    if key.is_modifier {
+                        pal.fg2
+                    } else {
+                        pal.fg
+                    }
+                };
+
+                if !key.label.is_empty() {
+                    let fsz = if key.is_modifier { 34.0 } else { 44.0 };
+                    let mut kp = Paint::color(text_color);
+                    kp.set_font(&semibold);
+                    kp.set_font_size(fsz);
+                    kp.set_text_align(Align::Center);
+                    kp.set_text_baseline(Baseline::Alphabetic);
+                    let base_y = Self::text_row_baseline(y + key_h * 0.5, fsz);
+                    let _ = self
+                        .canvas
+                        .fill_text(x + kw * 0.5, base_y, key.label, &kp);
+                }
+            }
+        }
+    }
+
+    /// Renders only the top `Header` band (`1024x120`) into Rockbox's `{b, g, r}` framebuffer,
+    /// leaving rows `120..768` untouched for non-list screens (dialogs, sliders).
+    pub fn render_header_into_bgr(
+        &mut self,
+        theme: ThemeColors,
+        state: &HeaderState,
+        fb_bgr: &mut [u8],
+    ) {
+        let pal = resolve_theme(theme);
+        self.begin_offscreen(HEADER_BAND_ROWS, pal.bg);
         let boxes = compute_header_layout();
-        self.draw_header_component(&boxes, state, fg, bg);
+        self.draw_header_component(&boxes, state, pal);
         self.finish_and_read_top_rows(HEADER_BAND_ROWS);
         self.unpack_top_rows_to_bgr(HEADER_BAND_ROWS, fb_bgr);
     }
@@ -957,6 +1294,13 @@ impl UiEngine {
     /// Renders the full `1024x768` `Now Playing` screen into Rockbox's `{b, g, r}` framebuffer.
     pub fn render_now_playing_into_bgr(&mut self, state: &NowPlayingState, fb_bgr: &mut [u8]) {
         self.draw_now_playing_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+    }
+
+    /// Renders the full `1024x768` QWERTY keyboard into Rockbox's `{b, g, r}` framebuffer.
+    pub fn render_keyboard_into_bgr(&mut self, state: &KeyboardState, fb_bgr: &mut [u8]) {
+        self.draw_keyboard_screen(state);
         self.finish_and_read_top_rows(HEIGHT);
         self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
     }
@@ -978,6 +1322,15 @@ impl UiEngine {
         self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
         out
     }
+
+    /// Renders the full `1024x768` QWERTY keyboard and returns top-down `RGBA8` bytes (for PNG previews/tests).
+    pub fn render_keyboard_rgba(&mut self, state: &KeyboardState) -> Vec<u8> {
+        self.draw_keyboard_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        let mut out = vec![0u8; WIDTH * HEIGHT * 4];
+        self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
+        out
+    }
 }
 
 const _: () = {
@@ -990,7 +1343,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn monochrome_art_uses_exact_three_theme_shades() {
+    fn monochrome_art_uses_exact_four_theme_shades() {
         let mut rgb = vec![0u8; 256 * 256 * 3];
         for y in 0..256usize {
             for x in 0..256usize {
@@ -1002,28 +1355,28 @@ mod tests {
             }
         }
         let mut out = vec![RGBA8::new(0, 0, 0, 255); 256 * 256];
-        let theme = ThemeColors {
-            bg_rgb: 0x0094E1,
-            fg_rgb: 0x002B4A,
-        };
-        quantize_mono_art_3shade(&rgb, theme, &mut out);
+        let theme = ThemeColors::default();
+        quantize_mono_art_4shade(&rgb, theme, &mut out);
 
-        let dark = RGBA8::new(0x00, 0x2B, 0x4A, 255);
-        let light = RGBA8::new(0x00, 0x94, 0xE1, 255);
-        let mid = RGBA8::new(0x00, 0x60, 0x96, 255);
+        let c_fg = RGBA8::new(0x3C, 0x36, 0x37, 255);
+        let c_fg2 = RGBA8::new(0x59, 0x59, 0x59, 255);
+        let c_fg1 = RGBA8::new(0xA8, 0xA8, 0xA8, 255);
+        let c_bg = RGBA8::new(0xD6, 0xD8, 0xD5, 255);
 
-        let mut seen = [false; 3];
+        let mut seen = [false; 4];
         for &px in &out {
-            if px == dark {
+            if px == c_fg {
                 seen[0] = true;
-            } else if px == mid {
+            } else if px == c_fg2 {
                 seen[1] = true;
-            } else if px == light {
+            } else if px == c_fg1 {
                 seen[2] = true;
+            } else if px == c_bg {
+                seen[3] = true;
             } else {
-                panic!("unexpected shade outside 3-tone theme palette: {px:?}");
+                panic!("unexpected shade outside 4-tone theme palette: {px:?}");
             }
         }
-        assert_eq!(seen, [true, true, true]);
+        assert_eq!(seen, [true, true, true, true]);
     }
 }
