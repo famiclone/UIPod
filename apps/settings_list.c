@@ -819,9 +819,8 @@ const struct settings_list settings[] = {
 
     /* crossfeed */
     CHOICE_SETTING(F_SOUNDSETTING, crossfeed, LANG_CROSSFEED, 0,"crossfeed",
-                   "off,meier,custom", dsp_set_crossfeed_type, 3,
-                   ID2P(LANG_OFF), ID2P(LANG_CROSSFEED_MEIER),
-                   ID2P(LANG_CROSSFEED_CUSTOM)),
+                   "off,meier", dsp_set_crossfeed_type, 2,
+                   ID2P(LANG_OFF), ID2P(LANG_CROSSFEED_MEIER)),
     INT_SETTING_NOWRAP(F_SOUNDSETTING, crossfeed_direct_gain,
                        LANG_CROSSFEED_DIRECT_GAIN, -15,
                        "crossfeed direct gain", UNIT_DB, -60, 0, 5,
@@ -1040,6 +1039,8 @@ const struct settings_list settings[] = {
 
     OFFON_SETTING(0, mono_album_art, LANG_UIPOD_MONO_ALBUM_ART, true,
                   "mono album art", NULL),
+    OFFON_SETTING(0, menu_click, LANG_UIPOD_MENU_CLICK, true,
+                  "menu click", NULL),
     CHOICE_SETTING(0, transition_style, LANG_UIPOD_TRANSITION, 0,
                    "screen transition", "slide,cover,fade,pixels,blinds,off",
                    NULL, 6,

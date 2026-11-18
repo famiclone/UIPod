@@ -1,0 +1,10 @@
+[package]
+name = "uipod-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Official pure-Rust plugin SDK & C-ABI contract for UIPod native (.uipod) plugins"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_plugin_sdk"
+crate-type = ["rlib"]

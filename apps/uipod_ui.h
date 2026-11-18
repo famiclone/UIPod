@@ -45,20 +45,12 @@ bool uipod_confirm(const char *question, const char *detail);
  * out with B.  Blocking. */
 int uipod_context_menu(const char *title, const char *const *items, int count);
 
-/* The About screen: a credits reel that drifts up and down on its own (B leaves).
- * Blocking. */
+/* Opens the UIPod manual & credits (`ROCKBOX_DIR "/about.txt"`) in Text Viewer. */
 void uipod_about(void);
-
-/* Pre-fault the About reel's glyphs into the font cache at startup, so the first
- * (possibly mid-playback) About open doesn't stall the codec on disk reads. */
-void uipod_about_prewarm(void);
 
 /* A static text page: `rows` (lang ids via ID2P, or strings) rendered as a
  * centred block under a `title` header (B leaves).  Blocking. */
 void uipod_message_page(const char *title, const char *const *rows, int nrows);
-
-/* The Controls screen: a static list of the app's inputs (B leaves).  Blocking. */
-void uipod_controls(void);
 
 /* The shared on/off toggle glyph ("[x]"/"[ ]") for list indicator callbacks.
  * One convention for every toggle list (Menu Settings, Visualizers, ...). */

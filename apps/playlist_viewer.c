@@ -32,7 +32,7 @@
 #include "settings.h"
 #include "icons.h"
 #include "scratch_buf.h"
-#include "keyboard.h"
+#include "uipod_keyboard.h"
 #include "filetypes.h"
 #include "misc.h"
 #include "action.h"
@@ -42,7 +42,6 @@
 #include "lang.h"
 
 #include "playlist_viewer.h"
-#include "playlist_catalog.h"
 #include "icon.h"
 #include "list.h"
 #include "splash.h"
@@ -1072,7 +1071,7 @@ bool search_playlist(void)
 
     if (!playlist_viewer_init(&viewer, NULL, NULL, NULL))
         return ret;
-    if (kbd_input(search_str, sizeof(search_str), NULL) < 0)
+    if (uipod_kbd_input(search_str, sizeof(search_str)) < 0)
         return ret;
     lcd_clear_display();
     playlist_count = playlist_amount_ex(viewer.playlist);

@@ -601,6 +601,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 
     /* repeat actions block list wraparound */
     bool allow_wrap = lists->wraparound;
+    int prev_sel = lists->selected_item;
 
     switch (action)
     {
@@ -623,6 +624,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
         case ACTION_STD_PREV:
 
             gui_list_select_at_offset(lists, -next_item_modifier, allow_wrap);
+            if (lists->selected_item != prev_sel)
+                uipod_menu_click();
             if (button_queue_count() < FRAMEDROP_TRIGGER)
                 gui_synclist_draw(lists);
             yield();
@@ -634,6 +637,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             /*Fallthrough*/
         case ACTION_STD_NEXT:
             gui_list_select_at_offset(lists, next_item_modifier, allow_wrap);
+            if (lists->selected_item != prev_sel)
+                uipod_menu_click();
             if (button_queue_count() < FRAMEDROP_TRIGGER)
                 gui_synclist_draw(lists);
             yield();
@@ -681,6 +686,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             int screen =
                                           SCREEN_MAIN;
             gui_synclist_select_previous_page(lists, screen, false);
+            if (lists->selected_item != prev_sel)
+                uipod_menu_click();
             gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
@@ -692,6 +699,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             int screen =
                                           SCREEN_MAIN;
             gui_synclist_select_next_page(lists, screen, false);
+            if (lists->selected_item != prev_sel)
+                uipod_menu_click();
             gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;

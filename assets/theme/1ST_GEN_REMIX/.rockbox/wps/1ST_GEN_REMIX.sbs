@@ -20,13 +20,9 @@
 %Fl(2,58-Geologica.fnt)
 %Fl(3,67-Geologica.fnt)
 
-#Preload Images
+# Preload Images (only USB screen bitmaps are needed)
 %xl(sad_mac,sad_mac.bmp,0,0)
-%xl(playmodes,playmodes.bmp,0,0,9)
-%xl(repeat,repeat_status.bmp,0,0,5)
-%xl(shuffle,shuffle.bmp,0,0,2)
 %xl(battery,battery.bmp,0,0,5)
-%xl(lock,lock.bmp,0,0)
 
 # Display Viewports (Header is rendered by the Rust GPU UI engine; only USB screen uses skin viewports)
 %?if(%cs, =, 21)<%VI(clearScreen)%Vd(usbScreen)|%VI(mainMenu)>

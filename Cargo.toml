@@ -1,6 +1,21 @@
 [workspace]
 resolver = "2"
-members = ["crates/uipod-ui", "crates/uipod-navidrome", "crates/uipod-jellyfin", "crates/uipod-ffi"]
+members = [
+    "crates/uipod-ui",
+    "crates/uipod-navidrome",
+    "crates/uipod-jellyfin",
+    "crates/uipod-plugin-sdk",
+    "crates/uipod-plugins",
+    "crates/uipod-ffi",
+    "plugins/brick-breaker",
+    "plugins/uipod-2048",
+    "plugins/snake",
+    "plugins/tetris",
+    "plugins/sound-racer",
+    "plugins/stopwatch",
+    "plugins/text-viewer",
+    "plugins/lcd-plasma",
+]
 
 [profile.release]
 opt-level = 3

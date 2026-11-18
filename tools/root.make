@@ -18,9 +18,7 @@ PPCFLAGS = $(filter-out -g -Dmain=SDL_main,$(CFLAGS)) # cygwin sdl-config fix
 CORE_LDOPTS = $(GLOBAL_LDOPTS)  # linker ops specifically for core build
 
 TOOLS = $(TOOLSDIR)/rdf2binary $(TOOLSDIR)/convbdf \
-	$(TOOLSDIR)/codepages $(TOOLSDIR)/scramble $(TOOLSDIR)/bmp2rb \
-	$(TOOLSDIR)/uclpack $(TOOLSDIR)/mkboot $(TOOLSDIR)/iaudio_bl_flash.c \
-	$(TOOLSDIR)/iaudio_bl_flash.h
+	$(TOOLSDIR)/codepages $(TOOLSDIR)/bmp2rb
 TOOLS += $(foreach tool,$(TOOLSET),$(TOOLSDIR)/$(tool))
 
 ifeq (,$(PREFIX))

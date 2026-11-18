@@ -15,6 +15,5 @@ femtovg = { version = "0.10", default-features = false }
 glow = { version = "0.15", default-features = false }
 imgref = "1.12"
 rgb = "0.8"
-
-[dev-dependencies]
 png = "0.17"
+zune-jpeg = "0.5"

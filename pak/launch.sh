@@ -10,14 +10,8 @@ cd "$PAK_DIR" || exit 1
 HOME="$USERDATA_PATH"
 
 # Per-device sysfs paths (battery/backlight) + integer-ish display zoom value.
-if [ "$PLATFORM" = "tg5040" ]; then
-  if [ "$DEVICE" = "brick" ]; then
-    RBDEVICE="TUI-Brick"; . "$RBDIR/systems/tui-brick.sys"
-  else
-    RBDEVICE="TUI-SmartPro"; . "$RBDIR/systems/tui-spoon.sys"
-  fi
-elif [ "$PLATFORM" = "my355" ]; then
-  RBDEVICE="Miyoo-Flip"; . "$RBDIR/systems/my355.sys"
+if [ "$PLATFORM" = "tg5040" ] && [ "$DEVICE" = "brick" ]; then
+  RBDEVICE="TUI-Brick"; . "$RBDIR/systems/tui-brick.sys"
 else
   RBDEVICE="fallback"; . "$RBDIR/systems/fallback.sys"
 fi

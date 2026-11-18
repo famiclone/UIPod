@@ -25,10 +25,10 @@
 #include "lcd.h"        /* lcd_panel_is_dark: no presents while the panel is off */
 #include "panic.h"
 
-/* UIPod renders through an OpenGL ES 2/3 context (not an SDL_Renderer) so the
- * Milkdrop visualizer (projectM) can draw into the same window. In normal UI
- * mode we upload the 1024x768 LCD surface to a texture and draw it as a
- * full-window quad (1:1 nearest-filtered on TrimUI Brick, linear when downscaled). */
+/* UIPod renders through an OpenGL ES 3.0 context so the pure-Rust GPU UI and
+ * 4-shade visualizer engine can draw directly into the window. In legacy LCD
+ * fallback mode we upload the 1024x768 LCD surface to a texture and draw it as
+ * a full-window quad (1:1 nearest-filtered on TrimUI Brick, linear when downscaled). */
 #include <GLES2/gl2.h>
 
 extern SDL_Surface *lcd_surface;
@@ -42,7 +42,7 @@ SDL_Window   *sdlWindow;
 static bool window_adjustment_needed;
 double display_zoom = 1;
 
-/* When the Milkdrop visualizer is running it owns the GL context and the window;
+/* When the GPU visualizer is running it owns the GL context and the window;
  * suppress the normal LCD presentation so other Rockbox threads' lcd_update()
  * calls don't fight for the context. */
 volatile bool uipod_viz_active = false;
@@ -50,6 +50,7 @@ volatile bool uipod_viz_active = false;
 static SDL_GLContext gl_ctx = NULL;
 static GLuint gl_lcd_tex = 0, gl_prog = 0, gl_vbo = 0;
 static GLint  gl_u_fade = -1;
+static GLint  gl_u_bg   = -1;
 static int gl_tex_w = 0, gl_tex_h = 0; /* size gl_lcd_tex is currently allocated for */
 
 /* A video plays on the display layer below this window: everything is
@@ -66,11 +67,12 @@ static const char *gl_fs_src =
     "precision mediump float;\n"
     "varying vec2 v_uv;\n"
     "uniform sampler2D u_tex;\n"
-    "uniform float u_fade;\n"   /* 1 = normal, 0 = black (visualizer entry fade) */
+    "uniform float u_fade;\n"   /* 1 = normal, 0 = u_bg (visualizer entry fade) */
+    "uniform vec3 u_bg;\n"
     /* .bgr, not .rgb: the 24-bit Rockbox framebuffer stores blue first (lcd.h:
      * fb_data is {b, g, r}) and it is uploaded verbatim as GL_RGB, so the swizzle
      * here puts the channels back in order -- free, vs. a per-frame conversion. */
-    "void main(){ gl_FragColor = vec4(texture2D(u_tex, v_uv).bgr * u_fade, 1.0); }\n";
+    "void main(){ gl_FragColor = vec4(mix(u_bg, texture2D(u_tex, v_uv).bgr, u_fade), 1.0); }\n";
 
 static GLuint gl_compile(GLenum type, const char *src)
 {
@@ -106,6 +108,7 @@ static void gl_init_present(void)
     glBindAttribLocation(gl_prog, 1, "a_uv");
     glLinkProgram(gl_prog);
     gl_u_fade = glGetUniformLocation(gl_prog, "u_fade");
+    gl_u_bg   = glGetUniformLocation(gl_prog, "u_bg");
 
     glGenBuffers(1, &gl_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
@@ -139,17 +142,20 @@ const void *sdl_gl_get_proc_address(const char *name)
     return SDL_GL_GetProcAddress(name);
 }
 
-/* Upload an LCD surface and draw it to fill the window (fade 1=normal, 0=black),
+/* Upload an LCD surface and draw it to fill the window (fade 1=normal, 0=target_rgb),
  * then swap. */
-static void gl_present_lcd_fade(SDL_Surface *src, float fade)
+static void gl_present_lcd_fade(SDL_Surface *src, float fade, uint32_t target_rgb)
 {
     int w, h;
+    float bg_r = (float)((target_rgb >> 16) & 0xFF) / 255.0f;
+    float bg_g = (float)((target_rgb >> 8)  & 0xFF) / 255.0f;
+    float bg_b = (float)( target_rgb        & 0xFF) / 255.0f;
 
     SDL_GL_GetDrawableSize(sdlWindow, &w, &h);
     glViewport(0, 0, w, h);
-    glDisable(GL_DEPTH_TEST);   /* projectM may leave these on */
+    glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
-    glClearColor(0.f, 0.f, 0.f, video_through ? 0.f : 1.f);
+    glClearColor(bg_r, bg_g, bg_b, video_through ? 0.f : 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     if (video_through)
@@ -165,6 +171,7 @@ static void gl_present_lcd_fade(SDL_Surface *src, float fade)
 
     glUseProgram(gl_prog);
     glUniform1f(gl_u_fade, fade);
+    glUniform3f(gl_u_bg, bg_r, bg_g, bg_b);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, gl_lcd_tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
@@ -211,7 +218,30 @@ void sdl_gl_set_video_through(bool on, int overlay_rows)
 void sdl_gl_present_lcd_fade(float fade)
 {
     sdl_gl_make_current();
-    gl_present_lcd_fade(sim_lcd_surface, fade);
+    gl_present_lcd_fade(sim_lcd_surface, fade, 0);
+}
+
+void sdl_gl_present_lcd_fade_rgb(float fade, uint32_t target_rgb)
+{
+    sdl_gl_make_current();
+    gl_present_lcd_fade(sim_lcd_surface, fade, target_rgb);
+}
+
+void sdl_gl_get_drawable_size(int *out_w, int *out_h)
+{
+    int w = SIM_LCD_WIDTH, h = SIM_LCD_HEIGHT;
+    if (sdlWindow)
+        SDL_GL_GetDrawableSize(sdlWindow, &w, &h);
+    if (out_w)
+        *out_w = w;
+    if (out_h)
+        *out_h = h;
+}
+
+void sdl_gl_swap_window(void)
+{
+    if (!uipod_viz_active && !lcd_panel_is_dark() && sdlWindow)
+        SDL_GL_SwapWindow(sdlWindow);
 }
 
 static void get_window_dimensions(int *w, int *h)
@@ -238,7 +268,7 @@ void sdl_window_render(void)
     if (lcd_panel_is_dark())
         return;   /* panel off: the surfaces stay current, the present is waste */
     sdl_gl_make_current();
-    gl_present_lcd_fade(sim_lcd_surface, 1.0f);
+    gl_present_lcd_fade(sim_lcd_surface, 1.0f, 0);
 }
 
 bool sdl_window_adjust(void)
@@ -284,7 +314,7 @@ void sdl_window_setup(void)
 
     get_window_dimensions(&width, &height);
 
-    /* GLES 3.0 context (projectM needs it); the LCD is presented via GL too. */
+    /* GLES 3.0 context for `uipod-ui` and the 4-shade GPU visualizer. */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);

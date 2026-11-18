@@ -457,6 +457,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                 {
                     const struct menu_value_cb *vc = iitem->function_param->param;
                     vc->cycle(vc->ctx, back ? -1 : +1);
+                    uipod_menu_click();
                 }
                 redraw_lists = true;
                 action = ACTION_NONE;   /* consumed */
@@ -467,6 +468,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                 if (iset)
                 {
                     option_select_next_val(iset, back, true);
+                    uipod_menu_click();
                     redraw_lists = true;
                 }
                 action = ACTION_NONE;   /* consumed */

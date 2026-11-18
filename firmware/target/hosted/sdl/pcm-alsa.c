@@ -58,6 +58,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -856,13 +857,13 @@ static int writer_fn(void *param)
     return 0;
 }
 
-/* --- Trimpod visualizer PCM tap -----------------------------------------
- * The spectrum and Milkdrop visualizer (projectM) need the audio waveform to
- * react to the beat.  We mirror the PRE-volume Rockbox S16 stereo source (see
- * copy_frames) into a lock-free ring buffer (single producer = the writer
- * thread, single consumer = the render loop) so the visuals are independent of
- * the volume setting.  Torn reads are harmless for a visualizer. */
-#define VIZ_PCM_FRAMES 8192            /* must be a power of two */
+/* --- UIPod visualizer PCM tap -------------------------------------------
+ * The 4-shade GPU visualizer and audio-reactive plugins need the stereo PCM
+ * waveform and spectrum synchronized to speaker/Bluetooth output.  We mirror
+ * the PRE-volume Rockbox S16 stereo source (see copy_frames) into a lock-free
+ * 16384-frame (~371 ms at 44.1 kHz) ring buffer so visuals stay independent of
+ * volume and can step back by `out_delay_us` to match ear arrival time. */
+#define VIZ_PCM_FRAMES 16384           /* must be a power of two */
 static int16_t viz_pcm_ring[VIZ_PCM_FRAMES * 2];
 static volatile unsigned viz_pcm_w;    /* total stereo frames ever written */
 
@@ -882,7 +883,7 @@ static void viz_pcm_push(const void *src_v, unsigned frames_n)
 }
 
 /* Copy the most recent up-to max_frames stereo frames into out (LRLR).
- * Returns the number of frames written. Called by trimpod_visualizer.c. */
+ * Returns the number of frames written. */
 unsigned pcm_viz_latest(int16_t *out, unsigned max_frames)
 {
     unsigned w = viz_pcm_w;
@@ -897,6 +898,244 @@ unsigned pcm_viz_latest(int16_t *out, unsigned max_frames)
         out[2 * i + 1] = viz_pcm_ring[idx + 1];
     }
     return n;
+}
+
+/* Delay-compensated stereo PCM reader for the 4-shade visualizer engine.
+ * Steps back in the ring by `out_delay_us * sample_rate / 1_000_000` frames
+ * so visual beats land at the exact moment sound reaches the speaker or
+ * Bluetooth headphones.  Returns 0 when playback is paused/stopped. */
+unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
+                             unsigned *sample_rate_out)
+{
+    unsigned sr = real_sample_rate ? real_sample_rate : last_sample_rate;
+    if (!sr)
+        sr = 44100;
+    if (sample_rate_out)
+        *sample_rate_out = sr;
+    if (!dev_playing || !out || max_frames == 0)
+        return 0;
+
+    unsigned w = viz_pcm_w;
+    unsigned n = max_frames < (VIZ_PCM_FRAMES / 2)
+                     ? max_frames
+                     : (VIZ_PCM_FRAMES / 2);
+    unsigned max_delay = VIZ_PCM_FRAMES - n - 1024;
+    unsigned delay_frames =
+        (unsigned)(((uint64_t)out_delay_us * (uint64_t)sr) / 1000000ULL);
+    if (delay_frames > max_delay)
+        delay_frames = max_delay;
+    if (w <= delay_frames)
+        return 0;
+
+    unsigned end = w - delay_frames;
+    if (n > end)
+        n = end;
+    unsigned start = end - n;
+    for (unsigned i = 0; i < n; i++)
+    {
+        unsigned idx = ((start + i) & (VIZ_PCM_FRAMES - 1)) * 2;
+        out[2 * i]     = viz_pcm_ring[idx];
+        out[2 * i + 1] = viz_pcm_ring[idx + 1];
+    }
+    return n;
+}
+
+/* --- Ultra-low-latency iPod Click Wheel synthesizer ------------------------
+ * Synthesizes a 3-mode damped mechanical detent impulse (5.6 kHz piezo snap +
+ * 2.35 kHz click body + 1.18 kHz warm housing) and plays it directly onto the
+ * internal `Playback` dmix bus with a tiny 512-frame (~10 ms) buffer so menu
+ * scrolling feels instantaneous whether music is playing or stopped, without
+ * polluting `viz_pcm_ring`.  When a private USB-C or Bluetooth stream is
+ * actively playing, `pcm_alsa_menu_click()` returns false so `uipod_menu_click`
+ * mixes the exact same waveform into `PCM_MIXER_CHAN_BEEP`. */
+#define CLICK_RATE        48000
+#define CLICK_WAVE_FRAMES 96     /* 2.0 ms physical impulse */
+#define CLICK_BUF_FRAMES  256    /* 5.3 ms write chunk */
+#define CLICK_MIN_GAP_MS  22     /* max ~45 clicks/sec on fast-scroll */
+
+static int16_t s_click_stereo[CLICK_BUF_FRAMES * 2];
+static SDL_Thread *click_thread;
+static SDL_sem    *click_sem;
+static volatile bool click_run;
+static volatile bool click_pending;
+static Uint32 s_last_click_ms;
+
+static void init_click_waveform(void)
+{
+    double tmp[CLICK_WAVE_FRAMES];
+    double sum = 0.0;
+    const double pi = 3.14159265358979323846;
+
+    for (int i = 0; i < CLICK_WAVE_FRAMES; i++)
+    {
+        double t = (double)i / (double)CLICK_RATE;
+        double u = (double)i / (double)(CLICK_WAVE_FRAMES - 1);
+        double atk  = 1.0 - exp(-t / 0.00004);
+        double win  = 0.5 * (1.0 + cos(pi * u));
+        double snap = 0.62 * sin(2.0 * pi * 5600.0 * t) * exp(-t / 0.00024);
+        double body = 0.48 * sin(2.0 * pi * 2350.0 * t + 0.35) * exp(-t / 0.00042);
+        double warm = 0.24 * sin(2.0 * pi * 1180.0 * t) * exp(-t / 0.00065);
+        tmp[i] = (snap + body + warm) * atk * win;
+        sum += tmp[i];
+    }
+
+    double dc = sum / (double)CLICK_WAVE_FRAMES;
+    memset(s_click_stereo, 0, sizeof(s_click_stereo));
+    for (int i = 0; i < CLICK_WAVE_FRAMES; i++)
+    {
+        double v = (tmp[i] - dc) * 11500.0;
+        if (v > 32000.0) v = 32000.0;
+        if (v < -32000.0) v = -32000.0;
+        int16_t s = (int16_t)v;
+        s_click_stereo[2 * i]     = s;
+        s_click_stereo[2 * i + 1] = s;
+    }
+}
+
+static snd_pcm_t *open_click_dmix(void)
+{
+    snd_pcm_t *pcm = NULL;
+    snd_pcm_hw_params_t *hw = NULL;
+    snd_pcm_sw_params_t *sw = NULL;
+    unsigned int rate = CLICK_RATE;
+    snd_pcm_uframes_t period = CLICK_BUF_FRAMES;
+    snd_pcm_uframes_t buf_sz = CLICK_BUF_FRAMES * 2;
+
+    trimpod_alsa_lock();
+    if (snd_pcm_open(&pcm, "Playback", SND_PCM_STREAM_PLAYBACK, 0) < 0)
+    {
+        trimpod_alsa_unlock();
+        return NULL;
+    }
+
+    snd_pcm_hw_params_malloc(&hw);
+    snd_pcm_sw_params_malloc(&sw);
+
+    if (snd_pcm_hw_params_any(pcm, hw) < 0 ||
+        snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED) < 0 ||
+        snd_pcm_hw_params_set_format(pcm, hw, SND_PCM_FORMAT_S16_LE) < 0 ||
+        snd_pcm_hw_params_set_channels(pcm, hw, 2) < 0 ||
+        snd_pcm_hw_params_set_rate_near(pcm, hw, &rate, 0) < 0 ||
+        snd_pcm_hw_params_set_period_size_near(pcm, hw, &period, NULL) < 0 ||
+        snd_pcm_hw_params_set_buffer_size_near(pcm, hw, &buf_sz) < 0 ||
+        snd_pcm_hw_params(pcm, hw) < 0 ||
+        snd_pcm_sw_params_current(pcm, sw) < 0 ||
+        snd_pcm_sw_params_set_start_threshold(pcm, sw, 64) < 0 ||
+        snd_pcm_sw_params(pcm, sw) < 0 ||
+        snd_pcm_prepare(pcm) < 0)
+    {
+        snd_pcm_hw_params_free(hw);
+        snd_pcm_sw_params_free(sw);
+        snd_pcm_close(pcm);
+        trimpod_alsa_unlock();
+        return NULL;
+    }
+
+    snd_pcm_hw_params_free(hw);
+    snd_pcm_sw_params_free(sw);
+    trimpod_alsa_unlock();
+    return pcm;
+}
+
+static int click_fn(void *param)
+{
+    snd_pcm_t *click_pcm = NULL;
+    (void)param;
+
+    while (click_run)
+    {
+        SDL_SemWait(click_sem);
+        if (!click_run)
+            break;
+
+        click_pending = false;
+
+        if (audiodev || cur_route != TRIMPOD_SINK_SPEAKER)
+        {
+            if (click_pcm)
+            {
+                trimpod_alsa_lock();
+                snd_pcm_close(click_pcm);
+                trimpod_alsa_unlock();
+                click_pcm = NULL;
+            }
+            continue;
+        }
+
+        if (!click_pcm)
+        {
+            click_pcm = open_click_dmix();
+            if (!click_pcm)
+                continue;
+        }
+
+        snd_pcm_state_t st = snd_pcm_state(click_pcm);
+        if (st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP ||
+            st == SND_PCM_STATE_SUSPENDED)
+        {
+            snd_pcm_prepare(click_pcm);
+        }
+
+        snd_pcm_sframes_t wr = snd_pcm_writei(click_pcm, s_click_stereo,
+                                              CLICK_BUF_FRAMES);
+        if (wr < 0)
+        {
+            wr = snd_pcm_recover(click_pcm, (int)wr, 1);
+            if (wr == 0)
+                (void)snd_pcm_writei(click_pcm, s_click_stereo, CLICK_BUF_FRAMES);
+            else
+            {
+                trimpod_alsa_lock();
+                snd_pcm_close(click_pcm);
+                trimpod_alsa_unlock();
+                click_pcm = NULL;
+            }
+        }
+    }
+
+    if (click_pcm)
+    {
+        trimpod_alsa_lock();
+        snd_pcm_close(click_pcm);
+        trimpod_alsa_unlock();
+    }
+    return 0;
+}
+
+const void *pcm_alsa_click_samples(size_t *byte_size_out)
+{
+    if (byte_size_out)
+        *byte_size_out = CLICK_WAVE_FRAMES * 2 * sizeof(int16_t);
+    return s_click_stereo;
+}
+
+/* Returns true if handled (played on low-latency dmix, rate-limited, or
+ * suppressed because a private BT/USB route is currently closed/idle).
+ * Returns false when a private BT/USB stream is actively playing so the caller
+ * can mix the click into `PCM_MIXER_CHAN_BEEP`. */
+bool pcm_alsa_menu_click(void)
+{
+    Uint32 now = SDL_GetTicks();
+    if (now - s_last_click_ms < CLICK_MIN_GAP_MS)
+        return true;
+    s_last_click_ms = now;
+
+    if (!audiodev && cur_route == TRIMPOD_SINK_SPEAKER)
+    {
+        if (click_sem && !click_pending)
+        {
+            click_pending = true;
+            SDL_SemPost(click_sem);
+        }
+        return true;
+    }
+
+    /* Private route (Bluetooth / USB-C DAC): never reopen an idle device just
+     * for a 2 ms click; mix into PCM_MIXER_CHAN_BEEP only while active. */
+    if (!dev_playing || !dev_is_open())
+        return true;
+
+    return false;
 }
 
 /* --- pcm_sink ops ---------------------------------------------------------- */
@@ -942,6 +1181,7 @@ static void sink_dma_init(void)
 
     last_sample_rate = hw_freq_sampr[HW_FREQ_DEFAULT];
     cur_route = trimpod_audio_sink();
+    init_click_waveform();
 
     writer_wake = SDL_CreateSemaphore(0);
     writer_run = true;
@@ -949,6 +1189,13 @@ static void sink_dma_init(void)
 
     if (!writer_thread)
         panicf("Could not create audio thread");
+
+    click_sem = SDL_CreateSemaphore(0);
+    if (click_sem)
+    {
+        click_run = true;
+        click_thread = SDL_CreateThread(click_fn, "uipod-click", NULL);
+    }
 }
 
 static void sink_dma_postinit(void)
@@ -965,6 +1212,14 @@ unsigned int pcm_alsa_output_delay_us(void)
  * path could not be closed at all and hung the "Shutting Down" screen. */
 void pcm_alsa_shutdown(void)
 {
+    if (click_thread)
+    {
+        click_run = false;
+        SDL_SemPost(click_sem);
+        SDL_WaitThread(click_thread, NULL);
+        click_thread = NULL;
+    }
+
     if (!writer_thread)
         return;
 

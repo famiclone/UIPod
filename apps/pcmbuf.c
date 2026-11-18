@@ -1443,3 +1443,51 @@ void pcmbuf_set_low_latency(bool state)
 {
     low_latency_mode = state;
 }
+
+size_t pcmbuf_peek_ahead_s16(uint32_t ahead_ms, int16_t *out, size_t max_frames)
+{
+    if (!out || max_frames == 0 || !pcmbuf_buffer || !pcmbuf_descriptors || pcmbuf_size == 0)
+        return 0;
+
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) != CHANNEL_PLAYING)
+        return 0;
+
+    unsigned long freq = mixer_get_frequency();
+    if (freq == 0)
+        freq = 44100;
+
+    size_t skip_bytes = (size_t)(((uint64_t)ahead_ms * (uint64_t)freq / 1000ull) *
+                                 PCMBUF_SAMPLE_SIZE);
+    size_t copied_frames = 0;
+
+    pcm_play_lock();
+    size_t idx = chunk_ridx;
+    while (idx != chunk_widx && copied_frames < max_frames)
+    {
+        struct chunkdesc *desc = index_chunkdesc(idx);
+        size_t cbytes = (size_t)desc->size & ~(size_t)(PCMBUF_SAMPLE_SIZE - 1);
+        if (cbytes > PCMBUF_CHUNK_SIZE)
+            cbytes = PCMBUF_CHUNK_SIZE;
+
+        if (skip_bytes >= cbytes)
+        {
+            skip_bytes -= cbytes;
+        }
+        else
+        {
+            size_t avail_frames = (cbytes - skip_bytes) / PCMBUF_SAMPLE_SIZE;
+            size_t take_frames = max_frames - copied_frames;
+            if (take_frames > avail_frames)
+                take_frames = avail_frames;
+
+            const uint8_t *src = (const uint8_t *)index_buffer(idx) + skip_bytes;
+            memcpy(&out[copied_frames * 2], src, take_frames * PCMBUF_SAMPLE_SIZE);
+            copied_frames += take_frames;
+            skip_bytes = 0;
+        }
+        idx = index_next(idx);
+    }
+    pcm_play_unlock();
+
+    return copied_frames;
+}

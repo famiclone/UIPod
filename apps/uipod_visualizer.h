@@ -6,9 +6,9 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * UIPod: Milkdrop-style music visualizer (projectM), started from the Now
+ * UIPod: Native 4-Shade Audio-Reactive GPU Visualizer, started from the Now
  * Playing menu or auto-started after idle while music plays (any screen).
- * See apps/uipod_visualizer.c.
+ * See apps/uipod_visualizer.c and crates/uipod-ui/src/viz_gl.rs.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,29 +24,25 @@
 
 #include <stdbool.h>
 
-/* Run the fullscreen Milkdrop visualizer (auto-cycling presets) until the user
- * presses Back (B). Blocks the calling (UI) thread; audio keeps playing. */
+/* Run the fullscreen 4-shade visualizer (auto-cycling enabled presets) until
+ * the user presses Back (B).  Blocks the calling UI thread; audio plays on. */
 void uipod_visualizer_run(void);
 
-/* Fade the current screen to black (visualizer entry), then arm a fade-in so the
- * loaded visualizer fades up from black -- hides the load.  Returns true if a
- * keypress cancelled the fade (caller should NOT launch the visualizer). */
+/* Fade the current screen into the active theme's background shade, then arm
+ * a fade-in so the visualizer blooms smoothly out of `theme.bg`.  Returns true
+ * if a keypress cancelled the fade (caller should NOT launch the visualizer). */
 bool uipod_visualizer_fade_to_black(void);
 
 /* True when the idle auto-start timer has expired: a delay is configured, the
  * display is on, and music is actively playing (not paused). */
 bool uipod_visualizer_autostart_due(void);
 
-/* Idle auto-start for a UI loop's timeout path: when due, fade to black and
- * run the visualizer.  Returns true if the screen needs a repaint (the fade
- * ran, cancelled or not); false = not due.  The WPS runs the sequence inline
- * instead -- it must restore the skin around the run. */
+/* Idle auto-start for a UI loop's timeout path: when due, fade to `theme.bg`
+ * and run the visualizer.  Returns true if the screen needs a repaint. */
 bool uipod_visualizer_maybe_autostart(void);
 
-/* Settings -> Visualizers: a flat on/off toggle list of the shipped presets.
- * A toggles the highlighted preset (only enabled presets are auto-cycled on Now
- * Playing); Hold A opens a context submenu with Preview; B leaves the list.
- * MENUITEM_FUNCTION callback (returns GO_TO_PREVIOUS). */
+/* Settings -> Visualizers: flat on/off toggle list of built-in 4-shade presets.
+ * A toggles the highlighted preset; Hold A / MENU opens Preview; B leaves. */
 int uipod_visualizer_menu(void);
 
 #endif /* UIPOD_VISUALIZER_H */

@@ -2,7 +2,7 @@
 
 An iPod-inspired offline, **Navidrome**, and **Jellyfin** media player built for the **TrimUI Brick (`tg5040`)** running [NextUI](https://github.com/LoveRetro/NextUI).
 
-Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with native `1024×768` HiDPI pure-Rust UI rendering (`uipod-ui`), pure-Rust Navidrome (`uipod-navidrome`) & Jellyfin (`uipod-jellyfin`) streaming/caching modules, hardware CedarX video playback, AutoEQ headphone profiles, and 100 Milkdrop GPU visualizations (`projectM`).
+Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with native `1024×768` HiDPI pure-Rust UI rendering (`uipod-ui`), pure-Rust Navidrome (`uipod-navidrome`) & Jellyfin (`uipod-jellyfin`) streaming/caching modules, hardware CedarX video playback, AutoEQ headphone profiles, and Bayer-dithered 4-shade GPU audio visualizers.
 
 ## Features
 
@@ -11,7 +11,7 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core
   - **Local**: Offline music, podcasts, audiobooks (`.m4b` chapter skip + resume), and videos on SD card.
   - **Navidrome**: Subsonic/Navidrome streaming, automatic caching, scrobbling, and `MENU → Download` offline pinning into `/mnt/SDCARD/Media/Music/navidrome`.
   - **Jellyfin**: Movies, TV Series (`Seasons → Episodes`), and Music libraries with zero-CPU Direct Stream (`Static=true`) for compatible 8-bit H.264/MPEG4, automatic server-side H.264 + AAC transcoding for HEVC/AV1/VP9/10-bit/4K/DTS, playback resume sync, and `MENU → Download` offline saving into `/mnt/SDCARD/Media/Videos/jellyfin` & `/mnt/SDCARD/Media/Music/jellyfin`.
-- **Audio & Visuals**: Direct ALSA hardware/software volume split, USB-C & Bluetooth A2DP audio, built-in AutoEQ headphone database + 10-band parametric EQ, and 100 Milkdrop presets.
+- **Audio & Visuals**: Direct ALSA hardware/software volume split, USB-C & Bluetooth A2DP audio, built-in AutoEQ headphone database + 10-band parametric EQ, and native 4-shade Bayer-dithered GPU audio visualizers.
 - **USB MTP File Transfer**: Plug in USB while UIPod is running to mount `/mnt/SDCARD` over MTP alongside ADB.
 
 ## Controls (TrimUI Brick)
@@ -65,7 +65,6 @@ Licensed under the **GNU General Public License v2.0** (`GPL-2.0`).
 
 - **Rockbox** — core firmware (`GPL-2.0`)
 - **Trimpod Classic** by Werewolf Camp / `tyrannotorus` — original TrimUI Brick adaptation (`GPL-2.0`)
-- **projectM** (`LGPL-2.1`) & **Cream of the Crop** Milkdrop presets
 - **1ST_GEN_REMIX** theme by Monica G.
 - **Geologica** (`SIL OFL 1.1`) & **PixelMplus** (`M+ Font License`)
 - **uMTP-Responder** (`GPL-3.0`, standalone binary in `lib/umtprd`)

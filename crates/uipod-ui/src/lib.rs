@@ -5,10 +5,14 @@
 
 pub mod ffi;
 pub mod icons;
+pub mod image_decode;
 pub mod layout;
 pub mod renderer;
+pub mod viz_dsp;
+pub mod viz_gl;
 
 pub use renderer::UiEngine;
+pub use viz_gl::{VizEngine, VizPresetInfo, VIZ_PRESETS};
 
 /// Default `ui.figcraft` background color (`bg-color` = `#D6D8D5`).
 pub const DEFAULT_BG_RGB: u32 = 0xD6D8D5;
@@ -122,9 +126,11 @@ impl FileIconKind {
                 };
                 Self::Video(short.to_string())
             }
-            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "JSON" | "INI" | "CUE" | "XML" => {
+            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "JSON" | "INI" | "CUE" | "XML" | "NFO"
+            | "UIPOD" => {
                 let short = match upper.as_str() {
                     "JSON" => "JSN",
+                    "UIPOD" => "PLG",
                     other => other,
                 };
                 Self::Text(short.to_string())

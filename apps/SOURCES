@@ -2,7 +2,6 @@
 logfdisp.c
 #endif
 action.c
-abrepeat.c
 core_keymap.c
 scratch_buf.c
 filetypes.c
@@ -23,7 +22,6 @@ misc.c
 uipod_transition.c
 uipod_page.c
 uipod_ui.c
-uipod_svg.c
 uipod_rs_ui_glue.c
 uipod_nowplaying.c
 uipod_folders.c
@@ -32,11 +30,10 @@ uipod_library_browse.c
 uipod_navidrome.c
 uipod_jellyfin.c
 uipod_downloads.c
+uipod_plugins.c
 uipod_playlists.c
 uipod_keyboard.c
 uipod_visualizer.c
-uipod_spectrum.c
-uipod_eq.c
 uipod_autoeq.c
 uipod_mainmenu.c
 uipod_hold.c
@@ -60,20 +57,13 @@ gui/line.c
 gui/bitmap/list.c
 gui/bitmap/list-skinned.c
 gui/option_select.c
-gui/folder_select.c
-gui/mask_select.c
 
 gui/wps.c
 gui/scrollbar.c
 gui/splash.c
 gui/statusbar.c
 gui/statusbar-skinned.c
-#if (CONFIG_PLATFORM&PLATFORM_ANDROID)
-hosted/android/yesno.c
-hosted/android/notification.c
-#else
 gui/yesno.c
-#endif
 gui/viewport.c
 
 gui/skin_engine/skin_backdrops.c
@@ -89,20 +79,12 @@ gui/backdrop.c
 
 recorder/bmp.c
 recorder/icons.c
-#if (CONFIG_PLATFORM&PLATFORM_ANDROID)
-hosted/android/keyboard.c
-#else
-recorder/keyboard.c
-#endif
 #ifdef HAVE_JPEG
 recorder/resize.c
 recorder/jpeg_load.c
 #ifdef CPU_ARM
 recorder/jpeg_idct_arm.S
 #endif
-#endif
-#ifdef HAVE_LCD_COLOR
-gui/color_picker.c
 #endif
 
 #if INPUT_SRC_CAPS != 0

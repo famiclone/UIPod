@@ -14,7 +14,7 @@
 #include "lcd.h"
 #include "settings.h"
 #include "gui/viewport.h"
-#include "window-sdl.h"   /* uipod_viz_active: projectM owns the GL window */
+#include "window-sdl.h"   /* uipod_viz_active: visualizer owns the GL window */
 #include "uipod_transition.h"
 
 /* full-screen frame snapshots (off the stack: ~2.25 MiB each at 1024x768x3) */

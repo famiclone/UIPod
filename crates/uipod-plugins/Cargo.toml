@@ -1,0 +1,13 @@
+[package]
+name = "uipod-plugins"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust dynamic native plugin engine (.uipod / dlopen), category registry & file viewer router for UIPod"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_plugins"
+crate-type = ["rlib"]
+
+[dependencies]
+uipod-plugin-sdk = { path = "../uipod-plugin-sdk" }

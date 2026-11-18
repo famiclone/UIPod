@@ -79,5 +79,6 @@ void pcmbuf_sync_position_update(void);
 /* Misc */
 bool pcmbuf_is_lowdata(void);
 void pcmbuf_set_low_latency(bool state);
+size_t pcmbuf_peek_ahead_s16(uint32_t ahead_ms, int16_t *out, size_t max_frames);
 
 #endif /* PCMBUF_H */

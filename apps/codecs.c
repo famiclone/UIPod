@@ -37,7 +37,6 @@
 #include "misc.h"
 #include "codecs.h"
 #include "lang.h"
-#include "keyboard.h"
 #include "buffering.h"
 #include "backlight.h"
 #include "storage.h"

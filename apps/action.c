@@ -39,6 +39,7 @@
 #include "misc.h"
 #include "audio.h"
 #include "gui/wps.h"
+#include "uipod_plugins.h"
 
 
 #include "backlight.h"
@@ -971,10 +972,17 @@ bool action_userabort(int timeout)
     return ret;
 }
 
+#ifdef BUTTON_START
+static bool s_start_solo = false;
+#endif
+
 void action_wait_for_release(void)
 {
-    if (!(action_last.button & BUTTON_REL))
+    if (!(action_last.button & BUTTON_REL) || button_status() != BUTTON_NONE)
         action_last.wait_for_release = true;
+#ifdef BUTTON_START
+    s_start_solo = false;
+#endif
     button_clear_pressed();
 }
 
@@ -1042,19 +1050,23 @@ static int global_volume_action(int button, int action)
 #define TP_CTX_BASE(c)  ((c) & 0x00ffffff)   /* context minus the flag bits */
 
 #ifdef BUTTON_START
-static bool s_start_solo = false;
-
 /* UIPod: START toggles Play / Pause globally across all screens (and resumes
  * the saved playlist if playback is currently stopped).  On WPS and Video
- * screens, keymap entries already produce ACTION_WPS_PLAY on START release. */
+ * screens, keymap entries already produce ACTION_WPS_PLAY on START release.
+ * Inside MenuDriven plugins (e.g. Sound Racer), START belongs to the plugin's
+ * pause/system menu rather than toggling background playback behind its back. */
 static int global_playpause_action(int context, int button, int action)
 {
     if (button & SYS_EVENT)
         return action;
 
     int base = TP_CTX_BASE(context);
-    if (base == CONTEXT_WPS || base == CONTEXT_TP_VIDEO)
+    if (base == CONTEXT_WPS || base == CONTEXT_TP_VIDEO ||
+        (context & CONTEXT_PLUGIN) != 0 || uipod_plugins_menu_driven_active())
+    {
+        s_start_solo = false;
         return action;
+    }
 
     int btn = button & ~(BUTTON_REPEAT | BUTTON_REL);
     if (!(button & BUTTON_REL))
@@ -1147,8 +1159,9 @@ static long ctx_tick;   static bool ctx_fired;
 static int global_context_action(int context, int button, int action)
 {
     int base = TP_CTX_BASE(context);
-    if (base != CONTEXT_LIST && base != CONTEXT_TREE && base != CONTEXT_MAINMENU
-        && base != CONTEXT_WPS)
+    if ((context & CONTEXT_PLUGIN) != 0
+        || (base != CONTEXT_LIST && base != CONTEXT_TREE && base != CONTEXT_MAINMENU
+            && base != CONTEXT_WPS))
         return action;                           /* only screens with a context menu */
     return tp_hold(button, action, BUTTON_A, ACTION_STD_CONTEXT, &ctx_tick,
                    &ctx_fired);

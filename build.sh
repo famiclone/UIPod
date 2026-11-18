@@ -40,14 +40,29 @@ docker run --rm \
   export PATH=/opt/cargo/bin:\$PATH
   export CARGO_HOME=/build/$BUILD_DIR/.cargo-cache
   export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=\${CROSS_COMPILE}gcc
-  echo '>> Building pure-Rust crates (uipod-ui + uipod-navidrome + uipod-jellyfin -> libuipod_ffi.a) ...'
-  cargo build --locked --release --target aarch64-unknown-linux-gnu -j $JOBS \
-    --manifest-path /build/crates/uipod-ffi/Cargo.toml
+  echo '>> Building pure-Rust crates & native .uipod plugins ...'
+  cargo build --locked --release --workspace --target aarch64-unknown-linux-gnu -j $JOBS
+  mkdir -p $BUILD_DIR/plugins
+  rm -f $BUILD_DIR/plugins/*.uipod
+  for pl_so in target/aarch64-unknown-linux-gnu/release/libbrick_breaker.so \
+               target/aarch64-unknown-linux-gnu/release/libuipod_2048.so \
+               target/aarch64-unknown-linux-gnu/release/libsnake.so \
+               target/aarch64-unknown-linux-gnu/release/libtetris.so \
+               target/aarch64-unknown-linux-gnu/release/libsound_racer.so \
+               target/aarch64-unknown-linux-gnu/release/libstopwatch.so \
+               target/aarch64-unknown-linux-gnu/release/libtext_viewer.so \
+               target/aarch64-unknown-linux-gnu/release/liblcd_plasma.so; do
+    pl_base=\$(basename \"\$pl_so\" .so)
+    pl_name=\"\${pl_base#lib}.uipod\"
+    cp \"\$pl_so\" \"$BUILD_DIR/plugins/\$pl_name\"
+    \${CROSS_COMPILE}strip --strip-unneeded \"$BUILD_DIR/plugins/\$pl_name\"
+  done
 
   # /usr/local/bin (our sdl2-config wrapper, baked into the image) must win over
   # the sysroot's broken sdl2-config, so do NOT prepend \$SYSROOT/usr/bin here.
   if [ ! -f $BUILD_DIR/Makefile ] || \
      ! grep -q libuipod_ffi $BUILD_DIR/Makefile || \
+     grep -q libprojectM $BUILD_DIR/Makefile || \
      ! grep -q 'RBDIR=/tmp/uipod' $BUILD_DIR/Makefile; then
     rm -rf $BUILD_DIR/apps $BUILD_DIR/firmware $BUILD_DIR/Makefile $BUILD_DIR/autoconf.h $BUILD_DIR/make.dep
     cd $BUILD_DIR

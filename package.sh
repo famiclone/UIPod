@@ -38,30 +38,19 @@ rm -rf "$PAK/uipod/backdrops" 2>/dev/null
 
 echo ">> Injecting 1ST_GEN_REMIX theme"
 cp -a "$THEME/wps/." "$PAK/uipod/wps/"
-cp -a "$THEME/icons/." "$PAK/uipod/icons/"
 cp -a "$THEME/themes/." "$PAK/uipod/themes/"
-
-echo ">> Injecting SVG file-type icons (see assets/icons)"
-mkdir -p "$PAK/uipod/icons"
-for svg in "$ROOT"/assets/icons/*.svg; do
-    [ -f "$svg" ] && cp -a "$svg" "$PAK/uipod/icons/"
-done
 
 echo ">> Pruning stock Rockbox fonts (only Geologica ships; Font menu removed)"
 # The build zip bundles the whole upstream font set (Terminus, Adobe-Helvetica, ...).
 # Nothing references them (themes are hardcoded to Geologica), so drop them all.
 rm -f "$PAK/uipod/fonts/"*.fnt "$PAK/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 
-echo ">> Injecting Geologica HiDPI & vector TTF fonts (see assets/fonts)"
+echo ">> Injecting Geologica HiDPI & CJK fallback fonts (see assets/fonts)"
+# Geologica-*.ttf are embedded directly into `uipod` via Rust `include_bytes!`;
+# only Rockbox `.fnt` skin fonts + runtime CJK fallback `PixelMplus12` ship on disk.
 cp -a "$ROOT"/assets/fonts/*.fnt "$PAK/uipod/fonts/"
-cp -a "$ROOT"/assets/fonts/Geologica-*.ttf "$PAK/uipod/fonts/"
 cp -a "$ROOT/assets/fonts/PixelMplus12-Regular.ttf" "$PAK/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$PAK/uipod/fonts/COPYING-fonts.txt"
-
-echo ">> Injecting Milkdrop visualizer presets (see assets/presets)"
-mkdir -p "$PAK/uipod/presets"
-# Ship the curated flat preset set (Settings -> Visualizers toggles them on/off).
-cp -r "$ROOT/assets/presets/." "$PAK/uipod/presets/"
 
 echo ">> Injecting AutoEQ headphone database & EQ presets folder (see assets/autoeq)"
 mkdir -p "$PAK/uipod/autoeq" "$PAK/uipod/eqs"
@@ -90,6 +79,10 @@ chmod +x "$PAK/launch.sh" "$PAK/uipod/uipod" "$PAK/uipod/umtprd"
 echo ">> Injecting stock video player plugins (AC-3, DivX, sound to UIPod; source in lib/tplayer_plugins)"
 mkdir -p "$PAK/uipod/video"
 cp "$ROOT"/build-uipod/tplayer_plugins/*.so "$PAK/uipod/video/"
+
+echo ">> Injecting native UIPod plugins (.uipod; source in plugins/)"
+mkdir -p "$PAK/uipod/plugins"
+cp "$ROOT"/build-uipod/plugins/*.uipod "$PAK/uipod/plugins/"
 
 # Ensure no macOS Finder metadata files leak into release archives.
 find "$PAK" -name '.DS_Store' -delete 2>/dev/null || true

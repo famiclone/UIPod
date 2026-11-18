@@ -62,6 +62,7 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_downloads.h"
+#include "uipod_plugins.h"
 #include "menus/exported_menus.h"
 #include "uipod_m4b.h"
 #include "rbunicode.h"
@@ -173,12 +174,10 @@ int main(void)
     uipod_navidrome_init();
     uipod_jellyfin_init();
     uipod_downloads_init();
+    uipod_plugins_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */
     CHART(">root_menu");
-    /* Warm the About glyph cache now, before playback resumes, so the first
-     * About open doesn't fault glyphs off disk and stall the codec. */
-    uipod_about_prewarm();
     /* Launched with the HOLD switch engaged: show the lock page instead of the
      * menu until it's released (no-op when the switch is off). */
     uipod_hold_run();

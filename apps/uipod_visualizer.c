@@ -6,16 +6,22 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * UIPod: Milkdrop-style music visualizer.
+ * UIPod: Native 4-Shade Audio-Reactive GPU Visualizer.
  *
- * Wraps libprojectM (vendored in lib/projectm) and renders it fullscreen into
- * UIPod's OpenGL ES window (see firmware/target/hosted/sdl/window-sdl.c).
- * Audio is tapped from the PCM output (pcm-alsa.c: pcm_viz_latest) so the
- * visuals react to the beat. Presets are .milk files shipped in
- * ROCKBOX_DIR/presets and auto-transition over time (projectM fires a
- * "switch requested" callback when a preset's duration elapses or on a beat).
+ * Drives the pure-Rust `VizEngine` (`crates/uipod-ui/src/viz_gl.rs`) on its own
+ * dedicated OS thread (`viz_render_thread`) synchronized to 60 Hz vsync while
+ * tapping delay-compensated stereo PCM (`pcm_viz_read_synced` in `pcm-alsa.c`)
+ * so beats land at the exact millisecond sound leaves the speaker or Bluetooth
+ * headphones.  Every pixel is Bayer-dithered strictly into the 4 shades of the
+ * active UIPod theme (`bg`, `fg1`, `fg2`, `fg`).
  *
- * Entered from the Now Playing menu (A -> "Start Visualizer"); Back (B) returns.
+ * Controls while visualizing:
+ *   B / MENU     — Exit back to Now Playing (or previous screen)
+ *   Left / Right — Previous / Next visualizer preset
+ *   X / Y        — Toggle LCD pixel grain (4x4 Classic Macro-Pixel <-> 2x2 Fine)
+ *   A / START    — Play / Pause music
+ *   L2 / R2      — Previous / Next track
+ *   VOL+ / VOL-  — Adjust volume (SELECT + VOL+/- adjusts brightness)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,191 +36,73 @@
 #include "uipod_visualizer.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 #include <SDL.h>
-#include <GLES2/gl2.h>
-#include <projectM-4/projectM.h>
+#include <SDL_thread.h>
 
 #include "file.h"
-#include "dir.h"
-#include "pathfuncs.h"          /* path_append (preset basename -> full path) */
-#include "string-extra.h"       /* strlcpy */
-#include "strnatcmp.h"          /* natural alphabetical sort of the preset list */
+#include "string-extra.h"
 #include "action.h"
-#include "audio.h"             /* audio_status: gate the idle auto-start on playback */
+#include "audio.h"
 #include "lcd.h"
-#include "backlight.h"         /* backlight_set_timeout: suspend Auto Screen Off while visualizing */
+#include "backlight.h"
 #include "kernel.h"
 #include "tick.h"
-#include "thread.h"
 #include "button.h"
 #include "settings.h"
 #include "lang.h"
-#include "splash.h"
 #include "misc.h"
 #include "icon.h"
 #include "root_menu.h"
 #include "gui/list.h"
 #include "window-sdl.h"
-#include <SDL_thread.h>          /* render loop runs on its own OS thread (core) */
-#include "uipod_page.h"        /* uipod_page base (the Visualizers list) */
-#include "uipod_ui.h"          /* uipod_toggle_str (shared [x]/[ ] glyph) */
+#include "uipod_page.h"
+#include "uipod_ui.h"
+#include "uipod_rs_ui.h"
 
-/* Audio tap implemented in firmware/target/hosted/sdl/pcm-alsa.c */
-extern unsigned pcm_viz_latest(int16_t *out, unsigned max_frames);
-extern void retrohh_cpu_hold_dynamic(void);     /* power-target.c owns CPU policy */
-extern void retrohh_cpu_release_dynamic(void);
+/* Delay-compensated stereo PCM tap in firmware/target/hosted/sdl/pcm-alsa.c */
+extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
+                                    unsigned *sample_rate_out);
 
-/* projectM renders at 1/4 screen resolution into an offscreen FBO, which is then
- * nearest-neighbour upscaled to fill the window.  Our libprojectM is patched to
- * composite into the caller's bound framebuffer, so render_frame() lands in our
- * FBO. */
-#define VIZ_DIVISOR     4
-static GLuint viz_fbo, viz_tex, viz_prog, viz_vbo;
-static GLint  viz_u_fade;     /* u_fade uniform location (fade-to-black) */
-static int    viz_w, viz_h;   /* low-res render size */
-
-static const char *viz_vs_src =
-    "attribute vec2 a_pos;\n"
-    "attribute vec2 a_uv;\n"
-    "varying vec2 v_uv;\n"
-    "void main(){ v_uv = a_uv; gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
-static const char *viz_fs_src =
-    "precision mediump float;\n"
-    "varying vec2 v_uv;\n"
-    "uniform sampler2D u_tex;\n"
-    "uniform float u_fade;\n"   /* 1.0 = full brightness, 0.0 = black */
-    "void main(){ gl_FragColor = vec4(texture2D(u_tex, v_uv).rgb * u_fade, 1.0); }\n";
-
-static GLuint viz_compile(GLenum type, const char *src)
-{
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
-    glCompileShader(s);
-    return s;
-}
-
-/* Build the upscale shader/quad and the low-res render target (viz_w x viz_h).
- * UVs are in GL orientation (v=0 at bottom) so the FBO texture draws upright. */
-static bool viz_gl_init(void)
-{
-    int win_w, win_h;
-    static const GLfloat verts[] = {
-        -1.f, -1.f, 0.f, 0.f,
-         1.f, -1.f, 1.f, 0.f,
-        -1.f,  1.f, 0.f, 1.f,
-         1.f,  1.f, 1.f, 1.f,
-    };
-
-    SDL_GL_GetDrawableSize(sdlWindow, &win_w, &win_h);
-    viz_w = win_w / VIZ_DIVISOR;
-    viz_h = win_h / VIZ_DIVISOR;
-
-    viz_prog = glCreateProgram();
-    glAttachShader(viz_prog, viz_compile(GL_VERTEX_SHADER, viz_vs_src));
-    glAttachShader(viz_prog, viz_compile(GL_FRAGMENT_SHADER, viz_fs_src));
-    glBindAttribLocation(viz_prog, 0, "a_pos");
-    glBindAttribLocation(viz_prog, 1, "a_uv");
-    glLinkProgram(viz_prog);
-    viz_u_fade = glGetUniformLocation(viz_prog, "u_fade");
-
-    glGenBuffers(1, &viz_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, viz_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-
-    glGenTextures(1, &viz_tex);
-    glBindTexture(GL_TEXTURE_2D, viz_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, viz_w, viz_h, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glGenFramebuffers(1, &viz_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, viz_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, viz_tex, 0);
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return ok;
-}
-
-/* Draw the low-res viz texture to fill the window (nearest-neighbour upscale). */
-static void viz_gl_present(float fade)
-{
-    int win_w, win_h;
-    SDL_GL_GetDrawableSize(sdlWindow, &win_w, &win_h);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, win_w, win_h);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-    glClearColor(0.f, 0.f, 0.f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glUseProgram(viz_prog);
-    glUniform1f(viz_u_fade, fade);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, viz_tex);
-    glBindBuffer(GL_ARRAY_BUFFER, viz_vbo);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void *)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
-                          (void *)(2 * sizeof(GLfloat)));
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-}
-
-#define PRESET_DIR      ROCKBOX_DIR "/presets"
-/* Per-preset on/off state persists here: one DISABLED basename per line (absence
- * = enabled, so a missing file means "all on").  Both the Visualizers toggle
- * list and the Now Playing auto-cycle read/write it. */
 #define VIZ_STATE_FILE  ROCKBOX_DIR "/visualizers.txt"
-#define MAX_PRESETS     256                  /* the shipped curated set (~100) */
-#define NAMEBUF_SZ      (MAX_PRESETS * 256)  /* packed basenames incl ".milk" */
-#define PCM_CHUNK       512                  /* stereo frames fed per frame */
+#define MAX_PRESETS     32
+#define ID_CAP          48
+#define PCM_CHUNK       1024   /* matches 1024-point Hann FFT in viz_dsp.rs */
 
-static projectm_handle pm;                   /* created lazily, kept alive */
-static char  name_buf[NAMEBUF_SZ];           /* packed preset basenames */
-static int   name_off[MAX_PRESETS];          /* offset of each basename */
-static bool  preset_enabled[MAX_PRESETS];    /* toggled on the Visualizers screen */
-static int   preset_count;
-static int   preset_cur = -1;
+static char preset_ids[MAX_PRESETS][ID_CAP];
+static bool preset_enabled[MAX_PRESETS];
+static int  preset_count = 0;
+static int  preset_cur   = 0;
+static bool viz_ready    = false;
 
-/* Fade-to-black transition state. Instead of projectM's soft-cut (which renders
- * two presets at once and spikes the CPU), we fade the current preset to black
- * over VIZ_FADE_TICKS, hard-load the next preset while black, then fade it in. */
 enum viz_fade_state { VIZ_NORMAL, VIZ_FADE_OUT, VIZ_FADE_IN };
-#define VIZ_FADE_TICKS  (HZ / 2)             /* 0.5s per fade phase */
-static enum viz_fade_state viz_fade;
-static bool viz_entry_faded;   /* set by the entry fade-to-black -> fade IN on start */
-static long  viz_fade_start;                 /* current_tick when this phase began */
-static int   viz_pending_preset = -1;        /* preset to load at black (-1 = random) */
-static volatile bool viz_switch_req;         /* set by projectM's switch callback */
-static long  viz_preset_tick;                /* current_tick when the shown preset began */
+#define VIZ_FADE_TICKS      (HZ / 2)   /* 0.50s idle/auto fade */
+#define VIZ_MANUAL_TICKS    (HZ / 5)   /* 0.20s snappy manual Left/Right fade */
 
-static bool ends_with_milk(const char *name)
+static volatile enum viz_fade_state viz_fade = VIZ_NORMAL;
+static long  viz_fade_ticks_cur = VIZ_FADE_TICKS;
+static bool  viz_entry_faded    = false;
+static long  viz_fade_start     = 0;
+static volatile int  viz_pending_preset = -1; /* >= 0 explicit index, -2 random */
+static long  viz_preset_tick    = 0;
+static volatile bool viz_thread_stop = false;
+static bool  viz_locked         = false;
+
+static bool is_lang_uk(void)
 {
-    size_t n = strlen(name);
-    return n > 5 && strcasecmp(name + n - 5, ".milk") == 0;
+    return strcmp((const char *)global_settings.lang_file, "ukrainian") == 0;
 }
 
-static int name_off_cmp(const void *a, const void *b)
-{
-    return strnatcasecmp(name_buf + *(const int *)a, name_buf + *(const int *)b);
-}
+static char viz_state_buf[MAX_PRESETS * ID_CAP];
 
-/* Apply the saved on/off state (a list of DISABLED basenames; absence = on, so
- * a missing/empty file means everything is enabled).  Call after scan + sort. */
-static char viz_state_buf[NAMEBUF_SZ];
 static void load_enabled_state(void)
 {
     for (int i = 0; i < preset_count; i++)
-        preset_enabled[i] = true;            /* default: all on */
+        preset_enabled[i] = true;
 
     int fd = open(VIZ_STATE_FILE, O_RDONLY);
     if (fd < 0)
@@ -231,326 +119,262 @@ static void load_enabled_state(void)
         nl = strchr(line, '\n');
         if (nl) *nl = '\0';
         size_t L = strlen(line);
-        if (L && line[L - 1] == '\r') line[--L] = '\0';   /* tolerate CRLF */
+        if (L && line[L - 1] == '\r') line[--L] = '\0';
         if (*line)
+        {
             for (int i = 0; i < preset_count; i++)
-                if (strcmp(name_buf + name_off[i], line) == 0)
+            {
+                if (strcmp(preset_ids[i], line) == 0)
                 {
                     preset_enabled[i] = false;
                     break;
                 }
+            }
+        }
         line = nl ? nl + 1 : NULL;
     }
 }
 
 static void save_enabled_state(void)
 {
-    /* Build the whole file in memory and flush it in ONE write(): this runs on
-     * every toggle, and unbuffered per-entry writes on the SD card would scale
-     * with the number disabled.  viz_state_buf is reused (load + save never
-     * overlap). */
     int used = 0;
     for (int i = 0; i < preset_count; i++)
+    {
         if (!preset_enabled[i])
         {
-            const char *nm = name_buf + name_off[i];
-            int L = strlen(nm);
+            const char *nm = preset_ids[i];
+            int L = (int)strlen(nm);
             if (used + L + 1 > (int)sizeof(viz_state_buf))
-                break;                          /* never overflow the buffer */
-            memcpy(viz_state_buf + used, nm, L);
+                break;
+            memcpy(viz_state_buf + used, nm, (size_t)L);
             used += L;
             viz_state_buf[used++] = '\n';
         }
+    }
 
     int fd = open(VIZ_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0)
         return;
-    if (used)
-        write(fd, viz_state_buf, used);
+    if (used > 0)
+        write(fd, viz_state_buf, (size_t)used);
     close(fd);
 }
 
-/* Scan the flat preset dir (the shipped curated set) into name_buf, sort it,
- * then apply the saved on/off toggles.  Re-run on every entry so toggle changes
- * take effect immediately (in the list and in the Now Playing auto-cycle). */
 static void scan_presets(void)
 {
-    preset_count = 0;
-    preset_cur = -1;
-    int used = 0;
-
-    DIR *d = opendir(PRESET_DIR);
-    if (d)
-    {
-        struct DIRENT *e;
-        while ((e = readdir(d)) != NULL && preset_count < MAX_PRESETS)
-        {
-            if (e->d_name[0] == '.' || !ends_with_milk(e->d_name))
-                continue;
-            int len = strlen(e->d_name) + 1;
-            if (used + len > (int)sizeof(name_buf))
-                break;
-            name_off[preset_count++] = used;
-            memcpy(name_buf + used, e->d_name, len);
-            used += len;
-        }
-        closedir(d);
-    }
-    qsort(name_off, preset_count, sizeof name_off[0], name_off_cmp);
+    size_t total = uipod_rs_viz_preset_count();
+    if (total > MAX_PRESETS)
+        total = MAX_PRESETS;
+    preset_count = (int)total;
+    for (int i = 0; i < preset_count; i++)
+        uipod_rs_viz_preset_id((size_t)i, preset_ids[i], sizeof(preset_ids[i]));
     load_enabled_state();
-}
-
-/* Load preset by index, smoothly blending unless a hard (beat) cut was asked. */
-static void load_preset(int idx, bool hard_cut)
-{
-    if (idx < 0 || idx >= preset_count)
-        return;
-    preset_cur = idx;
-    char path[MAX_PATH];
-    path_append(path, PRESET_DIR, name_buf + name_off[idx], sizeof(path));
-    projectm_load_preset_file(pm, path, !hard_cut);
 }
 
 static int enabled_count(void)
 {
     int c = 0;
     for (int i = 0; i < preset_count; i++)
-        if (preset_enabled[i]) c++;
+        if (preset_enabled[i])
+            c++;
     return c;
 }
 
-/* Pick a random preset from the enabled pool (whatever's toggled on).  Falls
- * back to the whole set if nothing is enabled, so a switch is never a black
- * screen.
- * Avoids repeating the current preset when there's more than one to choose. */
-static void next_preset(bool hard_cut)
+static void activate_preset(int idx)
 {
     if (preset_count <= 0)
         return;
-    bool use_enabled = enabled_count() > 0;
-    int pool = use_enabled ? enabled_count() : preset_count;
+    if (idx < 0 || idx >= preset_count)
+        idx = 0;
+    preset_cur = idx;
+    uipod_rs_viz_set_preset((size_t)idx);
+}
+
+static void activate_random_preset(void)
+{
+    if (preset_count <= 0)
+        return;
+    int en = enabled_count();
+    bool use_enabled = en > 0;
+    int pool = use_enabled ? en : preset_count;
     int target = rand() % pool;
 
-    int idx = -1, seen = 0;
+    int idx = 0, seen = 0;
     for (int i = 0; i < preset_count; i++)
+    {
         if (!use_enabled || preset_enabled[i])
         {
             if (seen == target) { idx = i; break; }
             seen++;
         }
-    if (idx < 0)
-        return;
-    if (idx == preset_cur && pool > 1)        /* advance to the next in-pool one */
+    }
+    if (idx == preset_cur && pool > 1)
+    {
         for (int j = 1; j < preset_count; j++)
         {
             int c = (idx + j) % preset_count;
             if (!use_enabled || preset_enabled[c]) { idx = c; break; }
         }
-    load_preset(idx, hard_cut);
+    }
+    activate_preset(idx);
 }
 
-/* Begin a fade-to-black transition to preset idx (idx < 0 = random next).
- * Ignored if a transition is already running. */
-static void viz_request_switch(int idx)
+static int step_enabled_preset(int from, int delta)
 {
-    if (viz_fade != VIZ_NORMAL)
-        return;
+    if (preset_count <= 0)
+        return 0;
+    bool use_enabled = enabled_count() > 0;
+    int cur = (from >= 0 && from < preset_count) ? from : 0;
+    for (int step = 1; step <= preset_count; step++)
+    {
+        int cand = (cur + delta * step + preset_count * 8) % preset_count;
+        if (!use_enabled || preset_enabled[cand])
+            return cand;
+    }
+    return cur;
+}
+
+static void viz_request_switch(int idx, bool fast)
+{
     viz_pending_preset = idx;
-    viz_fade = VIZ_FADE_OUT;
-    viz_fade_start = current_tick;
-}
-
-/* projectM asks for the next preset when the current one's duration elapses or
- * a strong beat triggers a cut. We defer to the main loop, which fades to
- * black, hard-loads, and fades in (rather than projectM's two-preset blend). */
-static void preset_switch_cb(bool is_hard_cut, void *user_data)
-{
-    (void)user_data;
-    (void)is_hard_cut;
-    viz_switch_req = true;
-}
-
-/* Apply the "Visualization Transition" setting: seconds each preset shows before
- * auto-switching.  0 = "Never" -> hold the preset (no time- OR beat-triggered
- * switch) until the user manually changes it (A) or restarts the visualizer. */
-static void apply_viz_transition(void)
-{
-    /* We cycle presets ourselves on a wall-clock timer (see the session loop),
-     * so projectM must never auto-switch: its preset clock counts wall time
-     * across the whole app -- including while the visualizer is closed -- and
-     * cannot be reset. */
-    projectm_set_preset_duration(pm, 9999999.0);   /* never -- we drive switching */
-    projectm_set_hard_cut_enabled(pm, false);
+    viz_fade_ticks_cur = fast ? VIZ_MANUAL_TICKS : VIZ_FADE_TICKS;
+    if (viz_fade != VIZ_FADE_OUT)
+    {
+        viz_fade = VIZ_FADE_OUT;
+        viz_fade_start = current_tick;
+    }
 }
 
 static bool ensure_init(void)
 {
-    if (pm)
+    if (viz_ready)
         return true;
 
     sdl_gl_make_current();
-
-    if (!viz_gl_init())
+    if (!uipod_rs_viz_init(sdl_gl_get_proc_address))
         return false;
-
-    pm = projectm_create();
-    if (!pm)
-        return false;
-
-    /* Render at 1/4 resolution; the FBO texture is upscaled nearest-neighbour. */
-    projectm_set_window_size(pm, viz_w, viz_h);
-    projectm_set_mesh_size(pm, 48, 36);
-    projectm_set_fps(pm, 60);
-    projectm_set_aspect_correction(pm, true);
-    /* We run our own fade-to-black on switch, so disable projectM's soft-cut
-     * blend (it renders two presets at once and spikes the CPU). */
-    projectm_set_soft_cut_duration(pm, 0.0);
-    projectm_set_hard_cut_duration(pm, 8.0);
-    projectm_set_hard_cut_sensitivity(pm, 1.0f);
-    projectm_set_beat_sensitivity(pm, 1.2f);
-    apply_viz_transition();   /* preset_duration + hard-cut on/off (0 = Never) */
-    projectm_set_preset_switch_requested_event_callback(pm, preset_switch_cb, NULL);
 
     srand((unsigned)current_tick);
+    viz_ready = true;
     return true;
 }
-
-/* Run the visualizer fullscreen until Back (B). If locked_path != NULL the
- * visualizer stays on that one preset (a path chosen from the browser);
- * otherwise presets auto-cycle from the pool; any button ends the session. */
-/* The projectM render loop runs on its own OS thread so it lands on a free core,
- * in parallel with audio decode/buffering/input -- those stay on the Rockbox
- * cooperative scheduler on the main thread.  The render thread owns the GL
- * context for the whole session (the main thread releases it before the thread
- * starts and reclaims it after join). */
-static volatile bool viz_thread_stop;
-static bool          viz_locked;        /* preset pinned -> no auto-cycle */
 
 static int viz_render_thread(void *param)
 {
     (void)param;
     int16_t pcm[PCM_CHUNK * 2];
+    Uint32 prev_ms = SDL_GetTicks();
 
     SDL_GL_MakeCurrent(sdlWindow, sdl_gl_get_context());
-    SDL_GL_SetSwapInterval(1);          /* vsync paces the loop -- no busy spin */
+    SDL_GL_SetSwapInterval(1);
 
     while (!viz_thread_stop)
     {
-        /* Dark panel (a power-key blank): scanout is off, so a swap would wait
-         * on a vsync that never comes. */
         if (lcd_panel_is_dark())
         {
             SDL_Delay(100);
+            prev_ms = SDL_GetTicks();
             continue;
         }
 
-        unsigned frames = pcm_viz_latest(pcm, PCM_CHUNK);
-        if (frames > 0)
-            projectm_pcm_add_int16(pm, pcm, frames, PROJECTM_STEREO);
+        Uint32 now_ms = SDL_GetTicks();
+        float dt = (float)(now_ms - prev_ms) * 0.001f;
+        prev_ms = now_ms;
+        if (dt <= 0.0f || dt > 0.1f)
+            dt = 1.0f / 60.0f;
 
-        /* A pending projectM switch request kicks off a fade-to-black. */
-        if (viz_switch_req)
-        {
-            viz_switch_req = false;
-            viz_request_switch(-1);
-        }
+        unsigned sr = 44100;
+        unsigned frames = pcm_viz_read_synced(pcm, PCM_CHUNK, &sr);
 
-        /* Time-based preset cycling on a wall-clock that only runs while the
-         * visualizer is on screen: switch after the Visualization Transition
-         * interval of real seconds.  0 = "Never" holds the preset. */
+        /* Wall-clock preset auto-cycling while on screen (0 = Never). */
         if (!viz_locked && global_settings.viz_transition > 0 &&
             viz_fade == VIZ_NORMAL &&
             current_tick - viz_preset_tick >= (long)global_settings.viz_transition * HZ)
-            viz_request_switch(-1);
+        {
+            viz_request_switch(-2, false);
+        }
 
-        /* Advance the fade transition (timed off current_tick so the 0.5s phases
-         * are smooth regardless of frame rate).  At full black, hard-load the
-         * pending preset, then fade the new one back in. */
-        float fade = 1.f;
+        float fade = 1.0f;
+        long span = viz_fade_ticks_cur > 0 ? viz_fade_ticks_cur : 1;
         if (viz_fade == VIZ_FADE_OUT)
         {
-            long dt = current_tick - viz_fade_start;
-            if (dt >= VIZ_FADE_TICKS)
+            long el = current_tick - viz_fade_start;
+            if (el >= span)
             {
-                if (viz_pending_preset >= 0)
-                    load_preset(viz_pending_preset, true);
-                else
-                    next_preset(true);
+                int req = viz_pending_preset;
                 viz_pending_preset = -1;
-                viz_preset_tick = current_tick;   /* restart the cycle clock */
+                if (req >= 0)
+                    activate_preset(req);
+                else
+                    activate_random_preset();
+                viz_preset_tick = current_tick;
                 viz_fade = VIZ_FADE_IN;
                 viz_fade_start = current_tick;
-                fade = 0.f;
+                fade = 0.0f;
             }
             else
-                fade = 1.f - (float)dt / (float)VIZ_FADE_TICKS;
+            {
+                fade = 1.0f - (float)el / (float)span;
+            }
         }
         else if (viz_fade == VIZ_FADE_IN)
         {
-            long dt = current_tick - viz_fade_start;
-            if (dt >= VIZ_FADE_TICKS)
+            long el = current_tick - viz_fade_start;
+            if (el >= span)
                 viz_fade = VIZ_NORMAL;
             else
-                fade = (float)dt / (float)VIZ_FADE_TICKS;
+                fade = (float)el / (float)span;
         }
 
-        /* Render projectM into the low-res FBO (libprojectM is patched to
-         * composite into the bound draw framebuffer), then upscale to window. */
-        glBindFramebuffer(GL_FRAMEBUFFER, viz_fbo);
-        glViewport(0, 0, viz_w, viz_h);
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        projectm_opengl_render_frame(pm);
+        int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+        SDL_GL_GetDrawableSize(sdlWindow, &win_w, &win_h);
 
-        viz_gl_present(fade);           /* nearest-neighbour upscale + fade */
-        SDL_GL_SwapWindow(sdlWindow);   /* blocks on vsync -> paces the thread */
+        uipod_rs_viz_render_frame(pcm,
+                                  (size_t)frames,
+                                  (uint32_t)sr,
+                                  dt,
+                                  (int32_t)win_w,
+                                  (int32_t)win_h,
+                                  (uint32_t)(global_settings.bg_color  & 0xFFFFFF),
+                                  (uint32_t)(global_settings.fg_color  & 0xFFFFFF),
+                                  (uint32_t)(global_settings.fg1_color & 0xFFFFFF),
+                                  (uint32_t)(global_settings.fg2_color & 0xFFFFFF),
+                                  fade);
+
+        SDL_GL_SwapWindow(sdlWindow);
     }
 
-    SDL_GL_MakeCurrent(sdlWindow, NULL);   /* release so the main thread can reclaim */
+    SDL_GL_MakeCurrent(sdlWindow, NULL);
     return 0;
 }
 
-static void visualizer_session(const char *locked_path)
+static void visualizer_session(int locked_idx)
 {
-    viz_locked = locked_path != NULL;
-    retrohh_cpu_hold_dynamic();   /* Dynamic for the session, init included */
+    viz_locked = (locked_idx >= 0);
 
     if (!ensure_init())
     {
-        retrohh_cpu_release_dynamic();
-        uipod_viz_active = false;   /* the entry fade may have set it */
+        uipod_viz_active = false;
         viz_entry_faded = false;
-        /* undo the entry fade's Auto-Screen-Off freeze (no-op without a fade) */
         backlight_set_timeout(global_settings.backlight_timeout);
-        lcd_update();                 /* hand the window back, restore the screen */
+        lcd_update();
         return;
     }
 
-    /* Set projectM up and load the first preset on the main thread (it holds the
-     * GL context here), then hand the context to the render thread. */
+    scan_presets();
     button_clear_queue();
     sdl_gl_make_current();
     uipod_viz_active = true;
 
-    /* The visualizer owns the screen for as long as it runs -- that is active
-     * use, not idle.  Suspend Auto Screen Off for the session (restored on exit). */
+    /* Suspend Auto Screen Off while actively visualizing (restored on exit). */
     backlight_set_timeout(0);
 
-    apply_viz_transition();   /* pick up the current "Visualization Transition" setting */
-
-    projectm_set_preset_locked(pm, viz_locked);
     if (viz_locked)
-    {
-        projectm_load_preset_file(pm, locked_path, false);   /* hard cut */
-    }
+        activate_preset(locked_idx);
     else
-    {
-        scan_presets();                  /* refresh the enabled pool (toggles) */
-        if (preset_count > 0)
-            next_preset(true);
-    }
+        activate_random_preset();
 
-    /* Entered via the fade-to-black (auto-start) -> fade the first preset IN. */
+    viz_fade_ticks_cur = VIZ_FADE_TICKS;
     if (viz_entry_faded)
     {
         viz_fade = VIZ_FADE_IN;
@@ -558,122 +382,138 @@ static void visualizer_session(const char *locked_path)
         viz_entry_faded = false;
     }
     else
+    {
         viz_fade = VIZ_NORMAL;
-    viz_switch_req = false;
-    viz_preset_tick = current_tick;   /* start the cycle clock from on-screen now */
+    }
+    viz_pending_preset = -1;
+    viz_preset_tick = current_tick;
 
-    /* Hand the GL context to the render thread (its own core); the main thread
-     * keeps the Rockbox scheduler (codec/buffering) running and watches for the
-     * exit button.  get_action() yields to the Rockbox threads and blocks briefly
-     * between polls so the main thread doesn't busy-spin; the volume rocker is
-     * handled globally (ACTION_NONE here) so it adjusts volume without exiting. */
+    /* Hand the GLES context to `viz_render_thread` on its own OS core while the
+     * main Rockbox thread services audio decoding, network prefetch, and input. */
     SDL_GL_MakeCurrent(sdlWindow, NULL);
     viz_thread_stop = false;
     SDL_Thread *rt = SDL_CreateThread(viz_render_thread, "uipod_viz", NULL);
     if (rt)
     {
-        /* Exit also when a power-button short press blanks the display, so the
-         * visualizer doesn't keep rendering to a dark screen (music plays on). */
         for (;;)
         {
-            int act = get_action(CONTEXT_STD, HZ/20);
-            bool leave;
+            int act = get_action(CONTEXT_WPS, HZ / 20);
+            if (power_display_off())
+                break;
 
-            /* SYS events pass through get_action() unchanged, so they have to
-             * be handled here instead of being mistaken for the exit button:
-             * losing the Bluetooth route pauses playback and stays on screen. */
             if (act & SYS_EVENT)
             {
                 long handled = default_event_handler(act);
-                leave = handled == SYS_USB_CONNECTED ||
-                        handled == SYS_POWEROFF || handled == SYS_REBOOT;
+                if (handled == SYS_USB_CONNECTED ||
+                    handled == SYS_POWEROFF ||
+                    handled == SYS_REBOOT)
+                {
+                    break;
+                }
+                continue;
             }
-            else
-                leave = act != ACTION_NONE || power_display_off();
 
-            if (leave)
+            if (act == ACTION_WPS_BROWSE ||
+                act == ACTION_STD_CANCEL ||
+                act == ACTION_STD_CONTEXT)
+            {
                 break;
+            }
+            else if (act == ACTION_WPS_SKIPPREV)
+            {
+                int target = step_enabled_preset(preset_cur, -1);
+                viz_request_switch(target, true);
+            }
+            else if (act == ACTION_WPS_SKIPNEXT)
+            {
+                int target = step_enabled_preset(preset_cur, 1);
+                viz_request_switch(target, true);
+            }
+            else if (act == ACTION_WPS_HOTKEY)
+            {
+                (void)uipod_rs_viz_toggle_grain();
+            }
+            else if (act == ACTION_WPS_PLAY)
+            {
+                int st = audio_status();
+                if (st & AUDIO_STATUS_PLAY)
+                {
+                    if (st & AUDIO_STATUS_PAUSE)
+                        audio_resume();
+                    else
+                        audio_pause();
+                }
+            }
+            else if (act == ACTION_TP_CHAP_PREV)
+            {
+                if (audio_status() & AUDIO_STATUS_PLAY)
+                    audio_prev();
+            }
+            else if (act == ACTION_TP_CHAP_NEXT)
+            {
+                if (audio_status() & AUDIO_STATUS_PLAY)
+                    audio_next();
+            }
         }
         viz_thread_stop = true;
         SDL_WaitThread(rt, NULL);
     }
-    sdl_gl_make_current();   /* reclaim the context the render thread released */
+    sdl_gl_make_current();
 
-    projectm_set_preset_locked(pm, false);
     uipod_viz_active = false;
-    retrohh_cpu_release_dynamic();   /* back to the user's CPU Frequency */
-    /* Restore Auto Screen Off.  If a power short press blanked us, restore it
-     * silently -- the normal setter's backlight-on would flash Now Playing before
-     * we re-blank.  Stay dark; the repaint below lands behind it. */
     if (power_display_off())
         backlight_set_timeout_quiet(global_settings.backlight_timeout);
     else
         backlight_set_timeout(global_settings.backlight_timeout);
     button_clear_queue();
-    /* The user was just interacting (they pressed B to exit); stamp activity so
-     * the WPS idle->auto-start timer restarts instead of immediately re-firing. */
     button_touch_activity();
 
-    /* Repaint the screen we came from (its LCD framebuffer is intact). */
     lcd_update();
 }
 
 void uipod_visualizer_run(void)
 {
-    visualizer_session(NULL);   /* Now Playing menu entry: auto-cycling presets */
+    visualizer_session(-1);
 }
 
-/* Fade the current (Now Playing) screen to black over one fade phase, reusing the
- * same fade technique as the visualizer's preset transitions (applied here to the
- * LCD image).  A keypress DURING the fade snaps the screen back and returns true
- * (cancel -- don't launch).  On completion returns false and arms the fade-IN so
- * the visualizer (loaded while black) fades in from black. */
 bool uipod_visualizer_fade_to_black(void)
 {
-    /* Freeze Auto Screen Off so it can't blank mid-fade/mid-load;
-     * visualizer_session keeps it suspended and restores it on exit (the
-     * cancel path below restores it directly). */
+    uint32_t bg_rgb = (uint32_t)(global_settings.bg_color & 0xFFFFFF);
     backlight_set_timeout(0);
     sdl_gl_make_current();
-    SDL_GL_SetSwapInterval(1);   /* vsync-pace the fade so it's smooth (else the
-                                  * first fade, before viz_gl_init, runs un-paced) */
-    /* Own the window for the fade + load so the normal LCD presenter can't repaint
-     * Now Playing at full brightness over us (gwps_leave_wps does exactly that). */
+    SDL_GL_SetSwapInterval(1);
     uipod_viz_active = true;
 
     long start = current_tick;
     for (;;)
     {
         long dt = current_tick - start;
-        float fade = (dt >= VIZ_FADE_TICKS) ? 0.f
-                                            : 1.f - (float)dt / (float)VIZ_FADE_TICKS;
-        sdl_gl_present_lcd_fade(fade);
+        float fade = (dt >= VIZ_FADE_TICKS)
+                         ? 0.0f
+                         : 1.0f - (float)dt / (float)VIZ_FADE_TICKS;
+        sdl_gl_present_lcd_fade_rgb(fade, bg_rgb);
 
         int act = get_action(CONTEXT_STD, TIMEOUT_NOBLOCK);
-        bool blanked = power_display_off();  /* power short press mid-fade */
+        bool blanked = power_display_off();
 
-        /* As in the session loop: a SYS event mid-fade (the Bluetooth route
-         * dying, say) must be handled, not swallowed as a cancel.  Only one
-         * that took the screen for itself cancels. */
         if (act & SYS_EVENT)
             act = default_event_handler(act) ? ACTION_STD_CANCEL : ACTION_NONE;
 
         if (blanked || (act != ACTION_NONE && act != ACTION_REDRAW))
         {
-            if (blanked)   /* stay dark: restore without waking the panel */
+            if (blanked)
                 backlight_set_timeout_quiet(global_settings.backlight_timeout);
             else
                 backlight_set_timeout(global_settings.backlight_timeout);
-            sdl_gl_present_lcd_fade(1.0f);   /* snap the screen back to full */
-            uipod_viz_active = false;      /* hand the window back to the LCD */
-            return true;                     /* cancelled */
+            sdl_gl_present_lcd_fade_rgb(1.0f, bg_rgb);
+            uipod_viz_active = false;
+            return true;
         }
         if (dt >= VIZ_FADE_TICKS)
             break;
         yield();
     }
-    viz_entry_faded = true;   /* visualizer_session keeps uipod_viz_active set,
-                               * then fades IN from black */
+    viz_entry_faded = true;
     return false;
 }
 
@@ -681,9 +521,8 @@ bool uipod_visualizer_autostart_due(void)
 {
     int status = audio_status();
     return global_settings.viz_start_delay > 0
-        && !power_display_off()   /* suspended while display blanked */
-        && is_backlight_on(true)  /* screen dark from Auto Screen Off: stay
-                                   * dark (Never counts as always-on) */
+        && !power_display_off()
+        && is_backlight_on(true)
         && (status & AUDIO_STATUS_PLAY)
         && !(status & AUDIO_STATUS_PAUSE)
         && TIME_AFTER(current_tick, button_last_activity_tick()
@@ -694,18 +533,12 @@ bool uipod_visualizer_maybe_autostart(void)
 {
     if (!uipod_visualizer_autostart_due())
         return false;
-    if (!uipod_visualizer_fade_to_black())   /* fade completed -> launch */
+    if (!uipod_visualizer_fade_to_black())
         uipod_visualizer_run();
-    return true;   /* screen disturbed either way: caller repaints */
+    return true;
 }
 
-/* ---- Settings -> Visualizers: the on/off toggle list -----------------------
- * A flat list of the shipped presets, each with an [x]/[ ] toggle (like
- * Settings -> Menu Settings).  A flips the highlighted preset on/off; only
- * enabled presets are played by the Now Playing auto-cycle.  Hold A opens a
- * context submenu with Preview (B leaves the preview).  B leaves the list.
- * The list is the scanned name_buf/name_off/preset_enabled set (one at a time,
- * so it lives in the file-scope statics). */
+/* ---- Settings -> Visualizers: localized [x]/[ ] toggle list --------------- */
 
 struct viz_menu
 {
@@ -718,15 +551,10 @@ static const char *vm_get_name(int sel, void *data, char *buf, size_t buf_len)
     (void)data;
     if (sel < 0 || sel >= preset_count)
         return "";
-    snprintf(buf, buf_len, "%s", name_buf + name_off[sel]);
-    char *dot = strrchr(buf, '.');            /* drop the ".milk" */
-    if (dot)
-        *dot = '\0';
+    uipod_rs_viz_preset_name((size_t)sel, is_lang_uk(), buf, buf_len);
     return buf;
 }
 
-/* Right-aligned [x]/[ ] toggle, drawn in the chevron column by the list renderer
- * -- the same indicator path Settings -> Menu Settings uses (menu.c). */
 static const char *vm_get_indicator(int sel, void *data)
 {
     (void)data;
@@ -735,18 +563,12 @@ static const char *vm_get_indicator(int sel, void *data)
     return uipod_toggle_str(preset_enabled[sel]);
 }
 
-/* Preview the highlighted preset fullscreen, locked (B exits). */
 static void vm_preview(int sel)
 {
     if (sel < 0 || sel >= preset_count)
         return;
-    char path[MAX_PATH];
-    path_append(path, PRESET_DIR, name_buf + name_off[sel], sizeof(path));
-    visualizer_session(path);
+    visualizer_session(sel);
 }
-
-/* No legend: the [x]/[ ] checkboxes make A=toggle self-evident, B=back is the
- * universal convention, and Preview lives in the Hold-A context submenu. */
 
 static void vm_draw(struct uipod_page *self)
 {
@@ -769,7 +591,7 @@ static enum uipod_page_result vm_on_action(struct uipod_page *self, int action)
 
     switch (action)
     {
-        case ACTION_STD_OK:          /* A: toggle this preset on/off */
+        case ACTION_STD_OK:
             if (have)
             {
                 preset_enabled[sel] = !preset_enabled[sel];
@@ -778,19 +600,19 @@ static enum uipod_page_result vm_on_action(struct uipod_page *self, int action)
             }
             return UIPOD_PAGE_STAY;
 
-        case ACTION_STD_CONTEXT:     /* Hold A: context submenu for this preset */
+        case ACTION_STD_CONTEXT:
             if (have)
             {
                 static const char *const opts[] = { ID2P(LANG_UIPOD_PREVIEW) };
                 char title[64];
                 if (uipod_context_menu(vm_get_name(sel, NULL, title,
-                                                     sizeof title), opts, 1) == 0)
+                                                   sizeof(title)), opts, 1) == 0)
                     vm_preview(sel);
-                gui_synclist_draw(&p->lists);   /* repaint on return */
+                gui_synclist_draw(&p->lists);
             }
             return UIPOD_PAGE_STAY;
 
-        case ACTION_STD_CANCEL:      /* B: back to Settings */
+        case ACTION_STD_CANCEL:
             return UIPOD_PAGE_DONE;
     }
     return UIPOD_PAGE_STAY;
@@ -804,34 +626,21 @@ static const struct uipod_page_vtable vm_vtable =
     .on_action = vm_on_action,
 };
 
-/* A (toggle), Hold-A (context: Preview), B (back) */
-static const int vm_allowed[] =
-    { ACTION_STD_OK, ACTION_STD_CONTEXT, ACTION_STD_CANCEL, -1 };
-
 int uipod_visualizer_menu(void)
 {
     struct viz_menu p =
     {
-        .base = { .vt = &vm_vtable, .context = CONTEXT_LIST,
-                  .allowed = vm_allowed },
+        .base = { .vt = &vm_vtable, .context = CONTEXT_LIST },
     };
 
     scan_presets();
-    if (preset_count == 0)
-    {
-        splash(HZ * 2, ID2P(LANG_UIPOD_VISUALIZERS));
-        return GO_TO_PREVIOUS;
-    }
 
     gui_synclist_init(&p.lists, vm_get_name, NULL, false, 1, NULL);
     gui_synclist_set_indicator_callback(&p.lists, vm_get_indicator);
-    gui_synclist_set_title(&p.lists, (char *)str(LANG_UIPOD_VISUALIZERS),
-                           Icon_Menu_setting);
+    gui_synclist_set_title(&p.lists, str(LANG_UIPOD_VISUALIZERS), Icon_NOICON);
     gui_synclist_set_nb_items(&p.lists, preset_count);
     gui_synclist_select_item(&p.lists, 0);
 
-    /* uipod_page_run slides this page in over Settings and arms the back
-     * slide on exit (the default nested-page transition behaviour). */
     uipod_page_run(&p.base);
     return GO_TO_PREVIOUS;
 }

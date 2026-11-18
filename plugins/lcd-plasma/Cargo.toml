@@ -1,0 +1,12 @@
+[package]
+name = "uipod-plugin-lcd-plasma"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "lcd_plasma"
+crate-type = ["cdylib"]
+
+[dependencies]
+uipod-plugin-sdk = { path = "../../crates/uipod-plugin-sdk" }

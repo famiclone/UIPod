@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::renderer::{HEADER_BAND_ROWS, HEIGHT, WIDTH};
+use crate::viz_gl::{VizEngine, VIZ_PRESETS};
 use crate::{
     FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
     ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
@@ -18,6 +19,13 @@ unsafe impl Send for SyncEngineWrap {}
 struct SyncEngineWrap(UiEngine);
 
 static SYNC_ENGINE: Mutex<Option<SyncEngineWrap>> = Mutex::new(None);
+
+// Safety: VizEngine is accessed exclusively from the thread holding the SDL GL context
+// (initialized on main thread, rendered on `viz_render_thread` while `uipod_viz_active` is set).
+unsafe impl Send for SyncVizWrap {}
+struct SyncVizWrap(VizEngine);
+
+static SYNC_VIZ: Mutex<Option<SyncVizWrap>> = Mutex::new(None);
 
 pub type UIPodRsGlGetProc = unsafe extern "C" fn(*const c_char) -> *const c_void;
 
@@ -456,4 +464,448 @@ pub unsafe extern "C" fn uipod_rs_ui_render_keyboard(
     let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
     wrap.0.render_keyboard_into_bgr(&state, fb_slice);
     true
+}
+
+/* ---- Plugin GPU Canvas FFI Entry Points -------------------------------- */
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_begin(
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    clear_rgb: u32,
+    header: *const UIPodRsHeader,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let theme = ThemeColors {
+        bg_rgb,
+        fg_rgb,
+        fg1_rgb,
+        fg2_rgb,
+    };
+
+    if header.is_null() {
+        wrap.0.plugin_begin(theme, clear_rgb, None);
+    } else {
+        let h = &*header;
+        let title = cstr_lossy(h.title);
+        let legend = cstr_lossy(h.legend);
+        let hs = HeaderState {
+            title: &title,
+            legend: &legend,
+            play_mode: decode_play_mode(h.play_mode),
+            battery_percent: h.battery_percent,
+            is_charging: h.is_charging,
+            is_hold: h.is_hold,
+            is_downloading: h.is_downloading,
+            download_done: h.download_done,
+            download_total: h.download_total,
+            source_icon: decode_source_icon(h.source_icon),
+        };
+        wrap.0.plugin_begin(theme, clear_rgb, Some(&hs));
+    }
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_fill_rect(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    rgb: u32,
+) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_fill_rect(x, y, w, h, radius, rgb);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_stroke_rect(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    stroke_w: f32,
+    rgb: u32,
+) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_stroke_rect(x, y, w, h, radius, stroke_w, rgb);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_fill_circle(cx: f32, cy: f32, r: f32, rgb: u32) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_fill_circle(cx, cy, r, rgb);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_draw_line(
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    stroke_w: f32,
+    rgb: u32,
+) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_draw_line(x0, y0, x1, y1, stroke_w, rgb);
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_draw_text(
+    x: f32,
+    center_y: f32,
+    text: *const c_char,
+    font_size: f32,
+    weight: u8,
+    align: u8,
+    rgb: u32,
+) -> f32 {
+    if text.is_null() {
+        return 0.0;
+    }
+    let s = cstr_lossy(text);
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap
+                .0
+                .plugin_draw_text(x, center_y, &s, font_size, weight, align, rgb);
+        }
+    }
+    0.0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_measure_text(
+    text: *const c_char,
+    font_size: f32,
+    weight: u8,
+) -> f32 {
+    if text.is_null() {
+        return 0.0;
+    }
+    let s = cstr_lossy(text);
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.plugin_measure_text(&s, font_size, weight);
+        }
+    }
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_draw_progress_bar(
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    progress: f32,
+) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_draw_progress_bar(
+                ThemeColors {
+                    bg_rgb,
+                    fg_rgb,
+                    fg1_rgb,
+                    fg2_rgb,
+                },
+                x,
+                y,
+                w,
+                h,
+                progress,
+            );
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_draw_scrollbar(
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    total: usize,
+    start: usize,
+    visible: usize,
+) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_draw_scrollbar(
+                ThemeColors {
+                    bg_rgb,
+                    fg_rgb,
+                    fg1_rgb,
+                    fg2_rgb,
+                },
+                x,
+                y,
+                w,
+                h,
+                total,
+                start,
+                visible,
+            );
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_present(fb_bgr: *mut u8) -> bool {
+    if fb_bgr.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
+    wrap.0.plugin_present_into_bgr(fb_slice);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_present_gpu(win_w: u32, win_h: u32) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0.plugin_present_gpu_screen(win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_plugin_flush_fbo() -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0.plugin_flush_fbo_only();
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_sync_fb(fb_bgr: *mut u8) -> bool {
+    if fb_bgr.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
+    wrap.0.plugin_sync_fbo_into_bgr(fb_slice);
+    true
+}
+
+// ---- 4-Shade Audio-Reactive Visualizer C ABI (`uipod_rs_viz_*`) ------------
+
+unsafe fn write_cstr_buf(s: &str, out: *mut c_char, cap: usize) -> usize {
+    if out.is_null() || cap == 0 {
+        return 0;
+    }
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(cap - 1);
+    std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, n);
+    *out.add(n) = 0;
+    n
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_viz_preset_count() -> usize {
+    VIZ_PRESETS.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_viz_preset_id(
+    idx: usize,
+    out: *mut c_char,
+    cap: usize,
+) -> usize {
+    let Some(p) = VIZ_PRESETS.get(idx) else {
+        if !out.is_null() && cap > 0 {
+            *out = 0;
+        }
+        return 0;
+    };
+    write_cstr_buf(p.id, out, cap)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_viz_preset_name(
+    idx: usize,
+    is_ukrainian: bool,
+    out: *mut c_char,
+    cap: usize,
+) -> usize {
+    let Some(p) = VIZ_PRESETS.get(idx) else {
+        if !out.is_null() && cap > 0 {
+            *out = 0;
+        }
+        return 0;
+    };
+    let label = if is_ukrainian { p.name_uk } else { p.name_en };
+    write_cstr_buf(label, out, cap)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_viz_init(get_proc: Option<UIPodRsGlGetProc>) -> bool {
+    let Some(loader) = get_proc else {
+        return false;
+    };
+    let mut guard = match SYNC_VIZ.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    if guard.is_some() {
+        return true;
+    }
+    match VizEngine::new(|cname| loader(cname.as_ptr())) {
+        Ok(engine) => {
+            *guard = Some(SyncVizWrap(engine));
+            true
+        }
+        Err(err) => {
+            eprintln!("[uipod-viz] init error: {err}");
+            false
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_viz_set_preset(idx: usize) {
+    if let Ok(mut guard) = SYNC_VIZ.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.set_preset(idx);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_viz_toggle_grain() -> bool {
+    if let Ok(mut guard) = SYNC_VIZ.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.toggle_grain();
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_viz_render_frame(
+    pcm_interleaved: *const i16,
+    frames: usize,
+    sample_rate: u32,
+    dt: f32,
+    win_w: i32,
+    win_h: i32,
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    fade: f32,
+) -> bool {
+    let mut guard = match SYNC_VIZ.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    let pcm_slice: &[i16] = if pcm_interleaved.is_null() || frames == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(pcm_interleaved, frames.saturating_mul(2))
+    };
+    let theme = ThemeColors {
+        bg_rgb,
+        fg_rgb,
+        fg1_rgb,
+        fg2_rgb,
+    };
+    wrap.0
+        .render_frame(pcm_slice, sample_rate, dt, win_w, win_h, theme, fade);
+    true
+}
+
+// ---- Pure-Rust Album Art Image Decoder C ABI (`uipod_rs_image_*`) ----------
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_image_decode_rgb(
+    bytes: *const u8,
+    len: usize,
+    out_w: *mut i32,
+    out_h: *mut i32,
+    out_byte_len: *mut usize,
+) -> *mut u8 {
+    if bytes.is_null() || len < 16 || out_w.is_null() || out_h.is_null() || out_byte_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let slice = std::slice::from_raw_parts(bytes, len);
+    let Some((w, h, mut rgb)) = crate::image_decode::decode_image_rgb24(slice) else {
+        return std::ptr::null_mut();
+    };
+    let expected = (w as usize).saturating_mul(h as usize).saturating_mul(3);
+    if expected == 0 || rgb.len() < expected {
+        return std::ptr::null_mut();
+    }
+    rgb.truncate(expected);
+    let boxed: Box<[u8]> = rgb.into_boxed_slice();
+    let byte_len = boxed.len();
+    let raw_ptr = Box::into_raw(boxed) as *mut u8;
+    *out_w = w as i32;
+    *out_h = h as i32;
+    *out_byte_len = byte_len;
+    raw_ptr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_image_free_rgb(ptr: *mut u8, byte_len: usize) {
+    if !ptr.is_null() && byte_len > 0 {
+        let slice_ptr = std::ptr::slice_from_raw_parts_mut(ptr, byte_len);
+        drop(Box::from_raw(slice_ptr));
+    }
 }

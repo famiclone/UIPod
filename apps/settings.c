@@ -56,7 +56,6 @@
 #include "lang.h"
 #include "language.h"
 #include "powermgmt.h"
-#include "keyboard.h"
 #include "version.h"
 #include "rbunicode.h"
 #include "dircache.h"
@@ -846,16 +845,6 @@ void settings_apply(bool read_disk)
                 screens[SCREEN_MAIN].setfont(rc);
             }
         }
-        if ( global_settings.kbd_file[0]
-             && global_settings.kbd_file[0] != '-') {
-            snprintf(buf, sizeof buf, ROCKBOX_DIR "/%s.kbd",
-                     global_settings.kbd_file);
-            CHART(">load_kbd");
-            load_kbd(buf);
-            CHART("<load_kbd");
-        }
-        else
-            load_kbd(NULL);
         if ( global_settings.lang_file[0]) {
             snprintf(buf, sizeof buf, LANG_DIR "/%s.lng",
                      global_settings.lang_file);

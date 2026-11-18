@@ -13,3 +13,4 @@ crate-type = ["staticlib"]
 uipod-ui = { path = "../uipod-ui" }
 uipod-navidrome = { path = "../uipod-navidrome" }
 uipod-jellyfin = { path = "../uipod-jellyfin" }
+uipod-plugins = { path = "../uipod-plugins" }

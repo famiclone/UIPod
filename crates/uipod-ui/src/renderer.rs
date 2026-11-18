@@ -248,7 +248,12 @@ impl UiEngine {
         };
 
         let fbo_image = canvas
-            .create_image_empty(WIDTH, HEIGHT, PixelFormat::Rgba8, ImageFlags::empty())
+            .create_image_empty(
+                WIDTH,
+                HEIGHT,
+                PixelFormat::Rgba8,
+                ImageFlags::FLIP_Y | ImageFlags::NEAREST,
+            )
             .map_err(|e| format!("FBO image creation failed: {e:?}"))?;
 
         let mut engine = Self {
@@ -441,7 +446,7 @@ impl UiEngine {
         }
     }
 
-    /// Restores clean OpenGL ES 3.0 state so `window-sdl.c` and `projectM` see default bindings.
+    /// Restores clean OpenGL ES 3.0 state so `window-sdl.c` sees default bindings.
     fn restore_gl_state(&self) {
         unsafe {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
@@ -1330,6 +1335,221 @@ impl UiEngine {
         let mut out = vec![0u8; WIDTH * HEIGHT * 4];
         self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
         out
+    }
+
+    /* ---- Immediate-Mode Plugin GPU Canvas (`1024x768`) ------------------ */
+
+    #[inline]
+    fn font_chain_by_weight(&self, weight: u8) -> Vec<FontId> {
+        match weight {
+            0 => self.fonts_regular.clone(),
+            1 => self.fonts_medium.clone(),
+            2 => self.fonts_semibold.clone(),
+            _ => self.fonts_bold.clone(),
+        }
+    }
+
+    pub fn plugin_begin(
+        &mut self,
+        theme: ThemeColors,
+        bg_rgb: u32,
+        header: Option<&HeaderState>,
+    ) {
+        let bg = rgb_u32_to_color(bg_rgb);
+        self.begin_offscreen(HEIGHT, bg);
+        if let Some(hdr) = header {
+            let boxes = compute_header_layout();
+            self.draw_header_component(&boxes, hdr, resolve_theme(theme));
+        }
+    }
+
+    pub fn plugin_fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, rgb: u32) {
+        fill_rounded_rect(&mut self.canvas, x, y, w, h, radius.max(0.0), rgb_u32_to_color(rgb));
+    }
+
+    pub fn plugin_stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        stroke_w: f32,
+        rgb: u32,
+    ) {
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            x,
+            y,
+            w,
+            h,
+            radius.max(0.0),
+            stroke_w.max(1.0),
+            rgb_u32_to_color(rgb),
+        );
+    }
+
+    pub fn plugin_fill_circle(&mut self, cx: f32, cy: f32, r: f32, rgb: u32) {
+        if r <= 0.0 {
+            return;
+        }
+        let mut p = VgPath::new();
+        p.circle(cx, cy, r);
+        self.canvas
+            .fill_path(&p, &Paint::color(rgb_u32_to_color(rgb)));
+    }
+
+    pub fn plugin_draw_line(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        stroke_w: f32,
+        rgb: u32,
+    ) {
+        let mut p = VgPath::new();
+        p.move_to(x0, y0);
+        p.line_to(x1, y1);
+        let mut paint = Paint::color(rgb_u32_to_color(rgb));
+        paint.set_line_width(stroke_w.max(1.0));
+        paint.set_line_cap(femtovg::LineCap::Butt);
+        self.canvas.stroke_path(&p, &paint);
+    }
+
+    pub fn plugin_draw_text(
+        &mut self,
+        x: f32,
+        center_y: f32,
+        text: &str,
+        font_size: f32,
+        weight: u8,
+        align: u8,
+        rgb: u32,
+    ) -> f32 {
+        if text.is_empty() || font_size <= 1.0 {
+            return 0.0;
+        }
+        let fonts = self.font_chain_by_weight(weight);
+        let mut tp = Paint::color(rgb_u32_to_color(rgb));
+        tp.set_font(&fonts);
+        tp.set_font_size(font_size);
+        tp.set_text_align(match align {
+            1 => Align::Center,
+            2 => Align::Right,
+            _ => Align::Left,
+        });
+        tp.set_text_baseline(Baseline::Alphabetic);
+        let base_y = Self::text_row_baseline(center_y, font_size);
+        self.canvas
+            .fill_text(x, base_y, text, &tp)
+            .map(|m| m.width())
+            .unwrap_or(0.0)
+    }
+
+    pub fn plugin_measure_text(&mut self, text: &str, font_size: f32, weight: u8) -> f32 {
+        if text.is_empty() || font_size <= 1.0 {
+            return 0.0;
+        }
+        let fonts = self.font_chain_by_weight(weight);
+        let mut tp = Paint::color(Color::white());
+        tp.set_font(&fonts);
+        tp.set_font_size(font_size);
+        self.canvas
+            .measure_text(0.0, 0.0, text, &tp)
+            .map(|m| m.width())
+            .unwrap_or(0.0)
+    }
+
+    pub fn plugin_draw_progress_bar(
+        &mut self,
+        theme: ThemeColors,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        progress: f32,
+    ) {
+        let pal = resolve_theme(theme);
+        draw_seekbar_track_h(&mut self.canvas, x, y, w, h, progress, pal.fg1, pal.fg2);
+    }
+
+    pub fn plugin_draw_scrollbar(
+        &mut self,
+        theme: ThemeColors,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        total: usize,
+        start: usize,
+        visible: usize,
+    ) {
+        let pal = resolve_theme(theme);
+        draw_scrollbar_v(
+            &mut self.canvas,
+            x,
+            y,
+            w,
+            h,
+            total,
+            start,
+            visible,
+            pal.fg1,
+            pal.fg,
+        );
+    }
+
+    pub fn plugin_present_into_bgr(&mut self, fb_bgr: &mut [u8]) {
+        self.finish_and_read_top_rows(HEIGHT);
+        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+    }
+
+    /// Zero-copy 60 FPS GPU presentation: flushes the plugin's vector commands into
+    /// `self.fbo_image` and blits `self.fbo_image` straight to the window backbuffer
+    /// (`RenderTarget::Screen`) on the GPU — completely eliminating `glReadPixels`,
+    /// CPU RGB888 unpacking, and `glTexSubImage2D` re-uploads!
+    pub fn plugin_present_gpu_screen(&mut self, win_w: u32, win_h: u32) {
+        self.canvas.flush();
+
+        let sw = win_w.max(1);
+        let sh = win_h.max(1);
+        if sw != WIDTH as u32 || sh != HEIGHT as u32 {
+            self.canvas.set_size(sw, sh, 1.0);
+        }
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+
+        let paint = Paint::image(self.fbo_image, 0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+        let mut quad = VgPath::new();
+        quad.rect(0.0, 0.0, sw as f32, sh as f32);
+        self.canvas.fill_path(&quad, &paint);
+        self.canvas.flush();
+
+        if sw != WIDTH as u32 || sh != HEIGHT as u32 {
+            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        }
+        self.restore_gl_state();
+    }
+
+    /// Flushes `self.fbo_image` without presenting to the window (used when display panel is off).
+    pub fn plugin_flush_fbo_only(&mut self) {
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Synchronizes the most recently rendered `self.fbo_image` into Rockbox's CPU `{b, g, r}`
+    /// framebuffer on demand (called once before opening a system menu or screen transition).
+    pub fn plugin_sync_fbo_into_bgr(&mut self, fb_bgr: &mut [u8]) {
+        self.canvas.reset();
+        self.canvas.reset_scissor();
+        self.canvas
+            .set_render_target(RenderTarget::Image(self.fbo_image));
+        self.finish_and_read_top_rows(HEIGHT);
+        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
     }
 }
 

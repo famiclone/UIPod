@@ -51,7 +51,7 @@ uint8_t uipod_gpu_get_header_source(void)
 
 bool uipod_gpu_ui_ensure_ready(void)
 {
-    /* Never touch the SDL GLES context while projectM owns it on the viz thread */
+    /* Never touch the SDL GLES context while the visualizer thread owns it */
     if (uipod_viz_active || !sdl_gl_get_context())
         return false;
 

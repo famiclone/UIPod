@@ -47,9 +47,13 @@ void sdl_gl_make_current(void);
 SDL_GLContext sdl_gl_get_context(void);
 /* Resolve GLES 3.0 entry points via SDL2 for the Rust GPU UI engine. */
 const void *sdl_gl_get_proc_address(const char *name);
-/* Present the current LCD framebuffer faded toward black (1=normal, 0=black). */
+/* Present the current LCD framebuffer faded toward target_rgb (1=normal, 0=target). */
 void sdl_gl_present_lcd_fade(float fade);
+void sdl_gl_present_lcd_fade_rgb(float fade, uint32_t target_rgb);
 /* Let a video show through the window, keeping the bottom overlay_rows LCD rows. */
 void sdl_gl_set_video_through(bool on, int overlay_rows);
+/* Query current GL drawable dimensions and swap directly for zero-copy GPU plugins. */
+void sdl_gl_get_drawable_size(int *out_w, int *out_h);
+void sdl_gl_swap_window(void);
 
 #endif /* #ifndef __WINDOWSDL_H__ */

@@ -11574,7 +11574,7 @@
 </phrase>
 <phrase>
   id: LANG_UIPOD_VISUALIZERS
-  desc: UIPod Settings > Audio Visualizer > Visualization Presets (Milkdrop preset list)
+  desc: UIPod Settings > Audio Visualizer > Visualization Presets (4-shade GPU preset list)
   user: core
   <source>
     *: "Visualization Presets"
@@ -19238,5 +19238,145 @@
   </dest>
   <voice>
     *: "Blinds"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS
+  desc: Extras menu item and hub title for native UIPod plugins
+  user: core
+  <source>
+    *: "Plugins"
+  </source>
+  <dest>
+    *: "Plugins"
+  </dest>
+  <voice>
+    *: "Plugins"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_GAMES
+  desc: Plugins category for games
+  user: core
+  <source>
+    *: "Games"
+  </source>
+  <dest>
+    *: "Games"
+  </dest>
+  <voice>
+    *: "Games"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_APPS
+  desc: Plugins category for utility applications
+  user: core
+  <source>
+    *: "Apps"
+  </source>
+  <dest>
+    *: "Apps"
+  </dest>
+  <voice>
+    *: "Apps"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_DEMOS
+  desc: Plugins category for visual demos
+  user: core
+  <source>
+    *: "Demos"
+  </source>
+  <dest>
+    *: "Demos"
+  </dest>
+  <voice>
+    *: "Demos"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_VIEWERS
+  desc: Plugins category for file viewers
+  user: core
+  <source>
+    *: "Viewers"
+  </source>
+  <dest>
+    *: "Viewers"
+  </dest>
+  <voice>
+    *: "Viewers"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_RESCAN
+  desc: Action to rescan bundled and SD card plugin directories
+  user: core
+  <source>
+    *: "Rescan Plugins"
+  </source>
+  <dest>
+    *: "Rescan Plugins"
+  </dest>
+  <voice>
+    *: "Rescan Plugins"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_EMPTY
+  desc: Placeholder row when a plugin category has no entries
+  user: core
+  <source>
+    *: "(No plugins)"
+  </source>
+  <dest>
+    *: "(No plugins)"
+  </dest>
+  <voice>
+    *: "No plugins"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGINS_FOUND_FMT
+  desc: Splash shown after rescanning plugin directories
+  user: core
+  <source>
+    *: "Found %d plugins"
+  </source>
+  <dest>
+    *: "Found %d plugins"
+  </dest>
+  <voice>
+    *: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_PLUGIN_ERROR
+  desc: Prefix for plugin load or execution error splash
+  user: core
+  <source>
+    *: "Plugin error"
+  </source>
+  <dest>
+    *: "Plugin error"
+  </dest>
+  <voice>
+    *: "Plugin error"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_MENU_CLICK
+  desc: UIPod Settings > Sound > iPod-style menu navigation click sound toggle
+  user: core
+  <source>
+    *: "Menu Click"
+  </source>
+  <dest>
+    *: "Menu Click"
+  </dest>
+  <voice>
+    *: "Menu Click"
   </voice>
 </phrase>

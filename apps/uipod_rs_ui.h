@@ -129,6 +129,66 @@ bool uipod_rs_ui_render_now_playing(const struct UIPodRsNowPlaying *np,
 bool uipod_rs_ui_render_keyboard(const struct UIPodRsKeyboard *kbd,
                                  uint8_t *fb_bgr);
 
+/* Plugin GPU Canvas entry points (`crates/uipod-ui/src/ffi.rs`) */
+bool  uipod_rs_ui_plugin_begin(uint32_t bg_rgb,
+                               uint32_t fg_rgb,
+                               uint32_t fg1_rgb,
+                               uint32_t fg2_rgb,
+                               uint32_t clear_rgb,
+                               const struct UIPodRsHeader *header);
+void  uipod_rs_ui_plugin_fill_rect(float x, float y, float w, float h,
+                                   float radius, uint32_t rgb);
+void  uipod_rs_ui_plugin_stroke_rect(float x, float y, float w, float h,
+                                     float radius, float stroke_w, uint32_t rgb);
+void  uipod_rs_ui_plugin_fill_circle(float cx, float cy, float r, uint32_t rgb);
+void  uipod_rs_ui_plugin_draw_line(float x0, float y0, float x1, float y1,
+                                   float stroke_w, uint32_t rgb);
+float uipod_rs_ui_plugin_draw_text(float x, float center_y, const char *text,
+                                   float font_size, uint8_t weight,
+                                   uint8_t align, uint32_t rgb);
+float uipod_rs_ui_plugin_measure_text(const char *text, float font_size,
+                                      uint8_t weight);
+void  uipod_rs_ui_plugin_draw_progress_bar(uint32_t bg_rgb, uint32_t fg_rgb,
+                                           uint32_t fg1_rgb, uint32_t fg2_rgb,
+                                           float x, float y, float w, float h,
+                                           float progress);
+void  uipod_rs_ui_plugin_draw_scrollbar(uint32_t bg_rgb, uint32_t fg_rgb,
+                                        uint32_t fg1_rgb, uint32_t fg2_rgb,
+                                        float x, float y, float w, float h,
+                                        size_t total, size_t start,
+                                        size_t visible);
+bool  uipod_rs_ui_plugin_present(uint8_t *fb_bgr);
+bool  uipod_rs_ui_plugin_present_gpu(uint32_t win_w, uint32_t win_h);
+bool  uipod_rs_ui_plugin_flush_fbo(void);
+bool  uipod_rs_ui_plugin_sync_fb(uint8_t *fb_bgr);
+
+/* 4-Shade Audio-Reactive Visualizer entry points (`crates/uipod-ui/src/ffi.rs`) */
+size_t uipod_rs_viz_preset_count(void);
+size_t uipod_rs_viz_preset_id(size_t idx, char *out, size_t cap);
+size_t uipod_rs_viz_preset_name(size_t idx, bool is_ukrainian, char *out, size_t cap);
+bool   uipod_rs_viz_init(uipod_rs_gl_get_proc_fn get_proc);
+void   uipod_rs_viz_set_preset(size_t idx);
+bool   uipod_rs_viz_toggle_grain(void);
+bool   uipod_rs_viz_render_frame(const int16_t *pcm_interleaved,
+                                 size_t frames,
+                                 uint32_t sample_rate,
+                                 float dt,
+                                 int32_t win_w,
+                                 int32_t win_h,
+                                 uint32_t bg_rgb,
+                                 uint32_t fg_rgb,
+                                 uint32_t fg1_rgb,
+                                 uint32_t fg2_rgb,
+                                 float fade);
+
+/* Pure-Rust Album Art Decoder (`crates/uipod-ui/src/image_decode.rs`) */
+uint8_t *uipod_rs_image_decode_rgb(const uint8_t *bytes,
+                                   size_t len,
+                                   int32_t *out_w,
+                                   int32_t *out_h,
+                                   size_t *out_byte_len);
+void     uipod_rs_image_free_rgb(uint8_t *ptr, size_t byte_len);
+
 /* High-level C glue helpers (`apps/uipod_rs_ui_glue.c`) */
 struct gui_synclist;
 

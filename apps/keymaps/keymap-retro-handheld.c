@@ -110,6 +110,14 @@ static const struct button_mapping button_context_list[] = {
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
 }; /* button_context_list */
 
+static const struct button_mapping button_context_plugin_menu[] = {
+    /* Inside an in-game plugin menu, pressing START again dismisses/unpauses */
+    { ACTION_STD_CONTEXT,     BUTTON_START|BUTTON_REL,                 BUTTON_START },
+    { ACTION_STD_CONTEXT,     BUTTON_START|BUTTON_REL,                 BUTTON_START|BUTTON_REPEAT },
+
+    LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_LIST)
+}; /* button_context_plugin_menu */
+
 static const struct button_mapping button_context_tree[]  = {
     { ACTION_TREE_WPS,    BUTTON_X|BUTTON_REL,         BUTTON_X },
 
@@ -224,6 +232,8 @@ const struct button_mapping* get_context_mapping(int context)
             return button_context_video;
         case CONTEXT_LIST:
             return button_context_list;
+        case CONTEXT_PLUGIN|CONTEXT_LIST:
+            return button_context_plugin_menu;
         case CONTEXT_MAINMENU:
         case CONTEXT_TREE:
             if (global_settings.hold_lr_for_scroll_in_list)

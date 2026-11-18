@@ -38,9 +38,6 @@
 
 #define EQ_USER_DIVISOR      10
 
-bool eq_browse_presets(void);
-int eq_menu_graphical(void);
-
 /* utility functions for settings_list.c */
 const char* eq_q_format(char* buffer, size_t buffer_size, int value,
                         const char* unit);

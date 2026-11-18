@@ -44,9 +44,6 @@
 #include "option_select.h"
 #include "buffering.h"
 
-#include "uipod_spectrum.h"
-#include "uipod_eq.h"
-
 /* Refresh rate for the live audio spectrum (the %pm element): 5 ticks, every
  * third refresh of the 60 Hz panel, so the cadence is even. */
 #define SPECTRUM_FPS 20
@@ -615,13 +612,9 @@ void write_line(struct screen *display, struct align_pos *format_align,
 void draw_spectrum(struct gui_wps *gwps, int line_number,
                    struct viewport *viewport)
 {
-    struct wps_data *data = gwps->data;
-    if (!data->spectrum_enabled)
-        return;
-
+    (void)gwps;
     (void)line_number;
-    uipod_spectrum_draw(gwps->display, viewport);
-    uipod_eq_draw(gwps->display, viewport);   /* EQ curve over the spectrum */
+    (void)viewport;
 }
 
 

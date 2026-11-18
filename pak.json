@@ -1,6 +1,6 @@
 {
   "name": "UIPod",
-  "version": "v0.2.0",
+  "version": "v0.3.0",
   "type": "TOOL",
   "description": "An iPod-inspired offline, Navidrome & Jellyfin media player for the TrimUI Brick/Hammer with GPU UI and visualizations.",
   "author": "famiclone",
@@ -13,6 +13,7 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.3.0": "- Added native Rust (.uipod) plugin runtime & SDK under Extras -> Plugins with 5 games (Sound Racer, Tetris, Snake, Brick Breaker, 2048), Stopwatch, LCD Plasma, and Text Viewer\n- Replaced Milkdrop with a native 4-shade Bayer-dithered OpenGL ES audio visualizer engine (8 presets synced to speaker & Bluetooth output latency)\n- Added low-latency iPod Click Wheel menu navigation sound with a Menu Click toggle in Settings -> Sound\n- Added interactive in-app manual in Settings -> About (opened via Text Viewer) and streamlined Sound, Extras, and Settings menus\n- Removed legacy unused code and C++ projectM dependencies, reducing package size and memory footprint",
     "v0.2.0": "- Unified multi-source library merging local folders, Navidrome, and Jellyfin without duplicates, plus Navidrome Favourites playlist and Offline Mode\n- Non-blocking persistent Downloads queue with header DONE/TOTAL progress and 3-by-3 sliding-window playback queue prefetching\n- Updated 4-shade iPod Mini theme system (bg, fg, fg1, fg2) with 4-shade monochrome album art and live HEX Customize Theme editor\n- Added 6 selectable screen transitions (Slide, Cover, Fade, Pixels, Blinds, Off) in Settings -> Display\n- Redesigned GPU-rendered QWERTY on-screen keyboard and fixed folder back-navigation stability",
     "v0.1.3": "- Renamed packaged runtime directory and main executable inside UIPod.pak from trimpod to uipod (with automatic config path migration on launch)",
     "v0.1.2": "- Monochrome album art now renders in 3 shades of the active theme palette with ordered Bayer dithering\n- Unified UIPod naming across Rust crates and C application modules",

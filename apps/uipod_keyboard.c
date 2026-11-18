@@ -1,6 +1,6 @@
 /***************************************************************************
  * UIPod: On-screen QWERTY keyboard rendered in HiDPI Geologica via `uipod-ui`
- * (with software fallback when the GLES context is owned by projectM).
+ * (with software fallback when the GLES context is owned by the visualizer).
  *
  * Button map: D-pad moves the highlight, A engages the highlighted key,
  * Y backspaces, B cancels and restores the original string.
@@ -19,6 +19,7 @@
 #include "gui/viewport.h"
 #include "rbpaths.h"
 #include "settings.h"
+#include "misc.h"
 #include "uipod_page.h"
 #include "uipod_rs_ui.h"
 #include "uipod_keyboard.h"
@@ -344,9 +345,11 @@ static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
     {
         case ACTION_KBD_LEFT:
             p->col = (p->col - 1 + row_count(p, p->row)) % row_count(p, p->row);
+            uipod_menu_click();
             break;
         case ACTION_KBD_RIGHT:
             p->col = (p->col + 1) % row_count(p, p->row);
+            uipod_menu_click();
             break;
         case ACTION_KBD_UP:
         {
@@ -354,6 +357,7 @@ static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
             int to_row   = (p->row - 1 + KBD_NROWS) % KBD_NROWS;
             p->col = remap_col_by_center(p, from_row, p->col, to_row);
             p->row = to_row;
+            uipod_menu_click();
             break;
         }
         case ACTION_KBD_DOWN:
@@ -362,6 +366,7 @@ static enum uipod_page_result kbd_page_on_action(struct uipod_page *self,
             int to_row   = (p->row + 1) % KBD_NROWS;
             p->col = remap_col_by_center(p, from_row, p->col, to_row);
             p->row = to_row;
+            uipod_menu_click();
             break;
         }
 

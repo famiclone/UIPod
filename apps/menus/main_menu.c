@@ -35,7 +35,6 @@
 #include "tree.h"
 #include "storage.h"
 #include "yesno.h"
-#include "keyboard.h"
 #include "screens.h"
 #include "splash.h"
 #include "file.h"
@@ -51,6 +50,7 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_downloads.h"
+#include "uipod_plugins.h"
 #include "uipod_page.h"
 #include "uipod_transition.h"
 #include "uipod_ui.h"
@@ -116,17 +116,10 @@ MAKE_MENU(manage_settings, ID2P(LANG_MANAGE_MENU), NULL, Icon_Config,
 /**********************************/
 
 
-/* About: a self-scrolling credits reel (B exits). */
+/* About: opens `about.txt` manual & credits in Text Viewer (B exits). */
 static int uipod_about_page(void)
 {
     uipod_about();
-    return 0;
-}
-
-/* Controls: a static list of the app's inputs (B exits). */
-static int uipod_controls_page(void)
-{
-    uipod_controls();
     return 0;
 }
 
@@ -160,36 +153,15 @@ int uipod_sources_page(void)
 
 /* ---- Extras (opened from Main -> Extras) ------------------------------ */
 
-static int tp_ext_shuffle_fn(void)
-{
-    int r = uipod_shuffle_all(NULL);
-    return (r == GO_TO_WPS) ? GO_TO_WPS : 0;
-}
-
-static int tp_ext_playlists_fn(void)
-{
-    return GO_TO_PLAYLISTS_SCREEN;
-}
-
-MENUITEM_FUNCTION(tp_ext_shuffle, MENU_FUNC_CHECK_RETVAL,
-                  ID2P(LANG_UIPOD_SHUFFLE_ALL), tp_ext_shuffle_fn,
+MENUITEM_FUNCTION(tp_ext_plugins, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_PLUGINS), uipod_plugins_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_ext_playlists, MENU_SHOW_CHEVRON | MENU_FUNC_CHECK_RETVAL,
-                  ID2P(LANG_PLAYLISTS), tp_ext_playlists_fn,
-                  NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_ext_viz, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_AUDIO_VISUALIZER), uipod_av_page,
-                  NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_ext_controls, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_CONTROLS), uipod_controls_page,
-                  NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_ext_about, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_ABOUT), uipod_about_page,
+MENUITEM_FUNCTION(tp_ext_downloads, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_DOWNLOADS), uipod_downloads_page,
                   NULL, Icon_NOICON);
 MAKE_MENU(uipod_extras_menu, ID2P(LANG_UIPOD_EXTRAS), NULL,
           Icon_Submenu_Entered,
-          &tp_ext_shuffle, &tp_ext_playlists, &tp_ext_viz,
-          &tp_ext_controls, &tp_ext_about);
+          &tp_ext_plugins, &tp_ext_downloads);
 
 int uipod_extras_page(void)
 {
@@ -201,9 +173,6 @@ int uipod_extras_page(void)
 MENUITEM_FUNCTION(tp_set_appearance, MENU_SHOW_CHEVRON,
                   ID2P(LANG_UIPOD_APPEARANCE), uipod_appearance_page,
                   NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_set_downloads, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_DOWNLOADS), uipod_downloads_page,
-                  NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_sources, MENU_SHOW_CHEVRON,
                   ID2P(LANG_UIPOD_SOURCES), uipod_sources_page,
                   NULL, Icon_NOICON);
@@ -213,17 +182,15 @@ MENUITEM_FUNCTION(tp_set_viz, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_AUDIO_VISUALIZE
                   uipod_av_page, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_power, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_DEVICE),
                   uipod_power_page, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(tp_set_controls, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_CONTROLS),
-                  uipod_controls_page, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_about, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_ABOUT),
                   uipod_about_page, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_exit, 0, ID2P(LANG_UIPOD_EXIT),
                   uipod_exit_app, NULL, Icon_NOICON);
 MAKE_MENU(uipod_settings_menu, ID2P(LANG_SETTINGS), NULL, Icon_Submenu_Entered,
           &tp_set_appearance, &sound_settings, &tp_set_offline,
-          &tp_set_downloads, &tp_set_sources,
+          &tp_set_sources,
           &tp_set_audio, &tp_set_viz,
-          &tp_set_power, &tp_set_controls, &tp_set_about, &tp_set_exit);
+          &tp_set_power, &tp_set_about, &tp_set_exit);
 int uipod_settings_page(void)
 {
     do_menu(&uipod_settings_menu, NULL, NULL, false);

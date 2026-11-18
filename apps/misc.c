@@ -49,6 +49,7 @@
 #include "font.h"
 #include "splash.h"
 #include "sound.h"
+#include "pcm_mixer.h"
 #include "playlist.h"
 #include "uipod_library.h"
 #include "uipod_ui.h"      /* uipod_fullscreen_message */
@@ -862,6 +863,29 @@ void keyclick_click(bool rawbutton, int action)
     if (do_beep)
     {
         system_sound_play(SOUND_KEYCLICK);
+    }
+}
+
+extern bool pcm_alsa_menu_click(void);
+extern const void *pcm_alsa_click_samples(size_t *byte_size_out);
+
+void uipod_menu_click(void)
+{
+    if (!global_settings.menu_click)
+        return;
+    if (global_status.volume <= sound_min(SOUND_VOLUME))
+        return;
+
+    if (!pcm_alsa_menu_click())
+    {
+        size_t sz = 0;
+        const void *buf = pcm_alsa_click_samples(&sz);
+        if (buf && sz > 0)
+        {
+            mixer_channel_stop(PCM_MIXER_CHAN_BEEP);
+            mixer_channel_set_amplitude(PCM_MIXER_CHAN_BEEP, MIX_AMP_UNITY);
+            mixer_channel_play_data(PCM_MIXER_CHAN_BEEP, NULL, buf, sz);
+        }
     }
 }
 

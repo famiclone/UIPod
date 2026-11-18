@@ -41,7 +41,6 @@
 #include "statusbar-skinned.h"
 #include "debug.h"
 #include "line.h"
-#include "uipod_svg.h"
 #include "uipod_rs_ui.h"
 
 #define ICON_PADDING 3
@@ -90,16 +89,11 @@ static bool is_bracket_toggle(const unsigned char *s)
     return s && s[0] == '[' && s[1] && s[2] == ']' && s[3] == '\0';
 }
 
-/* Width of an indicator. A toggle uses its SVG icon width (or falls back to
- * "[x]" metrics so "[x]" and "[ ]" measure identically without jitter). */
 static int list_indicator_width(struct screen *d, const unsigned char *s)
 {
     int wl, wx, wr, h;
     if (is_bracket_toggle(s))
     {
-        const struct uipod_svg_icon *tog = uipod_svg_toggle(s[1] != ' ');
-        if (tog)
-            return tog->width;
         d->getstringsize((const unsigned char *)"[", &wl, &h);
         d->getstringsize((const unsigned char *)"x", &wx, &h);
         d->getstringsize((const unsigned char *)"]", &wr, &h);
@@ -123,36 +117,14 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
     const char *dsp_text = list_info->dsp_text;
     struct viewport *vp = list_info->vp;
 
-    int icon_adv = (!is_title && list_info->svg_icon && list_info->svg_icon->alpha) ?
-                (list_info->svg_icon->width + UIPOD_SVG_ICON_GAP) : 0;
-
-    /* UIPod: no stock list icons.  Only the selection cursor (a cursor-style list,
-     * not a show_icons icon) draws a stock glyph; media lists may draw an SVG
-     * file-type icon before the filename. */
     if (is_title)
         display->put_line(x, y, linedes, "$t", dsp_text);
     else if (show_cursor)
-        display->put_line(x, y, linedes, "$*s$"ICON_PADDING_S"I$*t", item_indent + icon_adv,
+        display->put_line(x, y, linedes, "$*s$"ICON_PADDING_S"I$*t", item_indent,
                 is_selected ? Icon_Cursor : Icon_NOICON, item_offset, dsp_text);
     else
-        display->put_line(x, y, linedes, "$*s$*t", item_indent + icon_adv, item_offset, dsp_text);
+        display->put_line(x, y, linedes, "$*s$*t", item_indent, item_offset, dsp_text);
 
-    if (!is_title && list_info->svg_icon)
-    {
-        int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
-        int iy = y + (lh - list_info->svg_icon->height) / 2;
-        uipod_svg_draw(display, list_info->svg_icon, x + item_indent, iy,
-                         (linedes->style & STYLE_INVERT) != 0);
-    }
-
-    /* UIPod: [x]/[ ] toggle or ">" arrow in the right gutter (indic_gutter)
-     * that list_draw reserved.  The name was drawn in a narrowed viewport (so the
-     * marquee clips there); widen back over the gutter and extend the row's bar
-     * across it on EVERY row -- an empty put_line == style_line -- so the
-     * highlight spans the full width even on rows carrying no glyph.  Draw the
-     * glyph on top only when there is one; the scroll engine repaints just the
-     * name column, so bar+glyph persist under the marquee.  Toggle brackets sit
-     * at fixed positions so [x]/[ ] don't jitter. */
     if (list_info->indic_gutter > 0 && !is_title)
     {
         vp->width += list_info->indic_gutter;
@@ -163,38 +135,25 @@ static void _default_listdraw_fn(struct list_putlineinfo_t *list_info)
             const unsigned char *g = (const unsigned char *)
                         (list_info->indicator ? list_info->indicator : ">");
             int lh = (linedes->height > 0) ? linedes->height : display->getcharheight();
-            const struct uipod_svg_icon *tog =
-                        is_bracket_toggle(g) ? uipod_svg_toggle(g[1] != ' ') : NULL;
-            if (tog)
+            int w, h;
+            display->getstringsize(g, &w, &h);
+            int yy = y + (lh - h) / 2;
+            int x0 = vp->width - list_indicator_width(display, g) - 6;
+            display->set_drawmode((linedes->style & STYLE_INVERT) ?
+                                  (DRMODE_SOLID | DRMODE_INVERSEVID) : DRMODE_FG);
+            if (is_bracket_toggle(g))
             {
-                int x0 = vp->width - tog->width - 16;
-                int yy = y + (lh - tog->height) / 2;
-                uipod_svg_draw(display, tog, x0, yy,
-                                 (linedes->style & STYLE_INVERT) != 0);
+                int wl, wx, hh;
+                display->getstringsize((const unsigned char *)"[", &wl, &hh);
+                display->getstringsize((const unsigned char *)"x", &wx, &hh);
+                char mid[2] = { (char)g[1], '\0' };
+                display->putsxy(x0, yy, (const unsigned char *)"[");
+                display->putsxy(x0 + wl, yy, (const unsigned char *)mid);
+                display->putsxy(x0 + wl + wx, yy, (const unsigned char *)"]");
             }
             else
-            {
-                int w, h;
-                display->getstringsize(g, &w, &h);
-                int yy = y + (lh - h) / 2;
-                int x0 = vp->width - list_indicator_width(display, g) - 6;
-                /* inverse-video on the inverse selection bar so the glyph stays visible */
-                display->set_drawmode((linedes->style & STYLE_INVERT) ?
-                                      (DRMODE_SOLID | DRMODE_INVERSEVID) : DRMODE_FG);
-                if (is_bracket_toggle(g))
-                {
-                    int wl, wx, hh;
-                    display->getstringsize((const unsigned char *)"[", &wl, &hh);
-                    display->getstringsize((const unsigned char *)"x", &wx, &hh);
-                    char mid[2] = { (char)g[1], '\0' };
-                    display->putsxy(x0, yy, (const unsigned char *)"[");
-                    display->putsxy(x0 + wl, yy, (const unsigned char *)mid);
-                    display->putsxy(x0 + wl + wx, yy, (const unsigned char *)"]");
-                }
-                else
-                    display->putsxy(x0, yy, g);
-                display->set_drawmode(DRMODE_SOLID);
-            }
+                display->putsxy(x0, yy, g);
+            display->set_drawmode(DRMODE_SOLID);
         }
         vp->width -= list_info->indic_gutter;
     }
@@ -386,15 +345,11 @@ void list_draw(struct screen *display, struct gui_synclist *list)
             line_indent *= character_width;
         line_indent += indent;
 
-        const struct uipod_svg_icon *svg_icon = list->callback_get_item_svg_icon ?
-                    list->callback_get_item_svg_icon(i, list->data) : NULL;
-        int icon_adv = svg_icon ? (svg_icon->width + UIPOD_SVG_ICON_GAP) : 0;
-
         /* position the string at the correct offset place */
         int item_width,h;
         display->getstringsize(entry_name, &item_width, &h);
         item_offset = gui_list_get_item_offset(list, item_width,
-                line_indent + icon_adv, display, list_text_vp);
+                line_indent, display, list_text_vp);
 
         /* draw the selected line */
         if(
@@ -464,7 +419,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
                     list->callback_get_item_chevron(i, list->data) : false;
         list_info.indicator = list->callback_get_item_indicator ?
                     list->callback_get_item_indicator(i, list->data) : NULL;
-        list_info.svg_icon = svg_icon;
+        list_info.svg_icon = NULL;
 
         callback_draw_item(&list_info);
     }

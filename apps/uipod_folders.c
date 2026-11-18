@@ -62,6 +62,7 @@
 #include "uipod_library.h"      /* Shuffle All's track set */
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_plugins.h"
 #include "uipod_rs_ui.h"
 #include "uipod_video.h"
 #include "uipod_svg.h"
@@ -566,6 +567,13 @@ static int picker_poll(struct uipod_page *self, int timeout)
     return action;
 }
 
+static bool is_playable_audio_name(const char *nm)
+{
+    if (!nm || !nm[0] || filetype_is_video(nm) || uipod_plugins_can_open_file(nm))
+        return false;
+    return filetype_get_attr(nm) == FILE_ATTR_AUDIO;
+}
+
 static bool folder_play_or_ctx_track(struct picker_page *p, int sel,
                                      const char *title, bool is_ctx)
 {
@@ -577,7 +585,7 @@ static bool folder_play_or_ctx_track(struct picker_page *p, int sel,
         if (item_isdir(p, i))
             continue;
         const char *nm = item_name(p, i);
-        if (!nm || !nm[0] || filetype_is_video(nm))
+        if (!is_playable_audio_name(nm))
             continue;
         if (i == sel)
             track_sel = track_cnt;
@@ -597,7 +605,7 @@ static bool folder_play_or_ctx_track(struct picker_page *p, int sel,
         if (item_isdir(p, i))
             continue;
         const char *nm = item_name(p, i);
-        if (!nm || !nm[0] || filetype_is_video(nm))
+        if (!is_playable_audio_name(nm))
             continue;
         char full[FPATH_LEN];
         path_append(full, p->curdir, nm, sizeof(full));
@@ -644,6 +652,18 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                 char path[FPATH_LEN];
                 path_append(path, p->curdir, iname, sizeof(path));
                 browse_save_pos(p);   /* return from Now Playing lands back here */
+                if (uipod_plugins_can_open_file(path))
+                {
+                    tree_unlock_cache(p->mctx);
+                    uipod_plugins_open_file(path);
+                    tree_lock_cache(p->mctx);
+                    if (uipod_home_pending)
+                    {
+                        p->base.home = true;
+                        return UIPOD_PAGE_DONE;
+                    }
+                    return UIPOD_PAGE_STAY;
+                }
                 if (p->video || filetype_is_video(iname))
                 {
                     /* A cut, not a slide: the video leaves on black. */
@@ -841,7 +861,7 @@ bool uipod_folder_pick(char *out, size_t out_len)
 
 static bool browse_run(const char *root, const char *start, int title_lang,
                        struct browse_pos *pos, bool show_empty, bool video,
-                       int *result);
+                       bool show_all, int *result);
 
 struct folders_page
 {
@@ -989,7 +1009,7 @@ static enum uipod_page_result folders_page_on_action(struct uipod_page *self,
                 }
                 int r = GO_TO_ROOT;
                 browse_run(dir, dir, cat->browse_lang, &cat->pos, true,
-                           cat->video, &r);
+                           cat->video, false, &r);
                 if (r == GO_TO_WPS)
                 {
                     cat->active_in_dir = true;
@@ -1127,7 +1147,7 @@ static const char *folder_resolve_root(struct folder_category *cat)
  * result lands in *result. */
 static bool browse_run(const char *root, const char *start, int title_lang,
                        struct browse_pos *pos, bool show_empty, bool video,
-                       int *result)
+                       bool show_all, int *result)
 {
     struct tree_context *c = tree_get_context();
     static int browse_filter;
@@ -1138,7 +1158,7 @@ static bool browse_run(const char *root, const char *start, int title_lang,
     char  saved_last[sizeof(global_status.browse_last_folder)];
     memcpy(saved_last, global_status.browse_last_folder, sizeof(saved_last));
 
-    browse_filter  = video ? SHOW_VIDEO : SHOW_MUSIC;
+    browse_filter  = show_all ? SHOW_ALL : (video ? SHOW_VIDEO : SHOW_MUSIC);
     c->dirfilter   = &browse_filter;    /* dirs + files, folders-first */
     c->sort_dir    = SORT_ALPHA;
     c->is_browsing = false;
@@ -1240,7 +1260,7 @@ static int folder_browse(struct folder_category *cat)
             start_sel = idx;
             int r = GO_TO_ROOT;
             browse_run(cat->folders[idx], cat->folders[idx], cat->browse_lang,
-                       &cat->pos, true, cat->video, &r);
+                       &cat->pos, true, cat->video, false, &r);
             if (r == GO_TO_WPS)
             {
                 cat->active_in_dir = true;
@@ -1323,7 +1343,7 @@ int uipod_files_browse(void *param)
     struct browse_pos pos = {0};   /* fresh each time: open at the card */
     int r = GO_TO_ROOT;
     browse_run("/", dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/",
-               LANG_UIPOD_BROWSE, &pos, true, false, &r);
+               LANG_UIPOD_BROWSE, &pos, true, false, true, &r);
     uipod_gpu_set_header_source(prev_src);
     return r;
 }

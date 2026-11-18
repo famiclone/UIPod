@@ -530,6 +530,7 @@ struct user_settings
 
     int afr_enabled;
     bool mono_album_art;
+    bool menu_click;
     int transition_style;
 
 #if defined(BUTTON_REC) || \
