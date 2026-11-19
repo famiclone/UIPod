@@ -603,6 +603,7 @@ mod tests {
             ("libsnake", "snake.uipod"),
             ("libtetris", "tetris.uipod"),
             ("libsound_racer", "sound_racer.uipod"),
+            ("libmusic_quiz", "music_quiz.uipod"),
             ("libstopwatch", "stopwatch.uipod"),
             ("libtext_viewer", "text_viewer.uipod"),
             ("liblcd_plasma", "lcd_plasma.uipod"),
@@ -613,6 +614,7 @@ mod tests {
             || !target_debug.join(format!("libsnake.{ext}")).exists()
             || !target_debug.join(format!("libtetris.{ext}")).exists()
             || !target_debug.join(format!("libsound_racer.{ext}")).exists()
+            || !target_debug.join(format!("libmusic_quiz.{ext}")).exists()
         {
             return;
         }
@@ -631,11 +633,16 @@ mod tests {
         let mut reg = PluginRegistry::new();
         reg.configure_dirs(&tmp_dir, Path::new(""));
         let count = reg.rescan();
-        assert_eq!(count, 8);
-        assert_eq!(reg.by_category(PluginCategory::Game).len(), 5);
+        assert_eq!(count, 9);
+        assert_eq!(reg.by_category(PluginCategory::Game).len(), 6);
         assert_eq!(reg.by_category(PluginCategory::App).len(), 1);
         assert_eq!(reg.by_category(PluginCategory::Demo).len(), 1);
         assert_eq!(reg.by_category(PluginCategory::Viewer).len(), 1);
+
+        let mq = reg.find_by_id("music_quiz").unwrap();
+        assert_eq!(mq.display_name(false), "Music Quiz");
+        assert_eq!(mq.display_name(true), "Вгадай мелодію");
+        assert_eq!(mq.kind, PluginKind::MenuDriven);
 
         let sr = reg.find_by_id("sound_racer").unwrap();
         assert_eq!(sr.display_name(false), "Sound Racer");
@@ -750,6 +757,24 @@ mod tests {
         unsafe extern "C" fn m_apcm(_: u32, _: *mut i16, _: usize) -> usize {
             0
         }
+        unsafe extern "C" fn m_aplay(_: *const c_char, _: u32) -> bool {
+            false
+        }
+        extern "C" fn m_libcnt() -> usize {
+            0
+        }
+        unsafe extern "C" fn m_libat(
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut u32,
+        ) -> bool {
+            false
+        }
 
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
@@ -781,6 +806,10 @@ mod tests {
             audio_seek_ms: m_aseek,
             audio_current_track: m_atrack,
             audio_read_pcm: m_apcm,
+            audio_play_track: m_aplay,
+            audio_stop: m_anop,
+            library_track_count: m_libcnt,
+            library_track_at: m_libat,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");

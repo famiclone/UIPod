@@ -30,6 +30,7 @@
 #include "surround.h"
 #include "afr.h"
 #include "pbe.h"
+#include "texture_warp.h"
 #ifdef HAVE_PITCHCONTROL
 #include "tdspeed.h"
 #endif

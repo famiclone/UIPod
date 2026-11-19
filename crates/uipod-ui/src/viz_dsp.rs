@@ -28,6 +28,10 @@ pub struct VizAudioFrame {
     pub beat_dir: f32,
     pub beat_phase: f32,
     pub stereo_width: f32,
+    pub vu_l: f32,
+    pub vu_r: f32,
+    pub vu_peak_l: f32,
+    pub vu_peak_r: f32,
     pub beat_hit: bool,
 }
 
@@ -61,6 +65,14 @@ pub struct VizDsp {
     mid_att: f32,
     treb_att: f32,
     stereo_env: f32,
+
+    // Dual-channel analog VU galvanometer state (L / R)
+    vu_pos_l: f32,
+    vu_vel_l: f32,
+    vu_pos_r: f32,
+    vu_vel_r: f32,
+    vu_peak_l: f32,
+    vu_peak_r: f32,
 
     // Timing & beat state
     time: f32,
@@ -140,6 +152,12 @@ impl VizDsp {
             mid_att: 0.0,
             treb_att: 0.0,
             stereo_env: 0.0,
+            vu_pos_l: 0.0,
+            vu_vel_l: 0.0,
+            vu_pos_r: 0.0,
+            vu_vel_r: 0.0,
+            vu_peak_l: 0.0,
+            vu_peak_r: 0.0,
             time: 0.0,
             music_time: 0.0,
             beat_pulse: 0.0,
@@ -178,6 +196,10 @@ impl VizDsp {
             self.mid_att *= att_rel;
             self.treb_att *= att_rel;
             self.stereo_env *= release;
+            Self::step_vu_needle(&mut self.vu_pos_l, &mut self.vu_vel_l, 0.0, dt);
+            Self::step_vu_needle(&mut self.vu_pos_r, &mut self.vu_vel_r, 0.0, dt);
+            self.vu_peak_l *= release;
+            self.vu_peak_r *= release;
             self.music_time += dt * 0.25;
 
             for x in 0..AUDIO_TEX_W {
@@ -211,16 +233,24 @@ impl VizDsp {
                 beat_dir: self.beat_dir,
                 beat_phase: (self.beat_count & 7) as f32,
                 stereo_width: self.stereo_env,
+                vu_l: self.vu_pos_l,
+                vu_r: self.vu_pos_r,
+                vu_peak_l: self.vu_peak_l,
+                vu_peak_r: self.vu_peak_r,
                 beat_hit: false,
             };
         }
 
-        // 1. Unpack stereo PCM, compute DC offset, RMS, and stereo width
+        // 1. Unpack stereo PCM, compute DC offset, per-channel L/R RMS & peaks, and stereo width
         let inv_i16 = 1.0 / 32768.0;
         let mut mono_buf = [0.0f32; FFT_SIZE];
         let mut dc_sum = 0.0f32;
         let mut sq_sum = 0.0f32;
         let mut side_sq_sum = 0.0f32;
+        let mut sq_l = 0.0f32;
+        let mut sq_r = 0.0f32;
+        let mut pk_l = 0.0f32;
+        let mut pk_r = 0.0f32;
 
         // Zero-pad front if fewer than 1024 frames available, placing newest at the end
         let pad = FFT_SIZE - frames;
@@ -233,17 +263,42 @@ impl VizDsp {
             dc_sum += m;
             sq_sum += m * m;
             side_sq_sum += s * s;
+            sq_l += l * l;
+            sq_r += r * r;
+            pk_l = pk_l.max(l.abs());
+            pk_r = pk_r.max(r.abs());
         }
-        let dc = dc_sum / (frames as f32);
-        let rms = (sq_sum / (frames as f32)).sqrt();
-        let side_rms = (side_sq_sum / (frames as f32)).sqrt();
+        let inv_frames = 1.0 / (frames as f32);
+        let dc = dc_sum * inv_frames;
+        let rms = (sq_sum * inv_frames).sqrt();
+        let side_rms = (side_sq_sum * inv_frames).sqrt();
+        let rms_l = (sq_l * inv_frames).sqrt();
+        let rms_r = (sq_r * inv_frames).sqrt();
 
-        // Smooth AGC gain for waveform so quiet and loud tracks both draw crisp oscilloscopes
+        // Smooth AGC gain for waveform & VU reference (0 VU tracks average program level)
         let agc_alpha = 1.0 - (-dt * 1.8).exp();
         if rms > 0.002 {
             self.wave_rms_avg += (rms - self.wave_rms_avg) * agc_alpha;
         }
         let wave_gain = (0.34 / self.wave_rms_avg.max(0.04)).clamp(0.65, 4.5);
+        let vu_gain = (0.28 / self.wave_rms_avg.max(0.035)).clamp(0.55, 4.2);
+
+        let target_vu_l = Self::rms_to_vu_dial(rms_l * vu_gain);
+        let target_vu_r = Self::rms_to_vu_dial(rms_r * vu_gain);
+        Self::step_vu_needle(&mut self.vu_pos_l, &mut self.vu_vel_l, target_vu_l, dt);
+        Self::step_vu_needle(&mut self.vu_pos_r, &mut self.vu_vel_r, target_vu_r, dt);
+
+        let pk_decay = (-dt * 4.8).exp();
+        self.vu_peak_l = if pk_l * vu_gain > 1.08 && rms_l > 0.003 {
+            1.0
+        } else {
+            self.vu_peak_l * pk_decay
+        };
+        self.vu_peak_r = if pk_r * vu_gain > 1.08 && rms_r > 0.003 {
+            1.0
+        } else {
+            self.vu_peak_r * pk_decay
+        };
 
         let raw_width = (side_rms / (rms + 0.005)).clamp(0.0, 1.5);
         self.stereo_env += (raw_width - self.stereo_env) * (1.0 - (-dt * 8.0).exp());
@@ -354,7 +409,7 @@ impl VizDsp {
         let rel_mid = (raw_mid / self.avg_mid.max(0.0005)).clamp(0.0, 3.0) * silence_gate;
         let rel_treb = (raw_treb / self.avg_treb.max(0.00025)).clamp(0.0, 3.0) * silence_gate;
 
-        let atk = 1.0 - (-dt * 32.0).exp();
+        let atk = 1.0 - (-dt * 72.0).exp();
         let rel = 1.0 - (-dt * 7.5).exp();
         let att_a = 1.0 - (-dt * 3.2).exp();
 
@@ -393,7 +448,7 @@ impl VizDsp {
         let f_min = 38.0f32;
         let f_max = (0.45 * sr).clamp(8_000.0, 16_000.0);
         let log_ratio = (f_max / f_min).ln();
-        let spec_atk = 1.0 - (-dt * 26.0).exp();
+        let spec_atk = 1.0 - (-dt * 68.0).exp();
         let spec_rel = 1.0 - (-dt * 9.0).exp();
 
         for x in 0..AUDIO_TEX_W {
@@ -446,7 +501,47 @@ impl VizDsp {
             beat_dir: self.beat_dir,
             beat_phase: ((self.beat_count & 7) as f32) + (PI * 0.25),
             stereo_width: self.stereo_env,
+            vu_l: self.vu_pos_l,
+            vu_r: self.vu_pos_r,
+            vu_peak_l: self.vu_peak_l,
+            vu_peak_r: self.vu_peak_r,
             beat_hit,
+        }
+    }
+
+    #[inline]
+    fn rms_to_vu_dial(norm_rms: f32) -> f32 {
+        if norm_rms <= 0.002 {
+            return 0.0;
+        }
+        let db = 20.0 * norm_rms.log10();
+        if db <= 0.0 {
+            // -26 dB .. 0 dB -> 0.00 .. 0.72 (0 VU mark at 72% arc)
+            (((db + 26.0) / 26.0).clamp(0.0, 1.0)).powf(1.32) * 0.72
+        } else {
+            // 0 dB .. +3.5 dB -> 0.72 .. 1.00 (redline overload zone)
+            0.72 + (db / 3.5).clamp(0.0, 1.0) * 0.28
+        }
+    }
+
+    #[inline]
+    fn step_vu_needle(pos: &mut f32, vel: &mut f32, target: f32, dt: f32) {
+        let h = dt * 0.5;
+        for _ in 0..2 {
+            let acc = (target - *pos) * 380.0 - *vel * 29.0;
+            *vel += acc * h;
+            *pos += *vel * h;
+            if *pos < 0.0 {
+                *pos = 0.0;
+                if *vel < 0.0 {
+                    *vel = 0.0;
+                }
+            } else if *pos > 1.03 {
+                *pos = 1.03;
+                if *vel > 0.0 {
+                    *vel *= -0.25;
+                }
+            }
         }
     }
 
@@ -550,5 +645,43 @@ mod tests {
         }
         assert!(paused.bass < 0.05 && paused.beat_pulse < 0.01);
         assert!(paused.music_time.is_finite());
+    }
+
+    #[test]
+    fn stereo_vu_meter_tracks_left_and_right_channels_independently() {
+        let sr = 44_100;
+        let mut dsp = VizDsp::new();
+        let mut left_only = Vec::with_capacity(1024 * 2);
+        for i in 0..1024 {
+            let s = ((TAU * 440.0 * (i as f32) / (sr as f32)).sin() * 0.65 * 32767.0) as i16;
+            left_only.push(s);
+            left_only.push(0);
+        }
+        let mut frame = VizAudioFrame::default();
+        for _ in 0..20 {
+            frame = dsp.update(&left_only, sr, 1.0 / 60.0);
+        }
+        assert!(
+            frame.vu_l > 0.55 && frame.vu_r < 0.02,
+            "expected Left VU deflection only, got L={} R={}",
+            frame.vu_l,
+            frame.vu_r
+        );
+
+        let mut right_only = Vec::with_capacity(1024 * 2);
+        for i in 0..1024 {
+            let s = ((TAU * 440.0 * (i as f32) / (sr as f32)).sin() * 0.65 * 32767.0) as i16;
+            right_only.push(0);
+            right_only.push(s);
+        }
+        for _ in 0..35 {
+            frame = dsp.update(&right_only, sr, 1.0 / 60.0);
+        }
+        assert!(
+            frame.vu_r > 0.55 && frame.vu_l < 0.05,
+            "expected Right VU deflection only, got L={} R={}",
+            frame.vu_l,
+            frame.vu_r
+        );
     }
 }

@@ -8,6 +8,7 @@
 //!   dithering, and maps every pixel strictly onto the active UIPod theme's 4 shades
 //!   (`bg -> fg1/fg2 -> fg`), fading cleanly into `theme.bg` during transitions.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
 
 use glow::HasContext;
@@ -63,6 +64,16 @@ pub const VIZ_PRESETS: &[VizPresetInfo] = &[
         id: "star_warp",
         name_en: "Star Warp",
         name_uk: "Зоряний стрибок",
+    },
+    VizPresetInfo {
+        id: "vu_meter",
+        name_en: "Analog VU Meter",
+        name_uk: "Стерео VU-метр",
+    },
+    VizPresetInfo {
+        id: "cassette_deck",
+        name_en: "Cassette Deck",
+        name_uk: "Касетна дека",
     },
 ];
 
@@ -120,6 +131,8 @@ struct SceneProgram {
     u_bands: Option<glow::UniformLocation>,
     u_att: Option<glow::UniformLocation>,
     u_beat: Option<glow::UniformLocation>,
+    u_vu: Option<glow::UniformLocation>,
+    u_transport: Option<glow::UniformLocation>,
 }
 
 struct PresentProgram {
@@ -142,10 +155,14 @@ pub struct VizEngine {
     fbo_coarse: PingPongPair, // 256x192 (4x4 macro-pixels on 1024x768)
     fbo_fine: PingPongPair,   // 512x384 (2x2 fine pixels on 1024x768)
     scenes: Vec<SceneProgram>,
+    custom_scene: Option<SceneProgram>,
+    use_custom_scene: bool,
     present: PresentProgram,
     active_preset: usize,
     fine_grain: bool,
     needs_clear: bool,
+    reel_ang_l: f32,
+    reel_ang_r: f32,
 }
 
 const SHARED_VS: &str = r#"
@@ -170,10 +187,12 @@ varying vec2 v_uv;
 uniform sampler2D u_prev;
 uniform sampler2D u_audio;
 uniform vec2 u_res;
-uniform vec2 u_time;   // x = wall_time, y = music_time
-uniform vec4 u_bands;  // x = sub_bass, y = bass, z = mid, w = treb
-uniform vec4 u_att;    // x = bass_att, y = mid_att, z = treb_att, w = stereo_width
-uniform vec4 u_beat;   // x = beat_pulse, y = beat_dir, z = beat_phase, w = reset_flag
+uniform vec2 u_time;      // x = wall_time, y = music_time
+uniform vec4 u_bands;     // x = sub_bass, y = bass, z = mid, w = treb
+uniform vec4 u_att;       // x = bass_att, y = mid_att, z = treb_att, w = stereo_width
+uniform vec4 u_beat;      // x = beat_pulse, y = beat_dir, z = beat_phase, w = reset_flag
+uniform vec4 u_vu;        // x = vu_l, y = vu_r, z = peak_l, w = peak_r
+uniform vec4 u_transport; // x = track_progress, y = reel_ang_l, z = reel_ang_r, w = transport_speed
 
 const float PI = 3.14159265;
 const float TAU = 6.28318530;
@@ -552,6 +571,442 @@ void main() {
 }
 "#;
 
+// 8. Analog VU Meter — Classic twin rectangular stereo galvanometer dials (L / R) + PEAK lamps
+const FS_VU_METER: &str = r#"
+float sd_rbox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+float sd_seg(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+float draw_glyph_vu(vec2 p) {
+    // Crisp vector "V U" centered at origin
+    float d_v1 = sd_seg(p, vec2(-0.086, 0.033), vec2(-0.050, -0.033));
+    float d_v2 = sd_seg(p, vec2(-0.050, -0.033), vec2(-0.014, 0.033));
+    float d_u1 = sd_seg(p, vec2(0.018, 0.033), vec2(0.018, -0.020));
+    float d_u2 = sd_seg(p, vec2(0.080, 0.033), vec2(0.080, -0.020));
+    float d_u3 = sd_seg(p, vec2(0.018, -0.025), vec2(0.080, -0.025));
+    float d = min(min(d_v1, d_v2), min(d_u1, min(d_u2, d_u3)));
+    return smoothstep(0.012, 0.004, d);
+}
+
+float draw_chan_glyph(vec2 p, float is_right) {
+    if (is_right < 0.5) {
+        // 'L'
+        float d1 = sd_seg(p, vec2(-0.024, 0.036), vec2(-0.024, -0.036));
+        float d2 = sd_seg(p, vec2(-0.024, -0.036), vec2(0.026, -0.036));
+        return smoothstep(0.013, 0.004, min(d1, d2));
+    } else {
+        // 'R'
+        float d1 = sd_seg(p, vec2(-0.026, 0.036), vec2(-0.026, -0.036));
+        float d2 = sd_seg(p, vec2(-0.026, 0.036), vec2(0.020, 0.036));
+        float d3 = sd_seg(p, vec2(0.020, 0.036), vec2(0.020, 0.002));
+        float d4 = sd_seg(p, vec2(-0.026, 0.002), vec2(0.020, 0.002));
+        float d5 = sd_seg(p, vec2(-0.002, 0.002), vec2(0.026, -0.036));
+        float d = min(min(d1, d2), min(d3, min(d4, d5)));
+        return smoothstep(0.013, 0.004, d);
+    }
+}
+
+float render_single_vu(vec2 p, float cx, float vu_val, float pk_val, float is_right) {
+    // Wide landscape rectangular window centered vertically (y = 0.0), 1.5x shorter than square
+    vec2 wc = vec2(cx, 0.0);
+    vec2 half_sz = vec2(0.585, 0.363);
+    vec2 q = p - wc;
+    float d_win = sd_rbox(q, half_sz, 0.05);
+
+    if (d_win > 0.0) {
+        // Recessed bezel frame outside the glass dial
+        float rim = smoothstep(0.038, 0.004, d_win) * 0.92;
+        return rim;
+    }
+
+    // Inside analog glass dial window: warm backlit radial lamp glow + recessed top/side shadow
+    float inner_bevel = smoothstep(-0.042, 0.0, d_win) * (0.42 + 0.25 * clamp(q.y + 0.22, 0.0, 1.0));
+    float lamp_dist = length((q - vec2(0.0, -0.10)) * vec2(0.80, 1.35));
+    float lamp = (1.0 - smoothstep(0.08, 0.68, lamp_dist)) * (0.17 + 0.09 * pk_val);
+    float luma = max(lamp, inner_bevel);
+
+    // Panoramic galvanometer pivot sits below the lower window frame
+    vec2 piv = vec2(cx, -0.66);
+    vec2 rel = p - piv;
+    float rad = length(rel);
+    float ang = atan(rel.x, rel.y); // 0 = vertical 12 o'clock
+    float ang_max = 0.56;
+    float u_arc = (ang + ang_max) / (2.0 * ang_max); // 0.0 (-20 dB) .. 1.0 (+3 dB)
+
+    if (u_arc >= -0.01 && u_arc <= 1.01) {
+        // Main baseline arc (r = 0.84) + inner % modulation sub-arc (r = 0.77 up to 0 VU = 0.72)
+        float main_arc = smoothstep(0.010, 0.003, abs(rad - 0.84)) * 0.80;
+        float sub_arc = smoothstep(0.008, 0.002, abs(rad - 0.77)) * step(u_arc, 0.725) * 0.48;
+        luma = max(luma, max(main_arc, sub_arc));
+
+        // Classic thick +3 dB overload band (0.72 .. 1.00, r = 0.845 .. 0.885)
+        if (u_arc >= 0.72 && u_arc <= 1.005) {
+            float red_band = smoothstep(0.022, 0.013, abs(rad - 0.864)) * 0.96;
+            luma = max(luma, red_band);
+        }
+
+        // 13 graduated radial dB ticks along the panoramic scale arc
+        float tick_idx = floor(u_arc * 12.0 + 0.5);
+        float tick_u = tick_idx / 12.0;
+        float is_major = (mod(tick_idx, 2.0) < 0.5 || abs(tick_idx - 9.0) < 0.5) ? 1.0 : 0.0;
+        float tick_len = mix(0.038, 0.068, is_major);
+        float tick_ang = mix(-ang_max, ang_max, clamp(tick_u, 0.0, 1.0));
+        float arc_dist = abs(ang - tick_ang) * rad;
+        float r_lo = 0.84;
+        float r_hi = 0.84 + tick_len;
+        if (rad >= r_lo - 0.005 && rad <= r_hi) {
+            float tw = mix(0.007, 0.012, is_major);
+            float tk = smoothstep(tw, tw * 0.25, arc_dist) * mix(0.68, 0.95, is_major);
+            luma = max(luma, tk);
+        }
+    }
+
+    // Center "VU" legend & lower-left L / R channel badge
+    float vu_lbl = draw_glyph_vu(p - vec2(cx, -0.075)) * 0.72;
+    vec2 ch_pos = p - vec2(cx - 0.455, -0.235);
+    float ch_box = smoothstep(0.010, 0.003, abs(sd_rbox(ch_pos, vec2(0.060, 0.056), 0.016))) * 0.65;
+    float ch_lbl = draw_chan_glyph(ch_pos, is_right) * 0.92;
+    luma = max(luma, max(vu_lbl, max(ch_box, ch_lbl)));
+
+    // Upper-right PEAK overload lamp jewel
+    vec2 pk_pos = p - vec2(cx + 0.465, 0.245);
+    float pk_r = length(pk_pos);
+    float pk_ring = smoothstep(0.011, 0.003, abs(pk_r - 0.046)) * 0.82;
+    float pk_core = smoothstep(0.038, 0.013, pk_r) * clamp(0.18 + pk_val * 0.95, 0.0, 1.0);
+    float pk_halo = exp(-pk_r * 18.0) * pk_val * 0.55;
+    luma = clamp(max(luma, max(pk_ring, pk_core)) + pk_halo, 0.0, 1.0);
+
+    // Physical needle + dial cast shadow
+    float n_ang = mix(-ang_max, ang_max, clamp(vu_val, 0.0, 1.03));
+    vec2 n_dir = vec2(sin(n_ang), cos(n_ang));
+    vec2 n_a = piv + n_dir * 0.385;
+    vec2 n_b = piv + n_dir * 0.912;
+
+    // Soft offset shadow cast onto the backlit scale card
+    float d_shad = sd_seg(p - vec2(0.018, -0.022), n_a, n_b);
+    luma = max(luma, smoothstep(0.018, 0.005, d_shad) * 0.36);
+
+    // Tapered high-contrast galvanometer needle
+    float proj = clamp(dot(p - n_a, n_dir) / 0.527, 0.0, 1.0);
+    float nw = mix(0.015, 0.007, proj);
+    float d_needle = sd_seg(p, n_a, n_b);
+    float needle = smoothstep(nw, nw * 0.25, d_needle);
+
+    // Shallow bottom movement coil dome & concentric trim ring
+    float cap_body = smoothstep(0.385, 0.372, rad) * 0.88;
+    float cap_rim = smoothstep(0.013, 0.004, abs(rad - 0.385)) * 1.0;
+    float cap_inner = smoothstep(0.009, 0.003, abs(rad - 0.340)) * 0.65;
+
+    return clamp(max(luma, max(needle, max(cap_body, max(cap_rim, cap_inner)))), 0.0, 1.0);
+}
+
+void main() {
+    vec2 p = aspect_p(v_uv);
+
+    // Brushed metallic stereo faceplate chassis
+    float brush = 0.20 + 0.04 * sin(p.y * 110.0) + 0.02 * cos(p.x * 18.0);
+    float luma = brush;
+
+    // Render vertically centered Left (x < 0) and Right (x > 0) rectangular VU housings
+    if (abs(p.y) < 0.42) {
+        if (p.x < 0.0) {
+            float m_l = render_single_vu(p, -0.635, u_vu.x, u_vu.z, 0.0);
+            if (sd_rbox(p - vec2(-0.635, 0.0), vec2(0.623, 0.401), 0.088) < 0.0) {
+                luma = m_l;
+            }
+        } else {
+            float m_r = render_single_vu(p, 0.635, u_vu.y, u_vu.w, 1.0);
+            if (sd_rbox(p - vec2(0.635, 0.0), vec2(0.623, 0.401), 0.088) < 0.0) {
+                luma = m_r;
+            }
+        }
+    }
+
+    // Subtle needle motion persistence
+    float prev_m = prev_scene(v_uv).r;
+    luma = clamp(max(luma, prev_m * 0.28), 0.0, 1.0);
+    gl_FragColor = vec4(vec3(luma), 1.0);
+}
+"#;
+
+// 9. Cassette Deck — Tape-deck viewing window with spinning 6-spline reels + 28-segment LED bridge
+const FS_CASSETTE: &str = r#"
+float sd_rbox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+float sd_seg(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+float draw_chan_mini(vec2 p, float is_right) {
+    if (is_right < 0.5) {
+        float d1 = sd_seg(p, vec2(-0.020, 0.032), vec2(-0.020, -0.032));
+        float d2 = sd_seg(p, vec2(-0.020, -0.032), vec2(0.022, -0.032));
+        return smoothstep(0.011, 0.003, min(d1, d2));
+    } else {
+        float d1 = sd_seg(p, vec2(-0.022, 0.032), vec2(-0.022, -0.032));
+        float d2 = sd_seg(p, vec2(-0.022, 0.032), vec2(0.016, 0.032));
+        float d3 = sd_seg(p, vec2(0.016, 0.032), vec2(0.016, 0.002));
+        float d4 = sd_seg(p, vec2(-0.022, 0.002), vec2(0.016, 0.002));
+        float d5 = sd_seg(p, vec2(-0.002, 0.002), vec2(0.022, -0.032));
+        float d = min(min(d1, d2), min(d3, min(d4, d5)));
+        return smoothstep(0.011, 0.003, d);
+    }
+}
+
+// Renders one cassette reel (magnetic tape pancake + 3-slot hub collar + 6-spline teeth + spindle)
+// Returns vec2(luma, alpha_mask)
+vec2 render_reel(vec2 p, vec2 center, float r_pack, float reel_ang) {
+    vec2 rel = p - center;
+    float r = length(rel);
+    if (r > r_pack + 0.010) {
+        return vec2(0.0, 0.0);
+    }
+
+    float a = atan(rel.x, rel.y) + reel_ang;
+
+    // 1. Wound magnetic oxide tape pancake (0.208 .. r_pack)
+    if (r > 0.208) {
+        float rings = 0.04 * sin(r * 190.0);
+        float sheen = 0.12 * pow(0.5 + 0.5 * cos(2.0 * a - 0.65), 2.0);
+        float rim = smoothstep(0.010, 0.002, abs(r - r_pack)) * 0.45;
+        float pack_luma = clamp(0.24 + rings + sheen + rim, 0.0, 1.0);
+        float pack_mask = smoothstep(r_pack + 0.008, r_pack - 0.004, r);
+        return vec2(pack_luma, pack_mask);
+    }
+
+    // 2. Bright hub wheel collar (0.146 .. 0.208) with 3 radial tape-clamp notches
+    if (r >= 0.146) {
+        float hub = 0.86;
+        // 3 radial clamp slots every 120 deg so wheel rotation is crisp and unmistakable
+        float slot_ang = cos(3.0 * a);
+        if (r > 0.158 && r < 0.197 && slot_ang > 0.78) {
+            hub = 0.16;
+        }
+        float outer_rim = smoothstep(0.008, 0.002, abs(r - 0.206)) * 0.98;
+        float inner_rim = smoothstep(0.008, 0.002, abs(r - 0.148)) * 0.98;
+        return vec2(max(hub, max(outer_rim, inner_rim)), 1.0);
+    }
+
+    // 3. Drive bore with 6 classic inward-pointing cassette splines / teeth (0.062 .. 0.146)
+    if (r >= 0.062) {
+        float bore = 0.06;
+        float tooth = smoothstep(0.32, 0.52, cos(6.0 * a))
+                    * smoothstep(0.095, 0.103, r);
+        return vec2(mix(bore, 0.96, tooth), 1.0);
+    }
+
+    // 4. Deck drive motor spindle & 3-lobe drive dog in the center (< 0.062)
+    float spindle = smoothstep(0.060, 0.050, r) * 0.54;
+    float dog = smoothstep(0.42, 0.65, cos(3.0 * a + 1.05)) * step(0.022, r) * 0.78;
+    float pin = smoothstep(0.022, 0.015, r) * 0.12;
+    float c_luma = (r < 0.022) ? pin : max(spindle, dog);
+    return vec2(c_luma, 1.0);
+}
+
+void main() {
+    vec2 p = aspect_p(v_uv);
+
+    // Brushed anodized tape-deck faceplate chassis
+    float brush = 0.18 + 0.035 * sin(p.y * 108.0) + 0.018 * cos(p.x * 16.0);
+    float luma = brush;
+
+    // ---- Top / Center Tape-Deck Cassette Door Viewing Window ----------------
+    vec2 wc = vec2(0.0, 0.23);
+    vec2 w_half = vec2(1.16, 0.55);
+    float d_door = sd_rbox(p - wc, w_half, 0.055);
+
+    if (d_door < 0.038) {
+        if (d_door > 0.0) {
+            // Recessed metallic deck window bezel
+            luma = max(luma, smoothstep(0.038, 0.004, d_door) * 0.90);
+        } else {
+            // Inside cassette compartment behind deck door glass
+            luma = 0.06;
+
+            // Moulded Compact Cassette shell body
+            float d_shell = sd_rbox(p - wc, vec2(1.09, 0.49), 0.045);
+            if (d_shell < 0.0) {
+                luma = 0.27 + 0.02 * sin(p.x * 90.0);
+                float shell_rim = smoothstep(-0.012, 0.0, d_shell) * 0.68;
+                luma = max(luma, shell_rim);
+
+                // 4 classic cassette corner assembly screws
+                vec2 sc_p = abs(p - wc) - vec2(1.00, 0.41);
+                float sc_r = length(sc_p);
+                if (sc_r < 0.030) {
+                    luma = (sc_r < 0.018) ? 0.10 : 0.68;
+                }
+
+                // Retro cassette top/side label sticker with classic header stripes
+                float d_lbl = sd_rbox(p - vec2(0.0, 0.275), vec2(0.96, 0.375), 0.030);
+                if (d_lbl < 0.0) {
+                    luma = 0.56;
+                    if (p.y > 0.555 && p.y < 0.590) {
+                        luma = 0.88;
+                    } else if (p.y > 0.515 && p.y < 0.538) {
+                        luma = 0.24;
+                    }
+                    float lbl_edge = smoothstep(-0.010, 0.0, d_lbl) * 0.28;
+                    luma = mix(luma, 0.22, lbl_edge);
+                }
+
+                // Bottom trapezoidal head-shield ridge & capstan/guide holes
+                float trap_w = 0.72 - (p.y - (-0.26)) * 0.32;
+                if (p.y < -0.105 && abs(p.x) < trap_w) {
+                    luma = 0.35;
+                    if (abs(p.y - (-0.105)) < 0.010 || abs(abs(p.x) - trap_w) < 0.010) {
+                        luma = 0.68;
+                    }
+                    float h1 = length(vec2(abs(p.x) - 0.46, p.y - (-0.195)));
+                    float h2 = length(vec2(abs(p.x) - 0.23, p.y - (-0.205)));
+                    if (h1 < 0.032) {
+                        luma = (h1 < 0.022) ? 0.05 : 0.76;
+                    }
+                    if (h2 < 0.022) {
+                        luma = (h2 < 0.014) ? 0.05 : 0.68;
+                    }
+                }
+
+                // ---- Central Transparent Cassette Window (Cutout showing spinning wheels) ----
+                float d_clear = sd_rbox(p - vec2(0.0, 0.24), vec2(0.83, 0.275), 0.125);
+                if (d_clear < 0.0) {
+                    // Dimly backlit deck well behind clear window (pulses subtly with bass)
+                    luma = 0.06 + 0.06 * u_bands.y;
+
+                    // Area-conserving supply (Left) & take-up (Right) magnetic tape radii
+                    float prog = clamp(u_transport.x, 0.0, 1.0);
+                    float r_l = sqrt(mix(0.430 * 0.430, 0.212 * 0.212, prog));
+                    float r_r = sqrt(mix(0.212 * 0.212, 0.430 * 0.430, prog));
+
+                    vec2 c_l = vec2(-0.48, 0.24);
+                    vec2 c_r = vec2(0.48, 0.24);
+
+                    // Tensioned magnetic tape ribbon peeling off outer edges toward guide rollers
+                    float vib = wave_mono(clamp(p.x * 0.5 + 0.5, 0.0, 1.0)) * 0.006 * u_bands.y;
+                    float d_tl = sd_seg(p, c_l + vec2(-r_l + 0.004, 0.02), vec2(-0.78 + vib, -0.04));
+                    float d_tr = sd_seg(p, c_r + vec2(r_r - 0.004, 0.02), vec2(0.78 + vib, -0.04));
+                    float tape_line = smoothstep(0.012, 0.003, min(d_tl, d_tr)) * 0.52;
+                    luma = max(luma, tape_line);
+
+                    // Spin Left & Right reels
+                    if (p.x < 0.0) {
+                        vec2 rl = render_reel(p, c_l, r_l, u_transport.y);
+                        luma = mix(luma, rl.x, rl.y);
+                    } else {
+                        vec2 rr = render_reel(p, c_r, r_r, u_transport.z);
+                        luma = mix(luma, rr.x, rr.y);
+                    }
+
+                    // Center remaining-tape graduation scale between the two hubs
+                    vec2 g_pos = p - vec2(0.0, 0.24);
+                    if (abs(g_pos.x) < 0.165 && abs(g_pos.y) < 0.115) {
+                        float g_box = smoothstep(0.009, 0.002,
+                            abs(sd_rbox(g_pos, vec2(0.155, 0.100), 0.015))) * 0.46;
+                        luma = max(luma, g_box);
+                        if (abs(g_pos.x) <= 0.125) {
+                            float base_ln = smoothstep(0.007, 0.002, abs(g_pos.y)) * 0.68;
+                            float t_idx = floor((g_pos.x + 0.12) / 0.06 + 0.5);
+                            float t_x = -0.12 + clamp(t_idx, 0.0, 4.0) * 0.06;
+                            float is_mid = (abs(t_idx - 2.0) < 0.4 || abs(t_idx) < 0.4 || abs(t_idx - 4.0) < 0.4)
+                                         ? 1.0 : 0.0;
+                            float t_h = mix(0.024, 0.042, is_mid);
+                            float tick = smoothstep(0.008, 0.002, abs(g_pos.x - t_x))
+                                       * step(abs(g_pos.y), t_h) * 0.85;
+                            luma = max(luma, max(base_ln, tick));
+                        }
+                    }
+
+                    // Beveled clear window rim
+                    float clear_rim = smoothstep(-0.015, 0.0, d_clear) * 0.82;
+                    luma = max(luma, clear_rim);
+                }
+            }
+
+            // Subtle diagonal deck-door glass reflection sheen + inner window shadow
+            float glass_sheen = smoothstep(0.10, 0.0, abs((p.x * 0.42 + (p.y - 0.23)) - 0.16)) * 0.09;
+            float door_shadow = smoothstep(-0.035, 0.0, d_door) * 0.18;
+            luma = clamp(luma + glass_sheen - door_shadow * 0.35, 0.0, 1.0);
+        }
+    }
+
+    // ---- Bottom Recessed 28-Segment Stereo LED Peak-Level Indicator ---------
+    vec2 br_c = vec2(0.0, -0.67);
+    vec2 br_half = vec2(1.16, 0.165);
+    float d_br = sd_rbox(p - br_c, br_half, 0.04);
+    if (d_br < 0.028) {
+        if (d_br > 0.0) {
+            luma = max(luma, smoothstep(0.028, 0.004, d_br) * 0.88);
+        } else {
+            luma = 0.04;
+
+            // L & R channel labels on the left of the LED bridge
+            float lbl_l = draw_chan_mini(p - vec2(-1.065, -0.612), 0.0) * 0.90;
+            float lbl_r = draw_chan_mini(p - vec2(-1.065, -0.728), 1.0) * 0.90;
+            luma = max(luma, max(lbl_l, lbl_r));
+
+            float bx = (p.x - (-0.98)) / 2.06; // 0.0 .. 1.0 across 28 LED segments
+            if (bx >= 0.0 && bx <= 1.0) {
+                float segs = 28.0;
+                float s_idx = floor(bx * segs);
+                float s_f = fract(bx * segs);
+                float seg_x = smoothstep(0.10, 0.22, s_f) * smoothstep(0.90, 0.78, s_f);
+                float seg_u = (s_idx + 0.5) / segs;
+
+                float dy_l = abs(p.y - (-0.612));
+                float dy_r = abs(p.y - (-0.728));
+                float row_l = smoothstep(0.036, 0.024, dy_l);
+                float row_r = smoothstep(0.036, 0.024, dy_r);
+
+                float bright = (seg_u >= 0.72) ? 1.0 : 0.74;
+                float unlit = 0.15;
+
+                // Instantaneous stereo VU bar + single-segment Peak-Hold dot
+                float pk_idx_l = floor(clamp(u_vu.z, 0.0, 0.999) * segs);
+                float pk_idx_r = floor(clamp(u_vu.w, 0.0, 0.999) * segs);
+                float is_pk_l = (u_vu.z > 0.04 && abs(s_idx - pk_idx_l) < 0.4) ? 1.0 : 0.0;
+                float is_pk_r = (u_vu.w > 0.04 && abs(s_idx - pk_idx_r) < 0.4) ? 1.0 : 0.0;
+
+                float lit_l = max(step(seg_u, u_vu.x), is_pk_l);
+                float lit_r = max(step(seg_u, u_vu.y), is_pk_r);
+                float top_l = max(bright, is_pk_l);
+                float top_r = max(bright, is_pk_r);
+
+                luma += seg_x * row_l * mix(unlit, top_l, lit_l);
+                luma += seg_x * row_r * mix(unlit, top_r, lit_r);
+
+                // Subtle dB graduation dots between L and R LED rows
+                if (abs(p.y - (-0.67)) < 0.007 &&
+                    (mod(s_idx, 4.0) < 0.4 || abs(s_idx - 20.0) < 0.4)) {
+                    luma += seg_x * 0.45;
+                }
+            }
+        }
+    }
+
+    // Crisp 1x spokes, with realistic motion-blur trail during fast-forward / rewind
+    if (abs(u_transport.w) > 2.0) {
+        float prev_m = prev_scene(v_uv).r;
+        luma = mix(luma, max(luma, prev_m), 0.25);
+    }
+
+    gl_FragColor = vec4(vec3(clamp(luma, 0.0, 1.0)), 1.0);
+}
+"#;
+
 // Pass 2: Fullscreen 4-Shade Ordered Bayer LCD Quantizer
 const PRESENT_FS: &str = r#"
 #ifdef GL_ES
@@ -603,7 +1058,7 @@ void main() {
 }
 "#;
 
-const PRESET_BODIES: [&str; 8] = [
+const PRESET_BODIES: [&str; 10] = [
     FS_LCD_PLASMA,
     FS_SONIC_VORTEX,
     FS_PHOSPHOR_SCOPE,
@@ -612,18 +1067,45 @@ const PRESET_BODIES: [&str; 8] = [
     FS_LIQUID_METAL,
     FS_CHLADNI_PLATE,
     FS_STAR_WARP,
+    FS_VU_METER,
+    FS_CASSETTE,
 ];
 
 impl VizEngine {
+    /// Returns the GLSL fragment shader header (uniforms & helper functions) shared by all presets.
+    pub fn scene_fs_header() -> &'static str {
+        SCENE_FS_HEADER
+    }
+
+    /// Returns the GLSL fragment shader body for preset `idx`.
+    pub fn preset_shader_source(idx: usize) -> &'static str {
+        PRESET_BODIES[idx % PRESET_BODIES.len()]
+    }
+
     /// Initializes all GLSL shaders, Ping-Pong FBOs (`256x192` + `512x384`), and DSP tables.
     ///
     /// # Safety
     /// A valid OpenGL ES 2.0/3.0 context must be current on the calling thread.
+    #[cfg(not(target_arch = "wasm32"))]
     pub unsafe fn new<F>(mut get_proc_address: F) -> Result<Self, String>
     where
         F: FnMut(&std::ffi::CStr) -> *const c_void,
     {
         let gl = glow::Context::from_loader_function_cstr(|s| get_proc_address(s));
+        Self::init_from_gl(gl)
+    }
+
+    /// Initializes all GLSL shaders, Ping-Pong FBOs, and DSP tables on a WebGL2 context.
+    ///
+    /// # Safety
+    /// `gl_ctx` must be a valid active WebGL2 rendering context.
+    #[cfg(target_arch = "wasm32")]
+    pub unsafe fn new_from_webgl2(gl_ctx: web_sys::WebGl2RenderingContext) -> Result<Self, String> {
+        let gl = glow::Context::from_webgl2_context(gl_ctx);
+        Self::init_from_gl(gl)
+    }
+
+    unsafe fn init_from_gl(gl: glow::Context) -> Result<Self, String> {
 
         let vao = gl.create_vertex_array().ok();
         if let Some(v) = vao {
@@ -688,6 +1170,8 @@ impl VizEngine {
             let u_bands = gl.get_uniform_location(prog, "u_bands");
             let u_att = gl.get_uniform_location(prog, "u_att");
             let u_beat = gl.get_uniform_location(prog, "u_beat");
+            let u_vu = gl.get_uniform_location(prog, "u_vu");
+            let u_transport = gl.get_uniform_location(prog, "u_transport");
             scenes.push(SceneProgram {
                 prog,
                 u_prev,
@@ -697,6 +1181,8 @@ impl VizEngine {
                 u_bands,
                 u_att,
                 u_beat,
+                u_vu,
+                u_transport,
             });
         }
 
@@ -725,13 +1211,71 @@ impl VizEngine {
             fbo_coarse,
             fbo_fine,
             scenes,
+            custom_scene: None,
+            use_custom_scene: false,
             present,
             active_preset: 0,
             fine_grain: false,
             needs_clear: true,
+            reel_ang_l: 0.0,
+            reel_ang_r: 0.9,
         };
         engine.restore_gl_state();
         Ok(engine)
+    }
+
+    /// Compiles and activates a custom GLSL fragment shader body (appended to `SCENE_FS_HEADER`).
+    ///
+    /// # Safety
+    /// Must be called on the thread owning the active OpenGL ES / WebGL2 context.
+    pub unsafe fn compile_custom_shader(&mut self, body_glsl: &str) -> Result<(), String> {
+        let vs = Self::compile_shader(&self.gl, glow::VERTEX_SHADER, SHARED_VS, "custom_vs")?;
+        let full_fs = format!("{SCENE_FS_HEADER}\n{body_glsl}");
+        let fs = match Self::compile_shader(&self.gl, glow::FRAGMENT_SHADER, &full_fs, "custom_fs")
+        {
+            Ok(s) => s,
+            Err(e) => {
+                self.gl.delete_shader(vs);
+                return Err(e);
+            }
+        };
+        let prog = match Self::link_program(&self.gl, vs, fs, "custom_prog") {
+            Ok(p) => p,
+            Err(e) => {
+                self.gl.delete_shader(vs);
+                self.gl.delete_shader(fs);
+                return Err(e);
+            }
+        };
+        self.gl.delete_shader(vs);
+        self.gl.delete_shader(fs);
+
+        if let Some(old) = self.custom_scene.take() {
+            self.gl.delete_program(old.prog);
+        }
+
+        let sc = SceneProgram {
+            prog,
+            u_prev: self.gl.get_uniform_location(prog, "u_prev"),
+            u_audio: self.gl.get_uniform_location(prog, "u_audio"),
+            u_res: self.gl.get_uniform_location(prog, "u_res"),
+            u_time: self.gl.get_uniform_location(prog, "u_time"),
+            u_bands: self.gl.get_uniform_location(prog, "u_bands"),
+            u_att: self.gl.get_uniform_location(prog, "u_att"),
+            u_beat: self.gl.get_uniform_location(prog, "u_beat"),
+            u_vu: self.gl.get_uniform_location(prog, "u_vu"),
+            u_transport: self.gl.get_uniform_location(prog, "u_transport"),
+        };
+        self.custom_scene = Some(sc);
+        self.use_custom_scene = true;
+        self.needs_clear = true;
+        self.restore_gl_state();
+        Ok(())
+    }
+
+    pub fn set_use_custom_shader(&mut self, enabled: bool) {
+        self.use_custom_scene = enabled && self.custom_scene.is_some();
+        self.needs_clear = true;
     }
 
     pub fn set_preset(&mut self, idx: usize) {
@@ -739,12 +1283,24 @@ impl VizEngine {
         if clamped != self.active_preset {
             self.active_preset = clamped;
         }
+        self.use_custom_scene = false;
         self.needs_clear = true;
         self.dsp.soft_reset_peaks();
     }
 
     pub fn preset(&self) -> usize {
         self.active_preset
+    }
+
+    pub fn is_fine_grain(&self) -> bool {
+        self.fine_grain
+    }
+
+    pub fn set_fine_grain(&mut self, fine: bool) {
+        if self.fine_grain != fine {
+            self.fine_grain = fine;
+            self.needs_clear = true;
+        }
     }
 
     pub fn toggle_grain(&mut self) -> bool {
@@ -766,8 +1322,18 @@ impl VizEngine {
         win_h: i32,
         theme: ThemeColors,
         fade: f32,
+        track_progress: f32,
+        transport_speed: f32,
     ) {
         let af: VizAudioFrame = self.dsp.update(pcm_interleaved, sample_rate, dt);
+
+        // Constant linear tape speed (4.76 cm/s analog feel): nearly-empty reel spins faster
+        let prog = track_progress.clamp(0.0, 1.0);
+        let r_l = (0.430f32 * 0.430 * (1.0 - prog) + 0.212 * 0.212 * prog).sqrt();
+        let r_r = (0.212f32 * 0.212 * (1.0 - prog) + 0.430 * 0.430 * prog).sqrt();
+        let v_lin = 0.36f32 * transport_speed;
+        self.reel_ang_l = (self.reel_ang_l + dt * (v_lin / r_l)).rem_euclid(std::f32::consts::TAU);
+        self.reel_ang_r = (self.reel_ang_r + dt * (v_lin / r_r)).rem_euclid(std::f32::consts::TAU);
 
         if let Some(v) = self.vao {
             self.gl.bind_vertex_array(Some(v));
@@ -840,7 +1406,13 @@ impl VizEngine {
         );
 
         // Pass 1: Render audio-reactive scene into `curr_fbo` reading `prev_tex` + `audio_tex`
-        let sc = &self.scenes[self.active_preset % self.scenes.len()];
+        let sc = if self.use_custom_scene {
+            self.custom_scene
+                .as_ref()
+                .unwrap_or(&self.scenes[self.active_preset % self.scenes.len()])
+        } else {
+            &self.scenes[self.active_preset % self.scenes.len()]
+        };
         self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(curr_fbo));
         self.gl.viewport(0, 0, grid_w, grid_h);
         self.gl.use_program(Some(sc.prog));
@@ -873,6 +1445,20 @@ impl VizEngine {
             af.beat_dir,
             af.beat_phase,
             reset_flag,
+        );
+        self.gl.uniform_4_f32(
+            sc.u_vu.as_ref(),
+            af.vu_l,
+            af.vu_r,
+            af.vu_peak_l,
+            af.vu_peak_r,
+        );
+        self.gl.uniform_4_f32(
+            sc.u_transport.as_ref(),
+            prog,
+            self.reel_ang_l,
+            self.reel_ang_r,
+            transport_speed,
         );
         self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
 

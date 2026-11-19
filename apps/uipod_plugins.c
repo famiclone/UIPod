@@ -38,7 +38,9 @@
 #include "thread.h"
 
 #include "uipod_keyboard.h"
+#include "uipod_library.h"
 #include "uipod_page.h"
+#include "uipod_playlists.h"
 #include "uipod_plugins.h"
 #include "uipod_rs_plugins.h"
 #include "uipod_rs_ui.h"
@@ -46,10 +48,13 @@
 #include "uipod_transition.h"
 #include "uipod_ui.h"
 #include "window-sdl.h"
+#include "tape_deck_fx.h"
 
 extern void retrohh_cpu_hold_dynamic(void);
 extern void retrohh_cpu_release_dynamic(void);
 extern unsigned pcm_viz_latest(int16_t *out, unsigned max_frames);
+extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
+                                    unsigned *sample_rate_out);
 extern unsigned int pcm_alsa_output_delay_us(void);
 
 #define BUNDLED_PLUGINS_DIR   ROCKBOX_DIR "/plugins"
@@ -731,7 +736,9 @@ static void host_audio_seek_ms(uint32_t pos_ms)
         audio_ff_rewind((long)pos_ms);
         if (st & AUDIO_STATUS_PAUSE)
             audio_resume();
-        pump_background_threads();
+        /* Let audio & codec coroutines commit the seek immediately */
+        for (int i = 0; i < 24; i++)
+            yield();
     }
 }
 
@@ -756,7 +763,11 @@ static bool host_audio_current_track(char *path_out, size_t path_cap,
     if (artist_out && artist_cap > 0)
         strlcpy(artist_out, (id3->artist && id3->artist[0]) ? id3->artist : "", artist_cap);
     if (pos_ms_out)
-        *pos_ms_out = (uint32_t)id3->elapsed;
+    {
+        uint32_t out_ms = (pcm_alsa_output_delay_us() + tape_deck_fx_delay_us()) / 1000u;
+        uint32_t el = (uint32_t)id3->elapsed;
+        *pos_ms_out = (el > out_ms) ? (el - out_ms) : 0u;
+    }
     if (len_ms_out)
         *len_ms_out = (uint32_t)id3->length;
     return true;
@@ -773,13 +784,50 @@ static size_t host_audio_read_pcm(uint32_t ahead_ms,
         return 0;
 
     if (ahead_ms == 0)
-        return (size_t)pcm_viz_latest(out_stereo, (unsigned)max_frames);
+        return (size_t)pcm_viz_read_synced(out_stereo, (unsigned)max_frames, NULL);
 
-    uint32_t hw_delay_ms = pcm_alsa_output_delay_us() / 1000u;
+    uint32_t hw_delay_ms = (pcm_alsa_output_delay_us() + tape_deck_fx_delay_us()) / 1000u;
     if (ahead_ms <= hw_delay_ms)
         return (size_t)pcm_viz_latest(out_stereo, (unsigned)max_frames);
 
     return pcmbuf_peek_ahead_s16(ahead_ms - hw_delay_ms, out_stereo, max_frames);
+}
+
+static bool host_audio_play_track(const char *path, uint32_t start_ms)
+{
+    if (!path || !path[0])
+        return false;
+    bool ok = uipod_play_single_at_ms(path, (unsigned long)start_ms);
+    pump_background_threads();
+    return ok;
+}
+
+static void host_audio_stop(void)
+{
+    if (audio_status() & AUDIO_STATUS_PLAY)
+    {
+        audio_stop();
+        pump_background_threads();
+    }
+}
+
+static size_t host_library_track_count(void)
+{
+    int n = uipod_library_music_count();
+    return (n > 0) ? (size_t)n : 0u;
+}
+
+static bool host_library_track_at(size_t index,
+                                  char *path_out, size_t path_cap,
+                                  char *artist_out, size_t artist_cap,
+                                  char *title_out, size_t title_cap,
+                                  uint32_t *duration_ms_out)
+{
+    return uipod_library_music_at((int)index,
+                                  path_out, path_cap,
+                                  artist_out, artist_cap,
+                                  title_out, title_cap,
+                                  duration_ms_out);
 }
 
 static const struct UIPodPluginApi s_host_api = {
@@ -812,6 +860,10 @@ static const struct UIPodPluginApi s_host_api = {
     .audio_seek_ms           = host_audio_seek_ms,
     .audio_current_track     = host_audio_current_track,
     .audio_read_pcm          = host_audio_read_pcm,
+    .audio_play_track        = host_audio_play_track,
+    .audio_stop              = host_audio_stop,
+    .library_track_count     = host_library_track_count,
+    .library_track_at        = host_library_track_at,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */

@@ -405,6 +405,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "uipod-plugin-music-quiz"
+version = "0.1.0"
+dependencies = [
+ "uipod-plugin-sdk",
+]
+
+[[package]]
 name = "uipod-plugin-sdk"
 version = "0.1.0"
 
@@ -417,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "uipod-plugin-sound-racer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "uipod-plugin-sdk",
 ]
@@ -438,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "uipod-plugin-text-viewer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "uipod-plugin-sdk",
 ]
@@ -460,6 +467,8 @@ dependencies = [
  "png",
  "rgb",
  "taffy",
+ "wasm-bindgen",
+ "web-sys",
  "zune-jpeg",
 ]
 

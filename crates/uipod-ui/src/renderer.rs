@@ -1,5 +1,6 @@
 //! OpenGL ES 3.0 GPU renderer using `femtovg` + `taffy` + offscreen FBO readback.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
 use std::path::Path;
 
@@ -188,6 +189,7 @@ pub struct UiEngine {
     canvas: Canvas<OpenGl>,
     gl: glow::Context,
     fbo_image: ImageId,
+    prev_fbo_image: Option<ImageId>,
     fonts_regular: Vec<FontId>,
     fonts_medium: Vec<FontId>,
     fonts_semibold: Vec<FontId>,
@@ -205,6 +207,7 @@ impl UiEngine {
     /// # Safety
     /// A valid OpenGL ES 3.0 (or Desktop OpenGL 3.2+) context must be current on the calling thread,
     /// and `get_proc_address` must return valid function pointers for the active context.
+    #[cfg(not(target_arch = "wasm32"))]
     pub unsafe fn new<F>(
         mut get_proc_address: F,
         cjk_font_path: Option<&Path>,
@@ -214,10 +217,38 @@ impl UiEngine {
     {
         let renderer = OpenGl::new_from_function_cstr(|s| get_proc_address(s))
             .map_err(|e| format!("femtovg OpenGl init failed: {e:?}"))?;
+        let gl = glow::Context::from_loader_function_cstr(|s| get_proc_address(s));
+        Self::init_from_parts(renderer, gl, cjk_font_path)
+    }
+
+    /// Initializes the `femtovg` WebGL2 renderer and `glow` context directly from an HTML `<canvas>`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_from_html_canvas(canvas_el: &web_sys::HtmlCanvasElement) -> Result<Self, String> {
+        use wasm_bindgen::JsCast;
+
+        let renderer = OpenGl::new_from_html_canvas(canvas_el)
+            .map_err(|e| format!("femtovg WebGL2 init failed: {e:?}"))?;
+
+        let attrs = web_sys::WebGlContextAttributes::new();
+        attrs.set_stencil(true);
+        attrs.set_antialias(false);
+        let webgl2 = canvas_el
+            .get_context_with_context_options("webgl2", &attrs)
+            .map_err(|e| format!("getContext('webgl2') failed: {e:?}"))?
+            .ok_or_else(|| "WebGL2 context unavailable".to_string())?
+            .dyn_into::<web_sys::WebGl2RenderingContext>()
+            .map_err(|_| "Canvas context is not WebGL2RenderingContext".to_string())?;
+        let gl = glow::Context::from_webgl2_context(webgl2);
+        Self::init_from_parts(renderer, gl, None)
+    }
+
+    fn init_from_parts(
+        renderer: OpenGl,
+        gl: glow::Context,
+        cjk_font_path: Option<&Path>,
+    ) -> Result<Self, String> {
         let mut canvas =
             Canvas::new(renderer).map_err(|e| format!("femtovg Canvas init failed: {e:?}"))?;
-
-        let gl = glow::Context::from_loader_function_cstr(|s| get_proc_address(s));
 
         let f_reg = canvas
             .add_font_mem(FONT_GEOLOGICA_REGULAR)
@@ -232,6 +263,7 @@ impl UiEngine {
             .add_font_mem(FONT_GEOLOGICA_BOLD)
             .map_err(|e| format!("Geologica-Bold load failed: {e:?}"))?;
 
+        #[cfg(not(target_arch = "wasm32"))]
         let cjk_id = cjk_font_path.and_then(|p| {
             if p.exists() {
                 canvas.add_font(p).ok()
@@ -239,6 +271,11 @@ impl UiEngine {
                 None
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        let cjk_id: Option<FontId> = {
+            let _ = cjk_font_path;
+            None
+        };
 
         let make_chain = |primary: FontId| -> Vec<FontId> {
             match cjk_id {
@@ -260,6 +297,7 @@ impl UiEngine {
             canvas,
             gl,
             fbo_image,
+            prev_fbo_image: None,
             fonts_regular: make_chain(f_reg),
             fonts_medium: make_chain(f_med),
             fonts_semibold: make_chain(f_semi),
@@ -1335,6 +1373,191 @@ impl UiEngine {
         let mut out = vec![0u8; WIDTH * HEIGHT * 4];
         self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
         out
+    }
+
+    /* ---- Direct GPU Screen Presentation & Transitions (Zero Readback) --- */
+
+    /// Copies the currently rendered `fbo_image` into an offscreen snapshot FBO so
+    /// subsequent frames can animate UIPod screen transitions (`Slide`, `Cover`, `Fade`,
+    /// `Pixels`, `Blinds`) entirely on the GPU.
+    pub fn snapshot_fbo_for_transition(&mut self) {
+        let prev = match self.prev_fbo_image {
+            Some(id) => id,
+            None => match self.canvas.create_image_empty(
+                WIDTH,
+                HEIGHT,
+                PixelFormat::Rgba8,
+                ImageFlags::FLIP_Y | ImageFlags::NEAREST,
+            ) {
+                Ok(id) => {
+                    self.prev_fbo_image = Some(id);
+                    id
+                }
+                Err(_) => return,
+            },
+        };
+        self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        self.canvas.set_render_target(RenderTarget::Image(prev));
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+        let paint = Paint::image(
+            self.fbo_image,
+            0.0,
+            0.0,
+            WIDTH as f32,
+            HEIGHT as f32,
+            0.0,
+            1.0,
+        );
+        let mut quad = VgPath::new();
+        quad.rect(0.0, 0.0, WIDTH as f32, HEIGHT as f32);
+        self.canvas.fill_path(&quad, &paint);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders a list/menu screen directly into `fbo_image` (call `present_fbo_to_screen` or
+    /// `present_fbo_transition` afterward to display without CPU readback).
+    pub fn render_list_to_fbo(&mut self, state: &ListScreenState) {
+        self.draw_list_screen(state);
+        self.canvas.flush();
+    }
+
+    /// Renders the `Now Playing` screen directly into `fbo_image`.
+    pub fn render_now_playing_to_fbo(&mut self, state: &NowPlayingState) {
+        self.draw_now_playing_screen(state);
+        self.canvas.flush();
+    }
+
+    /// Renders the QWERTY keyboard directly into `fbo_image`.
+    pub fn render_keyboard_to_fbo(&mut self, state: &KeyboardState) {
+        self.draw_keyboard_screen(state);
+        self.canvas.flush();
+    }
+
+    /// Presents `fbo_image` directly to the window/WebGL2 backbuffer, optionally blending
+    /// from the last `snapshot_fbo_for_transition()` using one of UIPod's 6 screen transitions:
+    /// `0=Off`, `1=Slide`, `2=Cover`, `3=Fade`, `4=Pixels`, `5=Blinds`.
+    pub fn present_fbo_transition(
+        &mut self,
+        win_w: u32,
+        win_h: u32,
+        kind: u8,
+        progress: f32,
+        dir: i8,
+    ) {
+        let t = progress.clamp(0.0, 1.0);
+        if kind == 0 || t >= 1.0 || self.prev_fbo_image.is_none() {
+            self.plugin_present_gpu_screen(win_w, win_h);
+            return;
+        }
+        let prev = self.prev_fbo_image.unwrap();
+        let sw = win_w.max(1) as f32;
+        let sh = win_h.max(1) as f32;
+        if win_w != WIDTH as u32 || win_h != HEIGHT as u32 {
+            self.canvas.set_size(win_w.max(1), win_h.max(1), 1.0);
+        }
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+
+        // Smooth cubic ease-out matching TrimUI Brick feel
+        let ease = 1.0 - (1.0 - t).powi(3);
+        let sign = if dir < 0 { -1.0f32 } else { 1.0f32 };
+
+        match kind {
+            1 => {
+                // Slide: both old and new move together
+                let ox_prev = -sign * sw * ease;
+                let ox_curr = sign * sw * (1.0 - ease);
+                let p_prev = Paint::image(prev, ox_prev, 0.0, sw, sh, 0.0, 1.0);
+                let mut q1 = VgPath::new();
+                q1.rect(ox_prev, 0.0, sw, sh);
+                self.canvas.fill_path(&q1, &p_prev);
+
+                let p_curr = Paint::image(self.fbo_image, ox_curr, 0.0, sw, sh, 0.0, 1.0);
+                let mut q2 = VgPath::new();
+                q2.rect(ox_curr, 0.0, sw, sh);
+                self.canvas.fill_path(&q2, &p_curr);
+            }
+            2 => {
+                // Cover: incoming slides over stationary previous
+                let p_prev = Paint::image(prev, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut q1 = VgPath::new();
+                q1.rect(0.0, 0.0, sw, sh);
+                self.canvas.fill_path(&q1, &p_prev);
+
+                let ox_curr = sign * sw * (1.0 - ease);
+                let p_curr = Paint::image(self.fbo_image, ox_curr, 0.0, sw, sh, 0.0, 1.0);
+                let mut q2 = VgPath::new();
+                q2.rect(ox_curr, 0.0, sw, sh);
+                self.canvas.fill_path(&q2, &p_curr);
+            }
+            3 => {
+                // Fade: crossfade
+                let p_prev = Paint::image(prev, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut q1 = VgPath::new();
+                q1.rect(0.0, 0.0, sw, sh);
+                self.canvas.fill_path(&q1, &p_prev);
+
+                let p_curr = Paint::image(self.fbo_image, 0.0, 0.0, sw, sh, 0.0, ease);
+                let mut q2 = VgPath::new();
+                q2.rect(0.0, 0.0, sw, sh);
+                self.canvas.fill_path(&q2, &p_curr);
+            }
+            4 => {
+                // Pixels: ordered 4x4 Bayer tile reveal
+                const ORDER: [u8; 16] = [
+                    0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5,
+                ];
+                let p_prev = Paint::image(prev, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut q1 = VgPath::new();
+                q1.rect(0.0, 0.0, sw, sh);
+                self.canvas.fill_path(&q1, &p_prev);
+
+                let cols = 16usize;
+                let rows = 12usize;
+                let cw = sw / cols as f32;
+                let ch = sh / rows as f32;
+                let p_curr = Paint::image(self.fbo_image, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut reveal = VgPath::new();
+                let thresh = (ease * 16.5) as u8;
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let o = ORDER[((r & 3) << 2) | (c & 3)];
+                        if o < thresh {
+                            reveal.rect(c as f32 * cw, r as f32 * ch, cw + 0.5, ch + 0.5);
+                        }
+                    }
+                }
+                self.canvas.fill_path(&reveal, &p_curr);
+            }
+            _ => {
+                // Blinds: horizontal venetian slats
+                let p_prev = Paint::image(prev, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut q1 = VgPath::new();
+                q1.rect(0.0, 0.0, sw, sh);
+                self.canvas.fill_path(&q1, &p_prev);
+
+                let slats = 12usize;
+                let slat_h = sh / slats as f32;
+                let p_curr = Paint::image(self.fbo_image, 0.0, 0.0, sw, sh, 0.0, 1.0);
+                let mut reveal = VgPath::new();
+                for i in 0..slats {
+                    let h = slat_h * ease;
+                    reveal.rect(0.0, i as f32 * slat_h, sw, h + 0.5);
+                }
+                self.canvas.fill_path(&reveal, &p_curr);
+            }
+        }
+
+        self.canvas.flush();
+        if win_w != WIDTH as u32 || win_h != HEIGHT as u32 {
+            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        }
+        self.restore_gl_state();
     }
 
     /* ---- Immediate-Mode Plugin GPU Canvas (`1024x768`) ------------------ */

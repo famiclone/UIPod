@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 4u
+#define UIPOD_PLUGIN_API_VERSION 5u
 
 enum uipod_plugin_category
 {
@@ -110,6 +110,16 @@ struct UIPodPluginApi
     size_t   (*audio_read_pcm)(uint32_t ahead_ms,
                                int16_t *out_stereo,
                                size_t max_frames);
+    bool     (*audio_play_track)(const char *path, uint32_t start_ms);
+    void     (*audio_stop)(void);
+
+    /* Unified Music Library Access (`TP_CAT_MUSIC`) */
+    size_t   (*library_track_count)(void);
+    bool     (*library_track_at)(size_t index,
+                                 char *path_out, size_t path_cap,
+                                 char *artist_out, size_t artist_cap,
+                                 char *title_out, size_t title_cap,
+                                 uint32_t *duration_ms_out);
 };
 
 struct UIPodPluginInfoC

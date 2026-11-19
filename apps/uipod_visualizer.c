@@ -17,10 +17,10 @@
  *
  * Controls while visualizing:
  *   B / MENU     — Exit back to Now Playing (or previous screen)
- *   Left / Right — Previous / Next visualizer preset
+ *   Left / Right — Previous / Next track (Hold to rewind / fast-forward)
+ *   L2 / R2      — Previous / Next visualizer preset
  *   X / Y        — Toggle LCD pixel grain (4x4 Classic Macro-Pixel <-> 2x2 Fine)
  *   A / START    — Play / Pause music
- *   L2 / R2      — Previous / Next track
  *   VOL+ / VOL-  — Adjust volume (SELECT + VOL+/- adjusts brightness)
  *
  * This program is free software; you can redistribute it and/or
@@ -57,8 +57,12 @@
 #include "lang.h"
 #include "misc.h"
 #include "icon.h"
+#include "status.h"
+#include "metadata.h"
+#include "tape_deck_fx.h"
 #include "root_menu.h"
 #include "gui/list.h"
+#include "gui/wps.h"
 #include "window-sdl.h"
 #include "uipod_page.h"
 #include "uipod_ui.h"
@@ -68,10 +72,12 @@
 extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
                                     unsigned *sample_rate_out);
 
-#define VIZ_STATE_FILE  ROCKBOX_DIR "/visualizers.txt"
-#define MAX_PRESETS     32
-#define ID_CAP          48
-#define PCM_CHUNK       1024   /* matches 1024-point Hann FFT in viz_dsp.rs */
+#define VIZ_STATE_FILE        ROCKBOX_DIR "/visualizers.txt"
+#define MAX_PRESETS           32
+#define ID_CAP                48
+#define PCM_CHUNK             1024   /* matches 1024-point Hann FFT in viz_dsp.rs */
+#define VIZ_FF_REWIND_MAX_PCT 3U
+#define VIZ_MIN_FF_STEP_MS    500U
 
 static char preset_ids[MAX_PRESETS][ID_CAP];
 static bool preset_enabled[MAX_PRESETS];
@@ -81,7 +87,7 @@ static bool viz_ready    = false;
 
 enum viz_fade_state { VIZ_NORMAL, VIZ_FADE_OUT, VIZ_FADE_IN };
 #define VIZ_FADE_TICKS      (HZ / 2)   /* 0.50s idle/auto fade */
-#define VIZ_MANUAL_TICKS    (HZ / 5)   /* 0.20s snappy manual Left/Right fade */
+#define VIZ_MANUAL_TICKS    (HZ / 5)   /* 0.20s snappy manual L2/R2 fade */
 
 static volatile enum viz_fade_state viz_fade = VIZ_NORMAL;
 static long  viz_fade_ticks_cur = VIZ_FADE_TICKS;
@@ -90,6 +96,7 @@ static long  viz_fade_start     = 0;
 static volatile int  viz_pending_preset = -1; /* >= 0 explicit index, -2 random */
 static long  viz_preset_tick    = 0;
 static volatile bool viz_thread_stop = false;
+static volatile int  viz_seek_dir    = 0;     /* -1 rewinding, 0 normal, +1 fast-forwarding */
 static bool  viz_locked         = false;
 
 static bool is_lang_uk(void)
@@ -329,6 +336,33 @@ static int viz_render_thread(void *param)
         int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
         SDL_GL_GetDrawableSize(sdlWindow, &win_w, &win_h);
 
+        float track_prog = 0.0f;
+        float transport_speed = 0.0f;
+        int st_now = audio_status();
+        int sdir = viz_seek_dir;
+        struct wps_state *ws = get_wps_state();
+        struct mp3entry *id3 = ws ? ws->id3 : NULL;
+        if ((st_now & AUDIO_STATUS_PLAY) && id3 && id3->length > 0)
+        {
+            long pos_ms = (long)id3->elapsed + (ws ? ws->ff_rewind_count : 0);
+            long len_ms = (long)id3->length;
+            if (pos_ms < 0) pos_ms = 0;
+            if (pos_ms > len_ms) pos_ms = len_ms;
+            track_prog = (float)pos_ms / (float)len_ms;
+        }
+        float base_spd = (global_settings.fx_speed > 0)
+                       ? ((float)global_settings.fx_speed * 0.001f)
+                       : 1.0f;
+        if (sdir != 0)
+            transport_speed = (sdir > 0) ? 6.5f : -6.5f;
+        else if (st_now & AUDIO_STATUS_PLAY)
+        {
+            if (tape_deck_fx_pause_fx_enabled())
+                transport_speed = base_spd * tape_deck_fx_visual_speed();
+            else if (!(st_now & AUDIO_STATUS_PAUSE))
+                transport_speed = base_spd;
+        }
+
         uipod_rs_viz_render_frame(pcm,
                                   (size_t)frames,
                                   (uint32_t)sr,
@@ -339,13 +373,47 @@ static int viz_render_thread(void *param)
                                   (uint32_t)(global_settings.fg_color  & 0xFFFFFF),
                                   (uint32_t)(global_settings.fg1_color & 0xFFFFFF),
                                   (uint32_t)(global_settings.fg2_color & 0xFFFFFF),
-                                  fade);
+                                  fade,
+                                  track_prog,
+                                  transport_speed);
 
         SDL_GL_SwapWindow(sdlWindow);
     }
 
     SDL_GL_MakeCurrent(sdlWindow, NULL);
     return 0;
+}
+
+static void viz_finish_seek(bool *seeking, int *seek_delta,
+                            struct mp3entry **seek_id3, bool commit)
+{
+    if (!*seeking)
+        return;
+
+    struct wps_state *gstate = get_wps_state();
+    struct mp3entry *id3 = gstate ? gstate->id3 : NULL;
+    if (commit && id3 && id3 == *seek_id3)
+    {
+        long target = (long)id3->elapsed + *seek_delta;
+        if (target < 0)
+            target = 0;
+        if (target > (long)id3->length)
+            target = (long)id3->length;
+        id3->elapsed = (unsigned long)target;
+        audio_ff_rewind(id3->elapsed);
+    }
+    else if (id3)
+    {
+        audio_ff_rewind(id3->elapsed);
+    }
+
+    if (gstate)
+        gstate->ff_rewind_count = 0;
+    status_set_ffmode(0);
+    *seeking = false;
+    *seek_delta = 0;
+    *seek_id3 = NULL;
+    viz_seek_dir = 0;
 }
 
 static void visualizer_session(int locked_idx)
@@ -387,6 +455,7 @@ static void visualizer_session(int locked_idx)
     }
     viz_pending_preset = -1;
     viz_preset_tick = current_tick;
+    viz_seek_dir = 0;
 
     /* Hand the GLES context to `viz_render_thread` on its own OS core while the
      * main Rockbox thread services audio decoding, network prefetch, and input. */
@@ -395,11 +464,20 @@ static void visualizer_session(int locked_idx)
     SDL_Thread *rt = SDL_CreateThread(viz_render_thread, "uipod_viz", NULL);
     if (rt)
     {
+        bool seeking = false;
+        unsigned int seek_step = 0;
+        int seek_delta = 0;
+        struct mp3entry *seek_id3 = NULL;
+        const long ff_rw_accel = global_settings.ff_rewind_accel + 3;
+
         for (;;)
         {
             int act = get_action(CONTEXT_WPS, HZ / 20);
             if (power_display_off())
+            {
+                viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
                 break;
+            }
 
             if (act & SYS_EVENT)
             {
@@ -408,9 +486,27 @@ static void visualizer_session(int locked_idx)
                     handled == SYS_POWEROFF ||
                     handled == SYS_REBOOT)
                 {
+                    viz_finish_seek(&seeking, &seek_delta, &seek_id3, false);
                     break;
                 }
                 continue;
+            }
+
+            if (seeking)
+            {
+                if (act == ACTION_WPS_STOPSEEK ||
+                    (act == ACTION_NONE &&
+                     (button_status() & (BUTTON_LEFT | BUTTON_RIGHT)) == 0))
+                {
+                    viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
+                    continue;
+                }
+                if (act != ACTION_NONE &&
+                    act != ACTION_WPS_SEEKBACK &&
+                    act != ACTION_WPS_SEEKFWD)
+                {
+                    viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
+                }
             }
 
             if (act == ACTION_WPS_BROWSE ||
@@ -419,12 +515,76 @@ static void visualizer_session(int locked_idx)
             {
                 break;
             }
+            else if (act == ACTION_WPS_SEEKBACK || act == ACTION_WPS_SEEKFWD)
+            {
+                int dir = (act == ACTION_WPS_SEEKFWD) ? 1 : -1;
+                struct wps_state *gstate = get_wps_state();
+                struct mp3entry *id3 = gstate ? gstate->id3 : NULL;
+
+                if (seeking && id3 != seek_id3)
+                    viz_finish_seek(&seeking, &seek_delta, &seek_id3, false);
+
+                if ((audio_status() & AUDIO_STATUS_PLAY) && id3 && id3->length > 0)
+                {
+                    if (!seeking)
+                    {
+                        audio_pre_ff_rewind();
+                        status_set_ffmode(dir > 0 ? STATUS_FASTFORWARD
+                                                  : STATUS_FASTBACKWARD);
+                        seeking = true;
+                        seek_id3 = id3;
+                        unsigned int min_s = global_settings.ff_rewind_min_step > 0
+                                           ? (unsigned int)global_settings.ff_rewind_min_step
+                                           : 1U;
+                        seek_step = 1000U * min_s;
+                        seek_delta = (int)seek_step * dir;
+                        viz_seek_dir = dir;
+                    }
+                    else
+                    {
+                        long cur_pos = (long)id3->elapsed + seek_delta;
+                        if (cur_pos < 0) cur_pos = 0;
+                        if (cur_pos > (long)id3->length) cur_pos = (long)id3->length;
+
+                        unsigned long span_ms = (dir > 0)
+                            ? (id3->length - (unsigned long)cur_pos)
+                            : (unsigned long)cur_pos;
+                        unsigned int max_step = (unsigned int)(
+                            (span_ms * VIZ_FF_REWIND_MAX_PCT) / 100UL);
+                        if (max_step < VIZ_MIN_FF_STEP_MS)
+                            max_step = VIZ_MIN_FF_STEP_MS;
+                        if (seek_step > max_step)
+                            seek_step = max_step;
+
+                        seek_delta += (int)seek_step * dir;
+                        seek_step += seek_step >> ff_rw_accel;
+                        viz_seek_dir = dir;
+                    }
+
+                    if ((long)id3->elapsed + seek_delta > (long)id3->length)
+                        seek_delta = (int)(id3->length - id3->elapsed);
+                    else if ((long)id3->elapsed + seek_delta < 0)
+                        seek_delta = -(int)id3->elapsed;
+
+                    gstate->ff_rewind_count = seek_delta;
+                }
+            }
             else if (act == ACTION_WPS_SKIPPREV)
+            {
+                if (audio_status() & AUDIO_STATUS_PLAY)
+                    audio_prev_or_restart();
+            }
+            else if (act == ACTION_WPS_SKIPNEXT)
+            {
+                if (audio_status() & AUDIO_STATUS_PLAY)
+                    audio_next();
+            }
+            else if (act == ACTION_TP_CHAP_PREV)
             {
                 int target = step_enabled_preset(preset_cur, -1);
                 viz_request_switch(target, true);
             }
-            else if (act == ACTION_WPS_SKIPNEXT)
+            else if (act == ACTION_TP_CHAP_NEXT)
             {
                 int target = step_enabled_preset(preset_cur, 1);
                 viz_request_switch(target, true);
@@ -444,17 +604,8 @@ static void visualizer_session(int locked_idx)
                         audio_pause();
                 }
             }
-            else if (act == ACTION_TP_CHAP_PREV)
-            {
-                if (audio_status() & AUDIO_STATUS_PLAY)
-                    audio_prev();
-            }
-            else if (act == ACTION_TP_CHAP_NEXT)
-            {
-                if (audio_status() & AUDIO_STATUS_PLAY)
-                    audio_next();
-            }
         }
+        viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
         viz_thread_stop = true;
         SDL_WaitThread(rt, NULL);
     }

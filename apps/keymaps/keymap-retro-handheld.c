@@ -75,7 +75,9 @@ static const struct button_mapping button_context_wps[]  = {
     { ACTION_WPS_STOPSEEK,  BUTTON_LEFT|BUTTON_REL,         BUTTON_LEFT|BUTTON_REPEAT },
     { ACTION_WPS_STOPSEEK,  BUTTON_RIGHT|BUTTON_REL,        BUTTON_RIGHT|BUTTON_REPEAT },
     { ACTION_TP_CHAP_PREV,  BUTTON_L2|BUTTON_REL,           BUTTON_L2 },
+    { ACTION_TP_CHAP_PREV,  BUTTON_L2|BUTTON_REL,           BUTTON_L2|BUTTON_REPEAT },
     { ACTION_TP_CHAP_NEXT,  BUTTON_R2|BUTTON_REL,           BUTTON_R2 },
+    { ACTION_TP_CHAP_NEXT,  BUTTON_R2|BUTTON_REL,           BUTTON_R2|BUTTON_REPEAT },
     { ACTION_WPS_HOTKEY,    BUTTON_X|BUTTON_REL,            BUTTON_X },
     { ACTION_WPS_HOTKEY,    BUTTON_Y|BUTTON_REL,            BUTTON_Y },
     /* the volume rocker is consumed globally (global_volume_action) */

@@ -17,3 +17,11 @@ imgref = "1.12"
 rgb = "0.8"
 png = "0.17"
 zune-jpeg = "0.5"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "HtmlCanvasElement",
+    "WebGl2RenderingContext",
+    "WebGlContextAttributes",
+] }

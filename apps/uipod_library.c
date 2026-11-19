@@ -34,6 +34,7 @@
 #include "dir.h"       /* opendir/readdir/dir_get_info, ATTR_DIRECTORY */
 #include "file.h"      /* open/close/remove, O_RDONLY, MAX_PATH */
 #include "pathfuncs.h"
+#include "string-extra.h"
 #include "rbpaths.h"   /* ROCKBOX_DIR */
 #include "filetypes.h" /* filetype_get_attr, FILE_ATTR_AUDIO */
 #include "metadata.h"  /* get_metadata, struct mp3entry */
@@ -626,6 +627,7 @@ static const char MERGED_SCHEMA_SQL[] =
     "  dedup_key TEXT NOT NULL,"
     "  category INTEGER NOT NULL,"
     "  title TEXT,"
+    "  artist TEXT,"
     "  browse_artist TEXT,"
     "  sort_artist TEXT,"
     "  album TEXT,"
@@ -633,6 +635,7 @@ static const char MERGED_SCHEMA_SQL[] =
     "  year INTEGER,"
     "  tracknum INTEGER,"
     "  discnum INTEGER,"
+    "  duration_ms INTEGER,"
     "  UNIQUE(category, dedup_key));"
     "CREATE INDEX IF NOT EXISTS temp.idx_mt_artist ON merged_tracks(category, sort_artist, album, discnum, tracknum);"
     "CREATE INDEX IF NOT EXISTS temp.idx_mt_album  ON merged_tracks(category, album, discnum, tracknum);"
@@ -757,8 +760,8 @@ static void merge_copy_from_db(sqlite3 *src_db,
     sqlite3_stmt *sel = NULL;
     if (sqlite3_prepare_v2(
             src_db,
-            "SELECT path, category, title, browse_artist, sort_artist,"
-            " album, genre, year, tracknum, discnum FROM tracks;",
+            "SELECT path, category, title, artist, browse_artist, sort_artist,"
+            " album, genre, year, tracknum, discnum, COALESCE(duration_ms, 0) FROM tracks;",
             -1, &sel, NULL) != SQLITE_OK)
     {
         return;
@@ -766,16 +769,18 @@ static void merge_copy_from_db(sqlite3 *src_db,
 
     while (sqlite3_step(sel) == SQLITE_ROW)
     {
-        const char *path  = (const char *)sqlite3_column_text(sel, 0);
-        int category      = sqlite3_column_int(sel, 1);
-        const char *title = (const char *)sqlite3_column_text(sel, 2);
-        const char *ba    = (const char *)sqlite3_column_text(sel, 3);
-        const char *sa    = (const char *)sqlite3_column_text(sel, 4);
-        const char *album = (const char *)sqlite3_column_text(sel, 5);
-        const char *genre = (const char *)sqlite3_column_text(sel, 6);
-        int year          = sqlite3_column_int(sel, 7);
-        int tracknum      = sqlite3_column_int(sel, 8);
-        int discnum       = sqlite3_column_int(sel, 9);
+        const char *path   = (const char *)sqlite3_column_text(sel, 0);
+        int category       = sqlite3_column_int(sel, 1);
+        const char *title  = (const char *)sqlite3_column_text(sel, 2);
+        const char *artist = (const char *)sqlite3_column_text(sel, 3);
+        const char *ba     = (const char *)sqlite3_column_text(sel, 4);
+        const char *sa     = (const char *)sqlite3_column_text(sel, 5);
+        const char *album  = (const char *)sqlite3_column_text(sel, 6);
+        const char *genre  = (const char *)sqlite3_column_text(sel, 7);
+        int year           = sqlite3_column_int(sel, 8);
+        int tracknum       = sqlite3_column_int(sel, 9);
+        int discnum        = sqlite3_column_int(sel, 10);
+        int dur_ms         = sqlite3_column_int(sel, 11);
 
         if (!path || !path[0])
             continue;
@@ -795,17 +800,20 @@ static void merge_copy_from_db(sqlite3 *src_db,
         sqlite3_bind_text(ins_stmt,  1, path, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(ins_stmt,  2, dkey, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int (ins_stmt,  3, category);
-        if (title && title[0]) sqlite3_bind_text(ins_stmt, 4, title, -1, SQLITE_TRANSIENT);
-        else                   sqlite3_bind_null(ins_stmt, 4);
-        sqlite3_bind_text(ins_stmt,  5, ba ? ba : "", -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(ins_stmt,  6, sa ? sa : "", -1, SQLITE_TRANSIENT);
-        if (album && album[0]) sqlite3_bind_text(ins_stmt, 7, album, -1, SQLITE_TRANSIENT);
-        else                   sqlite3_bind_null(ins_stmt, 7);
-        if (genre && genre[0]) sqlite3_bind_text(ins_stmt, 8, genre, -1, SQLITE_TRANSIENT);
-        else                   sqlite3_bind_null(ins_stmt, 8);
-        sqlite3_bind_int (ins_stmt,  9, year);
-        sqlite3_bind_int (ins_stmt, 10, tracknum);
-        sqlite3_bind_int (ins_stmt, 11, discnum);
+        if (title && title[0])   sqlite3_bind_text(ins_stmt, 4, title,  -1, SQLITE_TRANSIENT);
+        else                     sqlite3_bind_null(ins_stmt, 4);
+        if (artist && artist[0]) sqlite3_bind_text(ins_stmt, 5, artist, -1, SQLITE_TRANSIENT);
+        else                     sqlite3_bind_null(ins_stmt, 5);
+        sqlite3_bind_text(ins_stmt,  6, ba ? ba : "", -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(ins_stmt,  7, sa ? sa : "", -1, SQLITE_TRANSIENT);
+        if (album && album[0])   sqlite3_bind_text(ins_stmt, 8, album,  -1, SQLITE_TRANSIENT);
+        else                     sqlite3_bind_null(ins_stmt, 8);
+        if (genre && genre[0])   sqlite3_bind_text(ins_stmt, 9, genre,  -1, SQLITE_TRANSIENT);
+        else                     sqlite3_bind_null(ins_stmt, 9);
+        sqlite3_bind_int (ins_stmt, 10, year);
+        sqlite3_bind_int (ins_stmt, 11, tracknum);
+        sqlite3_bind_int (ins_stmt, 12, discnum);
+        sqlite3_bind_int (ins_stmt, 13, dur_ms);
 
         sqlite3_step(ins_stmt);
         sqlite3_reset(ins_stmt);
@@ -845,9 +853,9 @@ static bool ensure_merged_tracks(void)
     if (sqlite3_prepare_v2(
             db,
             "INSERT OR IGNORE INTO temp.merged_tracks("
-            "path, dedup_key, category, title, browse_artist, sort_artist,"
-            "album, genre, year, tracknum, discnum)"
-            " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11);",
+            "path, dedup_key, category, title, artist, browse_artist, sort_artist,"
+            "album, genre, year, tracknum, discnum, duration_ms)"
+            " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13);",
             -1, &ins, NULL) == SQLITE_OK)
     {
         /* 1) Local SD tracks first (already on disk -> instant local playback) */
@@ -1013,6 +1021,133 @@ void uipod_library_genre_tracks(int category, const char *genre,
     sqlite3_finalize(st);
 }
 
+struct cached_local_track
+{
+    char    *path;
+    char    *artist;
+    char    *title;
+    uint32_t duration_ms;
+};
+
+static struct cached_local_track *s_local_tracks;
+static int                        s_local_track_cnt;
+static int                        s_local_track_cap;
+static uint32_t                   s_local_tracks_gen;
+
+static void free_local_track_cache(void)
+{
+    for (int i = 0; i < s_local_track_cnt; i++)
+    {
+        free(s_local_tracks[i].path);
+        free(s_local_tracks[i].artist);
+        free(s_local_tracks[i].title);
+    }
+    free(s_local_tracks);
+    s_local_tracks     = NULL;
+    s_local_track_cnt  = 0;
+    s_local_track_cap  = 0;
+    s_local_tracks_gen = 0;
+}
+
+static void ensure_local_track_cache(void)
+{
+    uipod_library_refresh_if_stale();
+    if (!db)
+    {
+        free_local_track_cache();
+        return;
+    }
+    if (s_local_tracks_gen == s_local_gen && s_local_tracks != NULL)
+        return;
+
+    free_local_track_cache();
+
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(
+            db,
+            "SELECT path,"
+            " COALESCE(NULLIF(artist, ''), browse_artist, ''),"
+            " COALESCE(title, ''),"
+            " COALESCE(duration_ms, 0)"
+            " FROM tracks"
+            " WHERE category=? ORDER BY id;",
+            -1, &st, NULL) != SQLITE_OK)
+    {
+        return;
+    }
+    sqlite3_bind_int(st, 1, TP_CAT_MUSIC);
+
+    while (sqlite3_step(st) == SQLITE_ROW)
+    {
+        const char *p = (const char *)sqlite3_column_text(st, 0);
+        if (!p || p[0] != '/')
+            continue;
+        const char *a = (const char *)sqlite3_column_text(st, 1);
+        const char *t = (const char *)sqlite3_column_text(st, 2);
+        int dur       = sqlite3_column_int(st, 3);
+
+        if (s_local_track_cnt == s_local_track_cap)
+        {
+            int ncap = s_local_track_cap ? s_local_track_cap * 2 : 256;
+            struct cached_local_track *nv =
+                realloc(s_local_tracks, (size_t)ncap * sizeof(*nv));
+            if (!nv)
+                break;
+            s_local_tracks    = nv;
+            s_local_track_cap = ncap;
+        }
+
+        char *dp = strdup(p);
+        char *da = strdup(a ? a : "");
+        char *dt = strdup(t ? t : "");
+        if (!dp || !da || !dt)
+        {
+            free(dp);
+            free(da);
+            free(dt);
+            break;
+        }
+
+        s_local_tracks[s_local_track_cnt++] = (struct cached_local_track){
+            .path        = dp,
+            .artist      = da,
+            .title       = dt,
+            .duration_ms = (dur > 0) ? (uint32_t)dur : 0u,
+        };
+    }
+
+    sqlite3_finalize(st);
+    s_local_tracks_gen = s_local_gen;
+}
+
+int uipod_library_music_count(void)
+{
+    ensure_local_track_cache();
+    return s_local_track_cnt;
+}
+
+bool uipod_library_music_at(int index,
+                            char *path_out, size_t path_cap,
+                            char *artist_out, size_t artist_cap,
+                            char *title_out, size_t title_cap,
+                            uint32_t *duration_ms_out)
+{
+    ensure_local_track_cache();
+    if (index < 0 || index >= s_local_track_cnt || !s_local_tracks)
+        return false;
+
+    const struct cached_local_track *it = &s_local_tracks[index];
+    if (path_out && path_cap > 0)
+        strlcpy(path_out, it->path, path_cap);
+    if (artist_out && artist_cap > 0)
+        strlcpy(artist_out, it->artist, artist_cap);
+    if (title_out && title_cap > 0)
+        strlcpy(title_out, it->title, title_cap);
+    if (duration_ms_out)
+        *duration_ms_out = it->duration_ms;
+    return true;
+}
+
 /* ---- open / migrate / init ------------------------------------------- */
 
 /* Ordered in-place migrations from an older on-disk schema up to SCHEMA_VERSION.
@@ -1096,6 +1231,7 @@ void uipod_library_init(void)
 
 void uipod_library_close(void)
 {
+    free_local_track_cache();
     if (db) { sqlite3_close(db); db = NULL; }
     if (db_in_ram) remove(DB_RAM);
 }

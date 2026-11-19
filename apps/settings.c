@@ -898,6 +898,8 @@ void settings_apply(bool read_disk)
     dsp_afr_enable(global_settings.afr_enabled);
     dsp_pbe_precut(global_settings.pbe_precut);
     dsp_pbe_enable(global_settings.pbe);
+    dsp_set_texture_warp_speed(global_settings.fx_speed);
+    uipod_tape_fx_apply();
     dsp_set_compressor(&global_settings.compressor_settings);
 
 

@@ -179,7 +179,9 @@ bool   uipod_rs_viz_render_frame(const int16_t *pcm_interleaved,
                                  uint32_t fg_rgb,
                                  uint32_t fg1_rgb,
                                  uint32_t fg2_rgb,
-                                 float fade);
+                                 float fade,
+                                 float track_progress,
+                                 float transport_speed);
 
 /* Pure-Rust Album Art Decoder (`crates/uipod-ui/src/image_decode.rs`) */
 uint8_t *uipod_rs_image_decode_rgb(const uint8_t *bytes,

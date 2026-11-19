@@ -254,7 +254,8 @@ static struct menu_callback_with_desc root_menu_desc = {
         item_callback, ID2P(LANG_ROCKBOX_TITLE), Icon_Rockbox };
 
 static struct menu_table menu_table[] = {
-    /* Order here matches ui.figcraft Main (#215) */
+    /* Browse is the first item on the Main Menu, followed by library & media */
+    { "browse", &file_browser },
     { "files", &music_item },
     { "extras", &extras_item },
     { "artists", &artists_item },
@@ -266,7 +267,6 @@ static struct menu_table menu_table[] = {
     { "podcasts", &podcast_item },
     { "audiobooks", &audiobook_item },
     { "television", &television_item },
-    { "browse", &file_browser },
     { "shuffle", &shuffle_item },
     { "settings", &menu_ },
     { "wps", &wps_item },
@@ -452,6 +452,7 @@ static int uipod_root_run(int last)
     int n = 0;
 #define ROOT_ADD(cond, itemp) \
     do { if (cond) root_menu__[n++] = (struct menu_item_ex *)(itemp); } while (0)
+    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_BROWSE),     &file_browser);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_MUSIC),      &music_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_EXTRAS),     &extras_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_ARTISTS),    &artists_item);
@@ -463,7 +464,6 @@ static int uipod_root_run(int last)
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_PODCASTS),   &podcast_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_AUDIOBOOKS), &audiobook_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_TELEVISION), &television_item);
-    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_BROWSE),     &file_browser);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_SHUFFLE),    &shuffle_item);
     ROOT_ADD(true, &menu_);          /* Settings    */
     ROOT_ADD(true, &wps_item);       /* Now Playing */

@@ -126,13 +126,60 @@ fn mix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-fn compute_track_hash(tr: &AudioTrackInfo) -> u64 {
-    let id_src = if !tr.path.is_empty() {
-        format!("{}#{}", tr.path, tr.duration_ms / 1000)
+fn path_ext_ascii_lower(path: &str) -> Option<&str> {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let dot = base.rfind('.')?;
+    if dot == 0 || dot + 1 >= base.len() {
+        None
     } else {
-        format!("{}:{}:{}", tr.artist, tr.title, tr.duration_ms / 1000)
+        Some(&base[dot + 1..])
+    }
+}
+
+/// Multi-subtune chiptune formats where Rockbox's GME/SID codecs report
+/// `id3->elapsed = subtune_idx * 1000` (frozen during playback) and
+/// `id3->length = subtune_count * 1000` rather than song duration in ms.
+fn is_subtune_chiptune(path: &str) -> bool {
+    let Some(ext) = path_ext_ascii_lower(path) else {
+        return false;
     };
-    fnv1a64(id_src.as_bytes())
+    ext.eq_ignore_ascii_case("nsf")
+        || ext.eq_ignore_ascii_case("nsfe")
+        || ext.eq_ignore_ascii_case("gbs")
+        || ext.eq_ignore_ascii_case("sid")
+        || ext.eq_ignore_ascii_case("hes")
+        || ext.eq_ignore_ascii_case("ay")
+        || ext.eq_ignore_ascii_case("kss")
+        || ext.eq_ignore_ascii_case("sgc")
+        || ext.eq_ignore_ascii_case("sap")
+        || ext.eq_ignore_ascii_case("vtx")
+}
+
+/// Synthesized chiptune / tracker formats whose playback clock runs continuously
+/// at 1.0x from `pcmbuf` without fixed PCM file duration or monotonic `id3->elapsed`.
+fn is_chiptune_or_module(path: &str) -> bool {
+    if is_subtune_chiptune(path) {
+        return true;
+    }
+    let Some(ext) = path_ext_ascii_lower(path) else {
+        return false;
+    };
+    ext.eq_ignore_ascii_case("spc")
+        || ext.eq_ignore_ascii_case("vgm")
+        || ext.eq_ignore_ascii_case("vgz")
+        || ext.eq_ignore_ascii_case("mod")
+        || ext.eq_ignore_ascii_case("s3m")
+        || ext.eq_ignore_ascii_case("xm")
+        || ext.eq_ignore_ascii_case("it")
+}
+
+fn compute_track_hash(tr: &AudioTrackInfo) -> u64 {
+    if !tr.path.is_empty() {
+        fnv1a64(tr.path.as_bytes())
+    } else {
+        let id_src = format!("{}:{}", tr.artist, tr.title);
+        fnv1a64(id_src.as_bytes())
+    }
 }
 
 /// Compact 6-byte quantized audio feature frame for one `50 ms` slice of a song.
@@ -652,20 +699,24 @@ impl HudCache {
         self.progress = if dur_ms > 0 {
             ((pos_ms as f32) / (dur_ms as f32)).clamp(0.0, 1.0)
         } else {
-            0.0
+            ((pos_ms % 120_000) as f32) / 120_000.0
         };
         let pos_s = pos_ms / 1000;
-        let dur_s = dur_ms / 1000;
+        let dur_s = if dur_ms > 0 { dur_ms / 1000 } else { u32::MAX - 1 };
         if pos_s != self.last_pos_sec || dur_s != self.last_dur_sec {
             self.last_pos_sec = pos_s;
             self.last_dur_sec = dur_s;
-            self.time_display = format!(
-                "{:02}:{:02} / {:02}:{:02}",
-                pos_s / 60,
-                pos_s % 60,
-                dur_s / 60,
-                dur_s % 60
-            );
+            if dur_ms > 0 {
+                self.time_display = format!(
+                    "{:02}:{:02} / {:02}:{:02}",
+                    pos_s / 60,
+                    pos_s % 60,
+                    dur_s / 60,
+                    dur_s % 60
+                );
+            } else {
+                self.time_display = format!("{:02}:{:02}", pos_s / 60, pos_s % 60);
+            }
         }
     }
 
@@ -718,7 +769,12 @@ struct RacerState {
 
     // Current track map & run eligibility
     map: TrackMap,
+    free_clock: bool,
+    subtune_mode: bool,
+    frozen_pos_polls: u8,
     smooth_song_ms: f32,
+    clock_rate: f32,
+    last_reported_pos_ms: u32,
     max_song_ms: u32,
     full_run_eligible: bool,
     completion_announced: bool,
@@ -742,7 +798,15 @@ struct RacerState {
 }
 
 impl RacerState {
-    fn new(opts: RacerOptions, map: TrackMap, start_pos_ms: u32, eligible: bool) -> Self {
+    fn new(
+        opts: RacerOptions,
+        map: TrackMap,
+        start_pos_ms: u32,
+        reported_pos_ms: u32,
+        free_clock: bool,
+        subtune_mode: bool,
+        eligible: bool,
+    ) -> Self {
         let start_slot = (start_pos_ms / SLOT_MS) as usize;
         Self {
             opts,
@@ -755,7 +819,12 @@ impl RacerState {
             blocks: VecDeque::with_capacity(48),
             tray: CollectorTray::new(),
             map,
+            free_clock,
+            subtune_mode,
+            frozen_pos_polls: 0,
             smooth_song_ms: start_pos_ms as f32,
+            clock_rate: 1.0,
+            last_reported_pos_ms: reported_pos_ms,
             max_song_ms: start_pos_ms,
             full_run_eligible: eligible,
             completion_announced: false,
@@ -777,6 +846,9 @@ impl RacerState {
 
     /// Saves full-run `Hi-Score` if the outgoing track was played from beginning to end!
     fn finalize_track_if_completed(&mut self, ctx: &HostContext) {
+        if self.free_clock {
+            return;
+        }
         if self.full_run_eligible
             && self.map.duration_ms >= 5_000
             && self.max_song_ms.saturating_add(3_500) >= self.map.duration_ms
@@ -792,6 +864,9 @@ impl RacerState {
         ctx: &HostContext,
         new_map: TrackMap,
         start_pos_ms: u32,
+        reported_pos_ms: u32,
+        free_clock: bool,
+        subtune_mode: bool,
         eligible: bool,
     ) {
         self.finalize_track_if_completed(ctx);
@@ -802,7 +877,12 @@ impl RacerState {
         self.tray.clear_all();
         self.jump_until_ms = None;
         self.map = new_map;
+        self.free_clock = free_clock;
+        self.subtune_mode = subtune_mode;
+        self.frozen_pos_polls = 0;
         self.smooth_song_ms = start_pos_ms as f32;
+        self.clock_rate = 1.0;
+        self.last_reported_pos_ms = reported_pos_ms;
         self.max_song_ms = start_pos_ms;
         self.full_run_eligible = eligible;
         self.completion_announced = false;
@@ -972,7 +1052,9 @@ impl RacerState {
                     let feat = analyze_stereo_window(pcm_scratch, n_frames);
                     if s < self.map.slots.len() {
                         self.map.slots[s] = TrackSlot::from_features(feat);
-                        self.map.dirty = true;
+                        if !self.free_clock {
+                            self.map.dirty = true;
+                        }
                     }
                     self.step_slot_deterministic(s, feat);
                     self.next_gen_slot += 1;
@@ -1443,6 +1525,20 @@ fn save_options(ctx: &HostContext, opts: RacerOptions) {
     let _ = ctx.save_plugin_data("sound_racer", "options.txt", s.as_bytes());
 }
 
+fn build_map_for_track(ctx: &HostContext, tr: Option<&AudioTrackInfo>) -> (TrackMap, bool, bool) {
+    let Some(t) = tr else {
+        return (TrackMap::new_empty(0, 0), false, false);
+    };
+    let hash = compute_track_hash(t);
+    let free = is_chiptune_or_module(&t.path);
+    let subtune = is_subtune_chiptune(&t.path) && t.duration_ms > 0 && t.duration_ms != 150_000;
+    if free {
+        (TrackMap::new_empty(hash, 0), true, subtune)
+    } else {
+        (TrackMap::load_or_new(ctx, hash, t.duration_ms), false, false)
+    }
+}
+
 /// Initial 2-item launch menu shown when entering `Sound Racer`:
 /// `0` = `Start from Beginning`, `1` = `Continue`.
 /// Returns `None` if user cancelled with `B` / `ForceExit`.
@@ -1456,9 +1552,17 @@ fn prompt_launch_mode(
     } else {
         None
     };
-    let cont_badge = track.map(|tr| {
-        let s = tr.position_ms / 1000;
-        format!("{:02}:{:02}", s / 60, s % 60)
+    let cont_badge = track.and_then(|tr| {
+        if is_subtune_chiptune(&tr.path) && tr.duration_ms > 0 && tr.duration_ms != 150_000 {
+            let sub = ((tr.position_ms + 500) / 1000) + 1;
+            let tot = (tr.duration_ms / 1000).max(sub);
+            Some(format!("#{sub}/{tot}"))
+        } else if is_chiptune_or_module(&tr.path) {
+            None
+        } else {
+            let s = tr.position_ms / 1000;
+            Some(format!("{:02}:{:02}", s / 60, s % 60))
+        }
     });
 
     let items = [
@@ -1591,13 +1695,26 @@ fn open_system_menu(ctx: &HostContext, state: &mut RacerState) -> (bool, bool) {
                 return (false, false);
             }
             MenuOutcome::Selected(1) => {
-                ctx.audio_seek_ms(0);
+                let restart_seek_ms = if state.subtune_mode {
+                    ((state.last_reported_pos_ms + 500) / 1000) * 1000
+                } else {
+                    0
+                };
+                ctx.audio_seek_ms(restart_seek_ms);
                 ctx.sleep_ms(40);
                 let hash = state.map.hash;
                 let dur = state.map.duration_ms;
-                state.map.save_if_dirty(ctx);
-                let reloaded = TrackMap::load_or_new(ctx, hash, dur);
-                state.start_on_track(ctx, reloaded, 0, true);
+                let free = state.free_clock;
+                let subtune = state.subtune_mode;
+                if !free {
+                    state.map.save_if_dirty(ctx);
+                }
+                let reloaded = if free {
+                    TrackMap::new_empty(hash, 0)
+                } else {
+                    TrackMap::load_or_new(ctx, hash, dur)
+                };
+                state.start_on_track(ctx, reloaded, 0, restart_seek_ms, free, subtune, true);
                 return (false, true);
             }
             MenuOutcome::Selected(2) => {
@@ -1642,9 +1759,8 @@ fn open_system_menu(ctx: &HostContext, state: &mut RacerState) -> (bool, bool) {
 fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
     let opts = load_options(ctx);
     let init_tr = ctx.audio_track_info();
-    let init_hash = init_tr.as_ref().map(compute_track_hash).unwrap_or(0);
-    let init_dur = init_tr.as_ref().map(|t| t.duration_ms).unwrap_or(0);
-    let init_map = TrackMap::load_or_new(ctx, init_hash, init_dur);
+    let (init_map, init_free, init_subtune) = build_map_for_track(ctx, init_tr.as_ref());
+    let init_hash = init_map.hash;
 
     // 1. Mandatory 2-item launch menu: `Start song from beginning` vs `Continue`
     let Some(from_beginning) = prompt_launch_mode(
@@ -1656,7 +1772,13 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
     };
 
     if from_beginning {
-        ctx.audio_seek_ms(0);
+        let seek_target = if init_subtune {
+            let raw = init_tr.as_ref().map(|t| t.position_ms).unwrap_or(0);
+            ((raw + 500) / 1000) * 1000
+        } else {
+            0
+        };
+        ctx.audio_seek_ms(seek_target);
         ctx.sleep_ms(45);
     } else if ctx.audio_status() != 1 {
         ctx.audio_toggle_play_pause();
@@ -1665,25 +1787,34 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
 
     let live_tr = ctx.audio_track_info().or(init_tr);
     let active_hash = live_tr.as_ref().map(compute_track_hash).unwrap_or(init_hash);
-    let active_dur = live_tr.as_ref().map(|t| t.duration_ms).unwrap_or(init_dur);
-    let start_pos_ms = if from_beginning {
+    let (active_map, active_free, active_subtune) = if active_hash == init_hash {
+        (init_map, init_free, init_subtune)
+    } else {
+        build_map_for_track(ctx, live_tr.as_ref())
+    };
+
+    let reported_pos_ms = live_tr.as_ref().map(|t| t.position_ms).unwrap_or(0);
+    let start_pos_ms = if from_beginning || active_free {
         0
     } else {
-        live_tr.as_ref().map(|t| t.position_ms).unwrap_or(0)
+        reported_pos_ms
     };
-    let eligible = from_beginning || start_pos_ms <= 2_500;
+    let eligible = !active_free && (from_beginning || start_pos_ms <= 2_500);
 
-    let active_map = if active_hash == init_hash {
-        init_map
-    } else {
-        TrackMap::load_or_new(ctx, active_hash, active_dur)
-    };
-
-    let mut state = RacerState::new(opts, active_map, start_pos_ms, eligible);
+    let mut state = RacerState::new(
+        opts,
+        active_map,
+        start_pos_ms,
+        reported_pos_ms,
+        active_free,
+        active_subtune,
+        eligible,
+    );
     let mut hud = HudCache::new();
     if let Some(ref tr) = live_tr {
         hud.set_track_label(ctx, active_hash, tr);
-        hud.update_time(start_pos_ms, tr.duration_ms);
+        let disp_dur = if active_free { 0 } else { tr.duration_ms };
+        hud.update_time(start_pos_ms, disp_dur);
     }
 
     let mut pcm_live = [0i16; 384];
@@ -1725,11 +1856,21 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
             if let Some(tr) = ctx.audio_track_info() {
                 let h = compute_track_hash(&tr);
                 if h != state.map.hash {
-                    let nmap = TrackMap::load_or_new(ctx, h, tr.duration_ms);
-                    state.start_on_track(ctx, nmap, tr.position_ms, tr.position_ms <= 3_000);
+                    let (nmap, nfree, nsub) = build_map_for_track(ctx, Some(&tr));
+                    let sp = if nfree { 0 } else { tr.position_ms };
+                    state.start_on_track(
+                        ctx,
+                        nmap,
+                        sp,
+                        tr.position_ms,
+                        nfree,
+                        nsub,
+                        !nfree && tr.position_ms <= 3_000,
+                    );
                 }
                 hud.set_track_label(ctx, state.map.hash, &tr);
-                hud.update_time(state.smooth_song_ms as u32, tr.duration_ms);
+                let disp_dur = if state.free_clock { 0 } else { tr.duration_ms };
+                hud.update_time(state.smooth_song_ms.max(0.0) as u32, disp_dur);
             }
             hud.sync_score(
                 ctx,
@@ -1783,7 +1924,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         state.road_curve += (state.target_curve - state.road_curve) * 0.055;
 
         if playing {
-            state.smooth_song_ms += dt_ms;
+            state.smooth_song_ms += dt_ms * state.clock_rate;
             let cur_u32 = state.smooth_song_ms.max(0.0) as u32;
             if cur_u32 > state.max_song_ms {
                 state.max_song_ms = cur_u32;
@@ -1915,38 +2056,102 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 if h != state.map.hash {
                     // Song changed! Finalize previous track's Hi-Score & map, reset score to 0, load new track's map!
                     let carry_banner = state.callout.clone();
-                    let new_map = TrackMap::load_or_new(ctx, h, tr.duration_ms);
-                    let from_start = tr.position_ms <= 3_500;
-                    state.start_on_track(ctx, new_map, tr.position_ms, from_start);
+                    let (new_map, nfree, nsub) = build_map_for_track(ctx, Some(&tr));
+                    let sp = if nfree { 0 } else { tr.position_ms };
+                    let from_start = !nfree && tr.position_ms <= 3_500;
+                    state.start_on_track(
+                        ctx,
+                        new_map,
+                        sp,
+                        tr.position_ms,
+                        nfree,
+                        nsub,
+                        from_start,
+                    );
                     state.callout = carry_banner;
                     hud.set_track_label(ctx, h, &tr);
                     if playing {
                         state.advance_horizon(ctx, &mut pcm_ahead);
                     }
+                } else if state.free_clock {
+                    // Synthesized chiptune / tracker (`.nsf`, `.gbs`, `.sid`, `.spc`, `.vgm`, `.mod`, ...):
+                    // keep highway locked at full 1.0x real-time speed driven directly by `pcmbuf`!
+                    state.clock_rate = 1.0;
+                    if state.subtune_mode {
+                        let prev_sub = (state.last_reported_pos_ms + 500) / 1000;
+                        let cur_sub = (tr.position_ms + 500) / 1000;
+                        if cur_sub != prev_sub {
+                            state.start_on_track(
+                                ctx,
+                                TrackMap::new_empty(h, 0),
+                                0,
+                                tr.position_ms,
+                                true,
+                                true,
+                                false,
+                            );
+                            if playing {
+                                state.advance_horizon(ctx, &mut pcm_ahead);
+                            }
+                        }
+                    }
+                    state.last_reported_pos_ms = tr.position_ms;
+                    hud.set_track_label(ctx, h, &tr);
                 } else {
-                    // Detect manual rewind back to `00:00` if user restarted externally
-                    if state.smooth_song_ms > 5_000.0 && tr.position_ms < 1_500 {
+                    if state.map.duration_ms == 0 && tr.duration_ms > 0 {
+                        state.map.duration_ms = tr.duration_ms;
+                    }
+                    if state.last_reported_pos_ms > 4_500 && tr.position_ms < 1_200 {
                         let hash = state.map.hash;
-                        let dur = state.map.duration_ms;
+                        let dur = state.map.duration_ms.max(tr.duration_ms);
                         state.map.save_if_dirty(ctx);
                         let reloaded = TrackMap::load_or_new(ctx, hash, dur);
-                        state.start_on_track(ctx, reloaded, tr.position_ms, true);
+                        state.start_on_track(
+                            ctx,
+                            reloaded,
+                            tr.position_ms,
+                            tr.position_ms,
+                            false,
+                            false,
+                            true,
+                        );
                     } else {
+                        let jump = (tr.position_ms as i64) - (state.last_reported_pos_ms as i64);
                         let err = (tr.position_ms as f32) - state.smooth_song_ms;
-                        if err.abs() > 320.0 {
+                        if jump.abs() > 3_000 && err.abs() > 3_000.0 {
                             state.smooth_song_ms = tr.position_ms as f32;
-                        } else {
-                            state.smooth_song_ms += err * 0.18;
+                            state.clock_rate = 1.0;
+                            state.frozen_pos_polls = 0;
+                            state.blocks.clear();
+                            state.next_gen_slot =
+                                ((tr.position_ms / SLOT_MS) as usize).saturating_add(2);
+                            state.last_spawn_slot = 0;
+                        } else if playing {
+                            if jump == 0 {
+                                state.frozen_pos_polls = state.frozen_pos_polls.saturating_add(1);
+                            } else {
+                                state.frozen_pos_polls = 0;
+                            }
+                            if state.frozen_pos_polls >= 2 {
+                                // Stream/loop with static `elapsed`: run smoothly at 1.0x
+                                state.clock_rate = 1.0;
+                            } else {
+                                let target_rate = (1.0 + err / 550.0).clamp(0.04, 2.0);
+                                state.clock_rate = state.clock_rate * 0.65 + target_rate * 0.35;
+                            }
                         }
+                        state.last_reported_pos_ms = tr.position_ms;
                     }
                     hud.set_track_label(ctx, h, &tr);
                 }
-                hud.update_time(state.smooth_song_ms.max(0.0) as u32, tr.duration_ms);
+                let disp_dur = if state.free_clock { 0 } else { tr.duration_ms };
+                hud.update_time(state.smooth_song_ms.max(0.0) as u32, disp_dur);
             } else {
                 hud.has_track = false;
             }
         } else if hud.has_track {
-            hud.update_time(state.smooth_song_ms.max(0.0) as u32, state.map.duration_ms);
+            let disp_dur = if state.free_clock { 0 } else { state.map.duration_ms };
+            hud.update_time(state.smooth_song_ms.max(0.0) as u32, disp_dur);
         }
 
         hud.sync_score(
@@ -1974,7 +2179,7 @@ uipod_declare_plugin! {
     name: "Sound Racer",
     name_uk: "Sound Racer",
     author: "UIPod",
-    version: "0.1.0",
+    version: "0.2.0",
     category: PluginCategory::Game,
     kind: PluginKind::MenuDriven,
     extensions: "",
@@ -2052,8 +2257,8 @@ mod tests {
 
         // Verify two runs over the same `TrackMap` spawn identical block sequences!
         let opts = RacerOptions::default();
-        let mut run_a = RacerState::new(opts, map, 0, true);
-        let mut run_b = RacerState::new(opts, decoded, 0, true);
+        let mut run_a = RacerState::new(opts, map, 0, 0, false, false, true);
+        let mut run_b = RacerState::new(opts, decoded, 0, 0, false, false, true);
         for s in 0..80 {
             let fa = run_a.map.slots[s].to_features();
             let fb = run_b.map.slots[s].to_features();
@@ -2067,5 +2272,14 @@ mod tests {
             assert_eq!(ba.lane, bb.lane);
             assert_eq!(ba.kind, bb.kind);
         }
+    }
+
+    #[test]
+    fn detects_nsf_and_chiptune_formats_for_1x_clock() {
+        assert!(is_subtune_chiptune("/mnt/SDCARD/Music/Castlevania.NSF"));
+        assert!(is_chiptune_or_module("/mnt/SDCARD/Music/Castlevania.NSF"));
+        assert!(is_chiptune_or_module("/mnt/SDCARD/Music/ChronoTrigger.spc"));
+        assert!(is_chiptune_or_module("/mnt/SDCARD/Music/SpaceDebris.mod"));
+        assert!(!is_chiptune_or_module("/mnt/SDCARD/Music/DaftPunk.flac"));
     }
 }

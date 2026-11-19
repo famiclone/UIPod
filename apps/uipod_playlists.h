@@ -48,6 +48,9 @@ bool uipod_queue_add(const char *path, int attr, int position, bool shuffle);
  * when it is playing (caller -> Now Playing). */
 bool uipod_play_track(const char *path);
 
+/* Non-prompting single-track snippet start at `start_ms` (used by Music Quiz). */
+bool uipod_play_single_at_ms(const char *path, unsigned long start_ms);
+
 /* Build a full queue from `paths[0 .. count-1]` and start playback at
  * `start_idx` so album/playlist/folder tracks continue playing sequentially. */
 bool uipod_play_tracks_at(char *const *paths, int count, int start_idx);

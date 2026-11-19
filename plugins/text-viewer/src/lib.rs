@@ -261,8 +261,11 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
     let (doc_title, raw_text, bmark_key) = match file_path {
         Some(p) => {
             let raw_name = p.file_name().and_then(|s| s.to_str()).unwrap_or("Document");
+            let is_ephemeral_info = raw_name.eq_ignore_ascii_case("uipod_info.txt");
             let title = if raw_name.eq_ignore_ascii_case("about.txt") {
                 ctx.tr("About UIPod", "Про UIPod").to_string()
+            } else if is_ephemeral_info {
+                ctx.tr("Info", "Інформація").to_string()
             } else {
                 raw_name.to_string()
             };
@@ -284,7 +287,11 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
                 &bytes[..]
             };
             let text = String::from_utf8_lossy(slice).into_owned();
-            let key = Some(fnv1a_hex(&p.to_string_lossy()));
+            let key = if is_ephemeral_info {
+                None
+            } else {
+                Some(fnv1a_hex(&p.to_string_lossy()))
+            };
             (title, text, key)
         }
         None => (
@@ -474,7 +481,7 @@ uipod_declare_plugin! {
     name: "Text Viewer",
     name_uk: "Переглядач тексту",
     author: "UIPod",
-    version: "0.2.0",
+    version: "0.2.1",
     category: PluginCategory::Viewer,
     kind: PluginKind::Utility,
     extensions: "txt,lrc,md,log,cfg,ini,json,cue,nfo",

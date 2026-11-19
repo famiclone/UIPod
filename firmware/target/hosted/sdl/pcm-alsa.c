@@ -84,6 +84,7 @@
 #include "pcm_sampr.h"
 #include "pcm_mixer.h"
 #include "pcm_sink.h"
+#include "tape_deck_fx.h"
 
 /*#define LOGF_ENABLE*/
 #include "logf.h"
@@ -166,6 +167,7 @@ static bool open_shared;            /* the device is the "Playback" dmix bus */
 static int cur_route;               /* sink audiomon last published */
 static volatile bool private_open;      /* a USB or Bluetooth device is open */
 static volatile unsigned int out_delay_us;  /* written to the output, not yet heard */
+static volatile Uint32 out_delay_tick;      /* SDL_GetTicks() when out_delay_us was stamped */
 
 static void viz_pcm_push(const void *src_v, unsigned frames_n);
 
@@ -448,6 +450,7 @@ static bool bt_open(void)
     /* aplay's buffer and the pipe; the speaker's own latency is unknown. */
     out_delay_us = (unsigned int)((buffer_size + BT_PIPE_PERIODS * period_size) * 1000000ull /
                                   last_sample_rate);
+    out_delay_tick = SDL_GetTicks();
     real_sample_rate = last_sample_rate;
     fprintf(stderr, "pcm: bluetooth via child aplay (%s) at %u Hz\n",
             mac, last_sample_rate);
@@ -595,6 +598,35 @@ static void dev_lost(const char *why)
 
 /* --- pulling audio from Rockbox (upstream copy_frames) --------------------- */
 
+#define TAPE_SCRATCH_FRAMES 1024
+static int16_t tape_raw_in[TAPE_SCRATCH_FRAMES * 2];
+static int16_t tape_scratch[TAPE_SCRATCH_FRAMES * 2];
+
+static bool tape_pull_one_frame(int16_t *out_l, int16_t *out_r)
+{
+    while (dev_playing)
+    {
+        if (!pcm_size)
+        {
+            if (!pcm_play_dma_complete_callback(PCM_DMAST_OK, &pcm_data,
+                                                &pcm_size))
+                return false;
+            pcm_size &= ~(size_t)(FRAME_BYTES - 1);
+            if (!pcm_size)
+                continue;
+            pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+        }
+
+        const int16_t *s = (const int16_t *)pcm_data;
+        *out_l = s[0];
+        *out_r = s[1];
+        pcm_data += FRAME_BYTES;
+        pcm_size -= FRAME_BYTES;
+        return true;
+    }
+    return false;
+}
+
 /* Fill one period, padding with silence when Rockbox runs short.  The stream is
  * never stopped while open -- a restart clicks -- so a private route is fed
  * silence until it closes for idle (see writer_fn). */
@@ -602,51 +634,202 @@ static void copy_frames(void)
 {
     ssize_t frames_left = period_size;
     bool new_buffer = false;
+    unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
+    if (!sr)
+        sr = 44100;
 
     sink_lock();
 
-    while (frames_left > 0 && dev_playing)
+    if (tape_deck_fx_is_enabled() &&
+        !tape_deck_fx_is_stopped_idle() &&
+        !tape_deck_fx_ff_active() &&
+        dev_playing)
     {
-        if (!pcm_size)
+        int seed = tape_deck_fx_need_seed_frames(sr);
+        while (seed > 0)
         {
-            new_buffer = true;
-            if (!pcm_play_dma_complete_callback(PCM_DMAST_OK, &pcm_data,
-                                                &pcm_size))
+            int16_t sl = 0, sr_in = 0;
+            if (!tape_pull_one_frame(&sl, &sr_in))
                 break;
+            tape_deck_fx_push_input(sl, sr_in, true);
+            seed--;
         }
 
-        if (pcm_size % FRAME_BYTES)
+        if (tape_deck_fx_is_steady_run())
         {
-            logf("Wrong pcm_size");     /* upstream panicf()s; just resync */
-            pcm_size &= ~(size_t)(FRAME_BYTES - 1);
-            if (!pcm_size)
-                break;
+            /* Fast lock-free 1:1 steady playback path: copy raw input under
+             * `sink_lock` in ~2 us, then run cassette DSP without blocking
+             * Rockbox or plugin threads on `pcm_mtx`. */
+            while (frames_left > 0 && dev_playing)
+            {
+                if (!pcm_size)
+                {
+                    new_buffer = true;
+                    if (!pcm_play_dma_complete_callback(PCM_DMAST_OK, &pcm_data,
+                                                        &pcm_size))
+                        break;
+                }
+
+                if (pcm_size % FRAME_BYTES)
+                {
+                    pcm_size &= ~(size_t)(FRAME_BYTES - 1);
+                    if (!pcm_size)
+                        break;
+                }
+
+                ssize_t nframes = MIN((ssize_t)pcm_size / FRAME_BYTES, frames_left);
+                if (nframes > (ssize_t)TAPE_SCRATCH_FRAMES)
+                    nframes = (ssize_t)TAPE_SCRATCH_FRAMES;
+
+                memcpy(tape_raw_in, pcm_data, (size_t)nframes * FRAME_BYTES);
+                pcm_data += nframes * FRAME_BYTES;
+                pcm_size -= nframes * FRAME_BYTES;
+
+                if (new_buffer)
+                {
+                    new_buffer = false;
+                    pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+                }
+
+                sink_unlock();
+                tape_deck_fx_process_steady_block(tape_raw_in, tape_scratch,
+                                                  (int)nframes, sr);
+                viz_pcm_push(tape_scratch, (unsigned)nframes);
+                sink_lock();
+
+                int16_t *dst = &frames[2 * (period_size - frames_left)];
+                pcm_copy_buffer(dst, tape_scratch, (size_t)nframes * FRAME_BYTES);
+                frames_left -= nframes;
+
+                if (!tape_deck_fx_is_steady_run())
+                    break;
+            }
         }
-
-        ssize_t nframes = MIN((ssize_t)pcm_size / FRAME_BYTES, frames_left);
-        int16_t *dst = &frames[2 * (period_size - frames_left)];
-
-        /* Volume is applied by the copy; the visualizer wants the source before
-         * it, so the spectrum does not shrink with the volume. */
-        pcm_copy_buffer(dst, pcm_data, nframes * FRAME_BYTES);
-        viz_pcm_push(pcm_data, nframes);
-
-        pcm_data    += nframes * FRAME_BYTES;
-        pcm_size    -= nframes * FRAME_BYTES;
-        frames_left -= nframes;
-
-        if (new_buffer)
+        else
         {
-            new_buffer = false;
-            pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+            /* Variable-rate capstan path during ~300 ms Pause Spin-Down / Resume Spin-Up */
+            bool paused_now = false;
+            while (frames_left > 0 && dev_playing && !paused_now)
+            {
+                ssize_t chunk = MIN(frames_left, (ssize_t)TAPE_SCRATCH_FRAMES);
+                ssize_t produced = 0;
+
+                while (produced < chunk)
+                {
+                    bool exhausted = false;
+                    while (tape_deck_fx_in_demand() >= 1.0)
+                    {
+                        int16_t sl = 0, sr_in = 0;
+                        if (!tape_pull_one_frame(&sl, &sr_in))
+                        {
+                            exhausted = true;
+                            break;
+                        }
+                        tape_deck_fx_push_input(sl, sr_in, false);
+                    }
+                    if (exhausted)
+                        break;
+
+                    tape_deck_fx_render_one(&tape_scratch[2 * produced],
+                                            &tape_scratch[2 * produced + 1]);
+                    produced++;
+
+                    if (tape_deck_fx_take_pause_request())
+                    {
+                        mixer_channel_play_pause(PCM_MIXER_CHAN_PLAYBACK, false);
+                        pcm_size = 0;
+                        paused_now = true;
+                        break;
+                    }
+                }
+
+                if (produced <= 0)
+                    break;
+
+                int16_t *dst = &frames[2 * (period_size - frames_left)];
+                pcm_copy_buffer(dst, tape_scratch, (size_t)produced * FRAME_BYTES);
+                viz_pcm_push(tape_scratch, (unsigned)produced);
+                frames_left -= produced;
+            }
         }
     }
+    else
+    {
+        /* When the tape transport is stopped on Pause, still advance Rockbox's
+         * mixer DMA callbacks so its 3s idle countdown finishes cleanly, but
+         * mute any stale pre-mixed `downmix_buf` frame so no micro-burst of
+         * full-speed audio leaks out at the tail of the spin-down. */
+        bool mute_stopped_tape = tape_deck_fx_is_enabled() &&
+                                 tape_deck_fx_is_stopped_idle() &&
+                                 !tape_deck_fx_ff_active() &&
+                                 (mixer_channel_status(PCM_MIXER_CHAN_BEEP) != CHANNEL_PLAYING);
 
-    sink_unlock();
+        while (frames_left > 0 && dev_playing)
+        {
+            if (!pcm_size)
+            {
+                new_buffer = true;
+                if (!pcm_play_dma_complete_callback(PCM_DMAST_OK, &pcm_data,
+                                                    &pcm_size))
+                    break;
+            }
+
+            if (pcm_size % FRAME_BYTES)
+            {
+                logf("Wrong pcm_size");     /* upstream panicf()s; just resync */
+                pcm_size &= ~(size_t)(FRAME_BYTES - 1);
+                if (!pcm_size)
+                    break;
+            }
+
+            ssize_t nframes = MIN((ssize_t)pcm_size / FRAME_BYTES, frames_left);
+            int16_t *dst = &frames[2 * (period_size - frames_left)];
+
+            if (mute_stopped_tape)
+            {
+                memset(dst, 0, (size_t)nframes * FRAME_BYTES);
+            }
+            else
+            {
+                /* Volume is applied by the copy; the visualizer wants the source before
+                 * it, so the spectrum does not shrink with the volume. */
+                pcm_copy_buffer(dst, pcm_data, nframes * FRAME_BYTES);
+                viz_pcm_push(pcm_data, nframes);
+            }
+
+            pcm_data    += nframes * FRAME_BYTES;
+            pcm_size    -= nframes * FRAME_BYTES;
+            frames_left -= nframes;
+
+            if (new_buffer)
+            {
+                new_buffer = false;
+                pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+            }
+        }
+    }
 
     if (frames_left > 0)
         memset(&frames[2 * (period_size - frames_left)], 0,
                frames_left * FRAME_BYTES);
+
+    /* Overlay electro-mechanical FF / Rewind motor sound across the full period
+     * even during the 3s mixer silence window right after `audio_pre_ff_rewind`. */
+    if (tape_deck_fx_ff_active())
+    {
+        ssize_t rem = period_size;
+        while (rem > 0)
+        {
+            ssize_t chunk = MIN(rem, (ssize_t)TAPE_SCRATCH_FRAMES);
+            int16_t *dst = &frames[2 * (period_size - rem)];
+            tape_deck_fx_render_ff_period(tape_scratch, (int)chunk, sr);
+            pcm_copy_buffer(dst, tape_scratch, (size_t)chunk * FRAME_BYTES);
+            rem -= chunk;
+        }
+        frames_left = 0;
+    }
+
+    sink_unlock();
 }
 
 /* --- the writer thread (replaces upstream's SIGIO handler) ----------------- */
@@ -695,6 +878,7 @@ static bool writer_step(bool *pending)
             dev_lost("bluetooth helper gone");
             return false;
         }
+        out_delay_tick = SDL_GetTicks();
         *pending = false;
         return true;
     }
@@ -757,15 +941,19 @@ static bool writer_step(bool *pending)
         snd_pcm_start(handle);
 
     if (snd_pcm_delay(handle, &delay) == 0 && delay > 0)
+    {
         out_delay_us = (unsigned int)(delay * 1000000ull / real_sample_rate);
+        out_delay_tick = SDL_GetTicks();
+    }
     return true;
 }
 
 /* The speaker's dmix bus stays open while idle; a private route opens only to
- * play. */
+ * play (or produce FF/Rewind tape motor sound). */
 static bool want_open(void)
 {
-    return audiodev || cur_route == TRIMPOD_SINK_SPEAKER || dev_playing;
+    return audiodev || cur_route == TRIMPOD_SINK_SPEAKER ||
+           dev_playing || tape_deck_fx_ff_active();
 }
 
 static int writer_fn(void *param)
@@ -832,7 +1020,7 @@ static int writer_fn(void *param)
         /* A private route closes when the sink stops, which the mixer does
          * after three seconds of silence, so skips and short pauses keep it
          * open. */
-        if (private_open && !dev_playing)
+        if (private_open && !dev_playing && !tape_deck_fx_ff_active())
         {
             fprintf(stderr, "pcm: idle, closing\n");
             dev_close();
@@ -843,7 +1031,7 @@ static int writer_fn(void *param)
         /* Idle on the dmix bus: sleep instead of feeding it silence.  Its slave
          * never stops and the kernel fills it with silence, so the codec stays
          * powered and resuming cannot click. */
-        if (open_shared && !dev_playing && !pending)
+        if (open_shared && !dev_playing && !tape_deck_fx_ff_active() && !pending)
         {
             SDL_SemWaitTimeout(writer_wake, ROUTE_POLL_MS);
             continue;
@@ -900,10 +1088,28 @@ unsigned pcm_viz_latest(int16_t *out, unsigned max_frames)
     return n;
 }
 
+/* Live remaining output buffer latency in microseconds, interpolating drain
+ * elapsed since the last period write so 60 FPS visualizers never lag behind
+ * by up to a full ALSA period (~23 ms) between writer wakeups. */
+static unsigned int live_output_delay_us(void)
+{
+    if (!dev_playing || !dev_is_open())
+        return 0U;
+    unsigned int base = out_delay_us;
+    Uint32 dt_ms = SDL_GetTicks() - out_delay_tick;
+    unsigned int dt_us = (dt_ms < 250U) ? (dt_ms * 1000U) : 250000U;
+    return (base > dt_us) ? (base - dt_us) : 0U;
+}
+
+/* Display vsync + LCD scanout presentation lead (~22 ms at 60 Hz) so the
+ * rendered GPU frame lights up on screen at the exact instant the analyzed
+ * audio frame leaves the speaker. */
+#define VIZ_DISPLAY_LEAD_US 22000U
+
 /* Delay-compensated stereo PCM reader for the 4-shade visualizer engine.
- * Steps back in the ring by `out_delay_us * sample_rate / 1_000_000` frames
- * so visual beats land at the exact moment sound reaches the speaker or
- * Bluetooth headphones.  Returns 0 when playback is paused/stopped. */
+ * Steps back in the ring by live speaker latency (minus display presentation
+ * lead) and centers the `max_frames` Hann window on that exact frame so
+ * visual beats land dead-on ear arrival time.  Returns 0 when paused/stopped. */
 unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
                              unsigned *sample_rate_out)
 {
@@ -920,14 +1126,21 @@ unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
                      ? max_frames
                      : (VIZ_PCM_FRAMES / 2);
     unsigned max_delay = VIZ_PCM_FRAMES - n - 1024;
+    unsigned int raw_dly_us = live_output_delay_us();
+    unsigned int eff_dly_us = (raw_dly_us > VIZ_DISPLAY_LEAD_US)
+                            ? (raw_dly_us - VIZ_DISPLAY_LEAD_US)
+                            : 0U;
     unsigned delay_frames =
-        (unsigned)(((uint64_t)out_delay_us * (uint64_t)sr) / 1000000ULL);
+        (unsigned)(((uint64_t)eff_dly_us * (uint64_t)sr) / 1000000ULL);
     if (delay_frames > max_delay)
         delay_frames = max_delay;
     if (w <= delay_frames)
         return 0;
 
-    unsigned end = w - delay_frames;
+    unsigned speaker_frame = w - delay_frames;
+    unsigned end = speaker_frame + (n / 2);
+    if (end > w)
+        end = w;
     if (n > end)
         n = end;
     unsigned start = end - n;
@@ -1182,6 +1395,7 @@ static void sink_dma_init(void)
     last_sample_rate = hw_freq_sampr[HW_FREQ_DEFAULT];
     cur_route = trimpod_audio_sink();
     init_click_waveform();
+    tape_deck_fx_init();
 
     writer_wake = SDL_CreateSemaphore(0);
     writer_run = true;
@@ -1204,7 +1418,13 @@ static void sink_dma_postinit(void)
 
 unsigned int pcm_alsa_output_delay_us(void)
 {
-    return out_delay_us;
+    return live_output_delay_us();
+}
+
+void pcm_alsa_wake_writer(void)
+{
+    if (writer_wake)
+        SDL_SemPost(writer_wake);
 }
 
 /* Called from audiohw_close() on the way out.  Every alsa-lib call the writer

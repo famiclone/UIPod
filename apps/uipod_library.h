@@ -9,6 +9,8 @@
 #define _UIPOD_LIBRARY_H
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /* Open-or-create+migrate the index, then reconcile it against the source
  * folders.  Call once at startup, after settings are up. */
@@ -55,5 +57,14 @@ void uipod_library_genres(int category,
         void (*cb)(const char *genre, int track_count, void *ctx), void *ctx);
 void uipod_library_genre_tracks(int category, const char *genre,
         void (*cb)(const char *title, const char *path, void *ctx), void *ctx);
+
+/* Indexed access into the deduplicated Music catalog (`TP_CAT_MUSIC`) for
+ * plugins such as Music Quiz (`music_quiz.uipod`). */
+int  uipod_library_music_count(void);
+bool uipod_library_music_at(int index,
+                            char *path_out, size_t path_cap,
+                            char *artist_out, size_t artist_cap,
+                            char *title_out, size_t title_cap,
+                            uint32_t *duration_ms_out);
 
 #endif /* _UIPOD_LIBRARY_H */

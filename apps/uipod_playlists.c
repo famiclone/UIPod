@@ -861,6 +861,31 @@ bool uipod_play_track(const char *path)
     return uipod_play_tracks_at(arr, 1, 0);
 }
 
+bool uipod_play_single_at_ms(const char *path, unsigned long start_ms)
+{
+    if (!path || !path[0] || !file_exists(path))
+        return false;
+    if (playlist_create(NULL, NULL) == -1)
+        return false;
+
+    struct playlist_insert_context ctx;
+    if (playlist_insert_context_create(playlist_get_current(), &ctx,
+                                       PLAYLIST_INSERT_LAST, false, false) < 0)
+    {
+        playlist_insert_context_release(&ctx);
+        return false;
+    }
+    bool added = playlist_insert_context_add(&ctx, path) >= 0;
+    playlist_insert_context_release(&ctx);
+    if (!added || playlist_amount() <= 0)
+        return false;
+
+    global_settings.playlist_shuffle = false;
+    replaygain_update();
+    playlist_start(0, start_ms, 0);
+    return true;
+}
+
 bool uipod_play_tracks_at(char *const *paths, int count, int start_idx)
 {
     if (!paths || count <= 0)

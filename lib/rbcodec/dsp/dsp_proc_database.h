@@ -40,6 +40,7 @@ DSP_PROC_DB_START
     DSP_PROC_DB_ITEM(TIMESTRETCH)   /* time-stretching */
 #endif
     DSP_PROC_DB_ITEM(RESAMPLE)      /* resampler providing output frequency */
+    DSP_PROC_DB_ITEM(TEXTURE_WARP)  /* Ableton Texture-style granular time-warp */
     DSP_PROC_DB_ITEM(CROSSFEED)     /* stereo crossfeed */
     DSP_PROC_DB_ITEM(EQUALIZER)     /* n-band equalizer */
 #ifdef HAVE_SW_TONE_CONTROLS

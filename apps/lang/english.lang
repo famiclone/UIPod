@@ -19380,3 +19380,395 @@
     *: "Menu Click"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_EFFECTS
+  desc: UIPod Settings > Sound > Effects submenu
+  user: core
+  <source>
+    *: "Effects"
+  </source>
+  <dest>
+    *: "Effects"
+  </dest>
+  <voice>
+    *: "Effects"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_SPEED
+  desc: UIPod Settings > Sound > Effects > Speed (Texture Warp)
+  user: core
+  <source>
+    *: "Speed"
+  </source>
+  <dest>
+    *: "Speed"
+  </dest>
+  <voice>
+    *: "Speed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_MODE
+  desc: UIPod Settings > Sound > Effects > Tape Mode cassette emulation
+  user: core
+  <source>
+    *: "Tape Mode"
+  </source>
+  <dest>
+    *: "Tape Mode"
+  </dest>
+  <voice>
+    *: "Tape Mode"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_ENABLE
+  desc: UIPod Tape Mode master enable toggle
+  user: core
+  <source>
+    *: "Enable"
+  </source>
+  <dest>
+    *: "Enable"
+  </dest>
+  <voice>
+    *: "Enable"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_WOW
+  desc: UIPod Tape Mode wow and flutter speed warble
+  user: core
+  <source>
+    *: "Wow & Flutter"
+  </source>
+  <dest>
+    *: "Wow & Flutter"
+  </dest>
+  <voice>
+    *: "Wow and Flutter"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_HISS
+  desc: UIPod Tape Mode analog bias hiss level
+  user: core
+  <source>
+    *: "Tape Hiss"
+  </source>
+  <dest>
+    *: "Tape Hiss"
+  </dest>
+  <voice>
+    *: "Tape Hiss"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_CRINKLE
+  desc: UIPod Tape Mode mylar tape crinkles and dropouts
+  user: core
+  <source>
+    *: "Tape Crinkles"
+  </source>
+  <dest>
+    *: "Tape Crinkles"
+  </dest>
+  <voice>
+    *: "Tape Crinkles"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_SAT
+  desc: UIPod Tape Mode magnetic saturation and head bump
+  user: core
+  <source>
+    *: "Saturation"
+  </source>
+  <dest>
+    *: "Saturation"
+  </dest>
+  <voice>
+    *: "Saturation"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_TONE
+  desc: UIPod Tape Mode high-frequency roll-off
+  user: core
+  <source>
+    *: "HF Roll-Off"
+  </source>
+  <dest>
+    *: "HF Roll-Off"
+  </dest>
+  <voice>
+    *: "HF Roll-Off"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_PAUSE_FX
+  desc: UIPod Tape Mode motor spin-down on pause and spin-up on resume
+  user: core
+  <source>
+    *: "Stop / Start FX"
+  </source>
+  <dest>
+    *: "Stop / Start FX"
+  </dest>
+  <voice>
+    *: "Stop Start FX"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_TAPE_FF_SOUND
+  desc: UIPod Tape Mode mechanical motor sound during fast-forward and rewind
+  user: core
+  <source>
+    *: "Seek Motor Sound"
+  </source>
+  <dest>
+    *: "Seek Motor Sound"
+  </dest>
+  <voice>
+    *: "Seek Motor Sound"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_DELETE
+  desc: UIPod Browse context menu action to delete a file or folder
+  user: core
+  <source>
+    *: "Delete"
+  </source>
+  <dest>
+    *: "Delete"
+  </dest>
+  <voice>
+    *: "Delete"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_RENAME
+  desc: UIPod Browse context menu action to rename a file or folder
+  user: core
+  <source>
+    *: "Rename"
+  </source>
+  <dest>
+    *: "Rename"
+  </dest>
+  <voice>
+    *: "Rename"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_COPY
+  desc: UIPod Browse context menu action to copy a file or folder
+  user: core
+  <source>
+    *: "Copy"
+  </source>
+  <dest>
+    *: "Copy"
+  </dest>
+  <voice>
+    *: "Copy"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_MOVE
+  desc: UIPod Browse context menu action to move a file or folder
+  user: core
+  <source>
+    *: "Move"
+  </source>
+  <dest>
+    *: "Move"
+  </dest>
+  <voice>
+    *: "Move"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_INFO
+  desc: UIPod Browse context menu action to view file or folder info in Text Viewer
+  user: core
+  <source>
+    *: "Info"
+  </source>
+  <dest>
+    *: "Info"
+  </dest>
+  <voice>
+    *: "Info"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COPY_HERE_FMT
+  desc: UIPod destination picker row 0 to copy into the current directory
+  user: core
+  <source>
+    *: "[ Copy here: %s ]"
+  </source>
+  <dest>
+    *: "[ Copy here: %s ]"
+  </dest>
+  <voice>
+    *: "Copy here"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_MOVE_HERE_FMT
+  desc: UIPod destination picker row 0 to move into the current directory
+  user: core
+  <source>
+    *: "[ Move here: %s ]"
+  </source>
+  <dest>
+    *: "[ Move here: %s ]"
+  </dest>
+  <voice>
+    *: "Move here"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELETE_FILE_Q
+  desc: UIPod confirmation prompt before deleting a file
+  user: core
+  <source>
+    *: "Delete this file?"
+  </source>
+  <dest>
+    *: "Delete this file?"
+  </dest>
+  <voice>
+    *: "Delete this file?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELETE_DIR_Q
+  desc: UIPod confirmation prompt before recursively deleting a directory
+  user: core
+  <source>
+    *: "Delete folder and all contents?"
+  </source>
+  <dest>
+    *: "Delete folder and all contents?"
+  </dest>
+  <voice>
+    *: "Delete folder and all contents?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_OVERWRITE_Q
+  desc: UIPod confirmation prompt before overwriting an existing destination file
+  user: core
+  <source>
+    *: "Overwrite existing file?"
+  </source>
+  <dest>
+    *: "Overwrite existing file?"
+  </dest>
+  <voice>
+    *: "Overwrite existing file?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COPYING
+  desc: UIPod fullscreen progress message while copying files
+  user: core
+  <source>
+    *: "Copying..."
+  </source>
+  <dest>
+    *: "Copying..."
+  </dest>
+  <voice>
+    *: "Copying"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_MOVING
+  desc: UIPod fullscreen progress message while moving files
+  user: core
+  <source>
+    *: "Moving..."
+  </source>
+  <dest>
+    *: "Moving..."
+  </dest>
+  <voice>
+    *: "Moving"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_COPIED
+  desc: UIPod splash shown when copy completes
+  user: core
+  <source>
+    *: "Copied"
+  </source>
+  <dest>
+    *: "Copied"
+  </dest>
+  <voice>
+    *: "Copied"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_MOVED
+  desc: UIPod splash shown when move completes
+  user: core
+  <source>
+    *: "Moved"
+  </source>
+  <dest>
+    *: "Moved"
+  </dest>
+  <voice>
+    *: "Moved"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FILE_OP_FAILED
+  desc: UIPod splash shown when a file operation fails
+  user: core
+  <source>
+    *: "Operation failed"
+  </source>
+  <dest>
+    *: "Operation failed"
+  </dest>
+  <voice>
+    *: "Operation failed"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_INVALID_NAME
+  desc: UIPod splash shown when user enters an invalid filename
+  user: core
+  <source>
+    *: "Invalid name"
+  </source>
+  <dest>
+    *: "Invalid name"
+  </dest>
+  <voice>
+    *: "Invalid name"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_INVALID_DEST
+  desc: UIPod splash shown when copying or moving a folder into itself
+  user: core
+  <source>
+    *: "Cannot place folder inside itself"
+  </source>
+  <dest>
+    *: "Cannot place folder inside itself"
+  </dest>
+  <voice>
+    *: "Invalid destination"
+  </voice>
+</phrase>

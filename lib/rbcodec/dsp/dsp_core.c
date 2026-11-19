@@ -25,6 +25,7 @@
 
 #include "tdspeed.h"
 #include "resample.h"
+#include "texture_warp.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 /*#define LOGF_ENABLE*/
@@ -77,6 +78,7 @@ static const dsp_proc_init_fn_type dsp_init_fn[] INITDATA_ATTR = {
     &dsp_timestretch_init,
 #endif
     &dsp_resample_init,
+    &dsp_texture_warp_init,
 };
 
 /** Processing stages support functions **/

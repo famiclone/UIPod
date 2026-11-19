@@ -1,0 +1,16 @@
+{
+  "name": "uipod-web",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd uipod-wasm && wasm-pack build --target web --no-opt --out-dir ../src/wasm-pkg",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vite": "^6.2.0"
+  }
+}

@@ -1,0 +1,27 @@
+[workspace]
+
+[package]
+name = "uipod-wasm"
+version = "0.3.0"
+edition = "2021"
+description = "WebAssembly + WebGL2 runtime for UIPod (TrimUI Brick media player)"
+license = "GPL-2.0-or-later"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uipod-ui = { path = "../../crates/uipod-ui" }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "HtmlCanvasElement",
+    "WebGl2RenderingContext",
+    "WebGlContextAttributes",
+    "console",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

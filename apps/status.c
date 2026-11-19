@@ -22,12 +22,19 @@
 #include "config.h"
 #include "status.h"
 #include "audio.h"
+#include "tape_deck_fx.h"
 
 static enum playmode ff_mode = 0;
 
 void status_set_ffmode(enum playmode mode)
 {
     ff_mode = mode; /* Either STATUS_FASTFORWARD or STATUS_FASTBACKWARD */
+    int dir = 0;
+    if (mode == STATUS_FASTFORWARD)
+        dir = 1;
+    else if (mode == STATUS_FASTBACKWARD)
+        dir = -1;
+    tape_deck_fx_set_ffmode(dir);
 }
 
 int current_playmode(void)

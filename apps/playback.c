@@ -49,6 +49,7 @@
 #include "uipod_rs_navidrome.h"
 #include "uipod_rs_jellyfin.h"
 #include "uipod_playlists.h"
+#include "tape_deck_fx.h"
 #include <stdio.h>
 
 
@@ -2595,6 +2596,7 @@ static void audio_stop_playback(void)
     audio_wait_fade_complete();
 
     /* Stop the codec and unload it */
+    tape_deck_fx_on_seek_or_stop();
     halt_decoding_track(true);
     pcmbuf_play_stop();
     codec_unload();
@@ -2643,6 +2645,26 @@ static void audio_on_pause(bool pause)
         audio_on_codec_complete(codec_skip_status);
     }
 
+    if (tape_deck_fx_pause_fx_enabled())
+    {
+        if (pause)
+        {
+            pcmbuf_fade(false, true);
+            if (!ff_rw_mode)
+                (void)tape_deck_fx_begin_pause();
+            else
+                pcmbuf_pause(true);
+        }
+        else
+        {
+            tape_deck_fx_begin_resume();
+            pcmbuf_fade(false, true);
+            if (!ff_rw_mode)
+                pcmbuf_pause(false);
+        }
+        return;
+    }
+
     bool do_fade = global_settings.fade_on_stop;
 
     pcmbuf_fade(do_fade, !pause);
@@ -2672,6 +2694,7 @@ static void audio_on_skip(void)
         return;
 
     /* Force codec to abort this track */
+    tape_deck_fx_on_seek_or_stop();
     halt_decoding_track(true);
 
     /* Kill the ff/rw halt */
@@ -2766,6 +2789,7 @@ static void audio_on_dir_skip(int direction)
         return;
 
     /* Force codec to abort this track */
+    tape_deck_fx_on_seek_or_stop();
     halt_decoding_track(true);
 
     /* Kill the ff/rw halt */
@@ -2855,6 +2879,7 @@ static void audio_on_ff_rewind(long time)
         id3->elapsed = time;
         queue_reply(&audio_queue, 1);
 
+        tape_deck_fx_on_seek_or_stop();
         bool haltres = halt_decoding_track(pending == TRACK_SKIP_AUTO);
 
         /* Need this set in case ff/rw mode + error but _after_ the codec

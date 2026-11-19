@@ -27,17 +27,18 @@
 
 /* persisted key + display label for each toggle, indexed by uipod_mainmenu_id */
 static const char *const mm_keys[UIPOD_MM_COUNT] = {
-    "files", "extras", "artists", "albums", "genres", "videos",
+    "browse_main", "files", "extras", "artists", "albums", "genres", "videos",
     "songs", "playlists", "podcasts", "audiobooks", "television",
-    "browse", "shuffle",
+    "shuffle",
 };
 
-/* Shipped default matching ui.figcraft Main (#215):
- * Files, Extras, Artists, Albums, Genres, Videos ON (+ Settings & Now Playing always ON). */
+/* Shipped default:
+ * Browse (first), Files, Extras, Artists, Albums, Genres, Videos ON
+ * (+ Settings & Now Playing always ON). */
 static const bool mm_default[UIPOD_MM_COUNT] = {
-    true, true, true, true, true, true,
+    true, true, true, true, true, true, true,
     false, false, false, false, false,
-    false, false,
+    false,
 };
 static bool mm_enabled[UIPOD_MM_COUNT];
 static bool mm_loaded;
@@ -135,24 +136,24 @@ static const struct menu_value_cb mm_value[UIPOD_MM_COUNT] = {
     { mm_toggle_get, mm_toggle_cycle, &mm_enabled[11] },
     { mm_toggle_get, mm_toggle_cycle, &mm_enabled[12] },
 };
-MENUITEM_VALUE(mm_item_files,      ID2P(LANG_UIPOD_FILES),         &mm_value[0],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_extras,     ID2P(LANG_UIPOD_EXTRAS),        &mm_value[1],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_artists,    ID2P(LANG_UIPOD_ARTISTS),       &mm_value[2],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_albums,     ID2P(LANG_UIPOD_ALBUMS),        &mm_value[3],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_genres,     ID2P(LANG_UIPOD_GENRES),        &mm_value[4],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_videos,     ID2P(LANG_UIPOD_VIDEOS),        &mm_value[5],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_songs,      ID2P(LANG_UIPOD_SONGS),         &mm_value[6],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_playlists,  ID2P(LANG_PLAYLISTS),             &mm_value[7],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_podcasts,   ID2P(LANG_UIPOD_PODCASTS),      &mm_value[8],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_audiobooks, ID2P(LANG_UIPOD_AUDIOBOOKS),    &mm_value[9],  Icon_NOICON);
-MENUITEM_VALUE(mm_item_television, ID2P(LANG_UIPOD_TELEVISION),    &mm_value[10], Icon_NOICON);
-MENUITEM_VALUE(mm_item_browse,     ID2P(LANG_UIPOD_BROWSE),        &mm_value[11], Icon_NOICON);
+MENUITEM_VALUE(mm_item_browse,     ID2P(LANG_UIPOD_BROWSE),        &mm_value[0],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_files,      ID2P(LANG_UIPOD_FILES),         &mm_value[1],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_extras,     ID2P(LANG_UIPOD_EXTRAS),        &mm_value[2],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_artists,    ID2P(LANG_UIPOD_ARTISTS),       &mm_value[3],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_albums,     ID2P(LANG_UIPOD_ALBUMS),        &mm_value[4],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_genres,     ID2P(LANG_UIPOD_GENRES),        &mm_value[5],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_videos,     ID2P(LANG_UIPOD_VIDEOS),        &mm_value[6],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_songs,      ID2P(LANG_UIPOD_SONGS),         &mm_value[7],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_playlists,  ID2P(LANG_PLAYLISTS),           &mm_value[8],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_podcasts,   ID2P(LANG_UIPOD_PODCASTS),      &mm_value[9],  Icon_NOICON);
+MENUITEM_VALUE(mm_item_audiobooks, ID2P(LANG_UIPOD_AUDIOBOOKS),    &mm_value[10], Icon_NOICON);
+MENUITEM_VALUE(mm_item_television, ID2P(LANG_UIPOD_TELEVISION),    &mm_value[11], Icon_NOICON);
 MENUITEM_VALUE(mm_item_shuffle,    ID2P(LANG_UIPOD_SHUFFLE_ALL),   &mm_value[12], Icon_NOICON);
 MAKE_MENU(uipod_mainmenu_menu, ID2P(LANG_UIPOD_MAINMENU), NULL, Icon_Submenu_Entered,
-          &mm_item_files, &mm_item_extras, &mm_item_artists, &mm_item_albums,
-          &mm_item_genres, &mm_item_videos, &mm_item_songs, &mm_item_playlists,
-          &mm_item_podcasts, &mm_item_audiobooks, &mm_item_television,
-          &mm_item_browse, &mm_item_shuffle);
+          &mm_item_browse, &mm_item_files, &mm_item_extras, &mm_item_artists,
+          &mm_item_albums, &mm_item_genres, &mm_item_videos, &mm_item_songs,
+          &mm_item_playlists, &mm_item_podcasts, &mm_item_audiobooks,
+          &mm_item_television, &mm_item_shuffle);
 
 int uipod_mainmenu_settings(void)
 {

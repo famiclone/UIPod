@@ -44,6 +44,7 @@
 #include "rbunicode.h"
 #include "menus/eq_menu.h"
 #include "statusbar.h"
+#include "tape_deck_fx.h"
 
 #include "misc.h" /* current activity */
 
@@ -143,6 +144,9 @@ static const int auto_screen_off_values[] =
 /* UIPod "Visualization Transition": seconds each preset shows before switching;
  * 0 = "Never" (hold the preset until the user manually changes it). */
 static const int viz_transition_values[] = { 0, 5, 10, 15, 20, 30, 45, 60, 75, 90 };
+/* UIPod Sound -> Effects -> Speed: permille ratios (1000 = 1.0x, down to 62 = 1/16x ambient). */
+static const int fx_speed_values[] =
+    { 62, 83, 125, 167, 250, 333, 500, 650, 750, 850, 1000, 1150, 1250, 1500 };
 
 static const char graphic_numeric[] = "graphic,numeric";
 
@@ -286,6 +290,59 @@ static const char* formatter_seconds_0_is_never(char *buffer, size_t buffer_size
         return str(LANG_NEVER);
     snprintf(buffer, buffer_size, "%ds", val);
     return buffer;
+}
+
+static const char* fx_speed_formatter(char *buffer, size_t buffer_size,
+                                      int val, const char *unit)
+{
+    (void)unit;
+    switch (val)
+    {
+        case 62:   return "1/16x";
+        case 83:   return "1/12x";
+        case 125:  return "1/8x";
+        case 167:  return "1/6x";
+        case 250:  return "1/4x";
+        case 333:  return "1/3x";
+        case 500:  return "0.5x";
+        case 650:  return "0.65x";
+        case 750:  return "0.75x";
+        case 850:  return "0.85x";
+        case 1000: return "1.0x";
+        case 1150: return "1.15x";
+        case 1250: return "1.25x";
+        case 1500: return "1.5x";
+        default:
+            snprintf(buffer, buffer_size, "%d.%02dx", val / 1000, (val % 1000) / 10);
+            return buffer;
+    }
+}
+
+void uipod_tape_fx_apply(void)
+{
+    struct tape_deck_params p = {
+        .enabled     = global_settings.tape_mode,
+        .wow_pct     = global_settings.tape_wow,
+        .hiss_pct    = global_settings.tape_hiss,
+        .crinkle_pct = global_settings.tape_crinkle,
+        .sat_pct     = global_settings.tape_sat,
+        .tone_pct    = global_settings.tape_tone,
+        .pause_fx    = global_settings.tape_pause_fx,
+        .ff_sound    = global_settings.tape_ff_sound,
+    };
+    tape_deck_fx_set_params(&p);
+}
+
+static void tape_bool_cb(bool val)
+{
+    (void)val;
+    uipod_tape_fx_apply();
+}
+
+static void tape_int_cb(int val)
+{
+    (void)val;
+    uipod_tape_fx_apply();
 }
 
 
@@ -1050,6 +1107,26 @@ const struct settings_list settings[] = {
                    ID2P(LANG_UIPOD_TRANS_PIXELS),
                    ID2P(LANG_UIPOD_TRANS_BLINDS),
                    ID2P(LANG_OFF)),
+    TABLE_SETTING_LIST(F_SOUNDSETTING | F_NO_WRAP | F_ALLOW_ARBITRARY_VALS,
+                       fx_speed, LANG_UIPOD_FX_SPEED, 1000, "fx speed",
+                       NULL, UNIT_INT, fx_speed_formatter,
+                       dsp_set_texture_warp_speed, 14, fx_speed_values),
+    OFFON_SETTING(F_SOUNDSETTING, tape_mode, LANG_UIPOD_TAPE_ENABLE, false,
+                  "tape mode", tape_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_wow, LANG_UIPOD_TAPE_WOW, 55,
+                       "tape wow", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_hiss, LANG_UIPOD_TAPE_HISS, 45,
+                       "tape hiss", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_crinkle, LANG_UIPOD_TAPE_CRINKLE, 50,
+                       "tape crinkle", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_sat, LANG_UIPOD_TAPE_SAT, 50,
+                       "tape saturation", UNIT_PERCENT, 0, 100, 10, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_tone, LANG_UIPOD_TAPE_TONE, 45,
+                       "tape tone", UNIT_PERCENT, 0, 100, 10, NULL, tape_int_cb),
+    OFFON_SETTING(F_SOUNDSETTING, tape_pause_fx, LANG_UIPOD_TAPE_PAUSE_FX, true,
+                  "tape pause fx", tape_bool_cb),
+    OFFON_SETTING(F_SOUNDSETTING, tape_ff_sound, LANG_UIPOD_TAPE_FF_SOUND, true,
+                  "tape ff sound", tape_bool_cb),
 
 };
 

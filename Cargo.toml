@@ -12,6 +12,7 @@ members = [
     "plugins/snake",
     "plugins/tetris",
     "plugins/sound-racer",
+    "plugins/music-quiz",
     "plugins/stopwatch",
     "plugins/text-viewer",
     "plugins/lcd-plasma",

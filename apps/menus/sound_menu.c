@@ -40,6 +40,33 @@ MENUITEM_SETTING(channel_config, &global_settings.channel_config,
 MENUITEM_SETTING(crossfeed, &global_settings.crossfeed, lowlatency_callback);
 MENUITEM_SETTING(menu_click, &global_settings.menu_click, NULL);
 
+/* Effects submenu:
+ *   1. Speed (Ableton Texture Warp)
+ *   2. Tape Mode submenu (all analog cassette parameters + motor transport FX) */
+MENUITEM_SETTING(fx_speed, &global_settings.fx_speed, NULL);
+
+MENUITEM_SETTING(tape_mode,     &global_settings.tape_mode,     NULL);
+MENUITEM_SETTING(tape_wow,      &global_settings.tape_wow,      NULL);
+MENUITEM_SETTING(tape_hiss,     &global_settings.tape_hiss,     NULL);
+MENUITEM_SETTING(tape_crinkle,  &global_settings.tape_crinkle,  NULL);
+MENUITEM_SETTING(tape_sat,      &global_settings.tape_sat,      NULL);
+MENUITEM_SETTING(tape_tone,     &global_settings.tape_tone,     NULL);
+MENUITEM_SETTING(tape_pause_fx, &global_settings.tape_pause_fx, NULL);
+MENUITEM_SETTING(tape_ff_sound, &global_settings.tape_ff_sound, NULL);
+
+MAKE_MENU(tape_mode_menu, ID2P(LANG_UIPOD_TAPE_MODE), NULL, Icon_NOICON,
+          &tape_mode,
+          &tape_wow,
+          &tape_hiss,
+          &tape_crinkle,
+          &tape_sat,
+          &tape_tone,
+          &tape_pause_fx,
+          &tape_ff_sound);
+
+MAKE_MENU(sound_effects_menu, ID2P(LANG_UIPOD_EFFECTS), lowlatency_callback,
+          Icon_NOICON, &fx_speed, &tape_mode_menu);
+
 /* ReplayGain submenu */
 static int replaygain_callback(int action,
                                const struct menu_item_ex *this_item,
@@ -66,6 +93,7 @@ MAKE_MENU(replaygain_settings_menu, ID2P(LANG_REPLAYGAIN), 0, Icon_NOICON,
 
 MAKE_MENU(sound_settings, ID2P(LANG_UIPOD_SOUND), NULL, Icon_Audio,
           &equalizer_menu,
+          &sound_effects_menu,
           &replaygain_settings_menu,
           &balance,
           &channel_config,

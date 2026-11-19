@@ -847,6 +847,8 @@ pub unsafe extern "C" fn uipod_rs_viz_render_frame(
     fg1_rgb: u32,
     fg2_rgb: u32,
     fade: f32,
+    track_progress: f32,
+    transport_speed: f32,
 ) -> bool {
     let mut guard = match SYNC_VIZ.lock() {
         Ok(g) => g,
@@ -866,8 +868,17 @@ pub unsafe extern "C" fn uipod_rs_viz_render_frame(
         fg1_rgb,
         fg2_rgb,
     };
-    wrap.0
-        .render_frame(pcm_slice, sample_rate, dt, win_w, win_h, theme, fade);
+    wrap.0.render_frame(
+        pcm_slice,
+        sample_rate,
+        dt,
+        win_w,
+        win_h,
+        theme,
+        fade,
+        track_progress,
+        transport_speed,
+    );
     true
 }
 

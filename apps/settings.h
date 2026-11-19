@@ -532,6 +532,15 @@ struct user_settings
     bool mono_album_art;
     bool menu_click;
     int transition_style;
+    int fx_speed;
+    bool tape_mode;
+    int tape_wow;
+    int tape_hiss;
+    int tape_crinkle;
+    int tape_sat;
+    int tape_tone;
+    bool tape_pause_fx;
+    bool tape_ff_sound;
 
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \
@@ -562,5 +571,7 @@ struct user_settings
 extern struct user_settings global_settings;
 /* global status */
 extern struct system_status global_status;
+
+void uipod_tape_fx_apply(void);
 
 #endif /* __SETTINGS_H__ */

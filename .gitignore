@@ -345,3 +345,9 @@ source.txt
 .env
 .env.*
 *.figcraft
+
+# ---- UIPod Web Landing & WebAssembly Simulator ----
+/web/node_modules/
+/web/dist/
+/web/src/wasm-pkg/
+/web/uipod-wasm/target/

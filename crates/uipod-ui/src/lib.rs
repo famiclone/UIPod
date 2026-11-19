@@ -3,6 +3,7 @@
 //! Zero Rockbox header or symbol dependencies — usable both via C FFI during the
 //! incremental Strangler-Fig migration and directly from Rust in the final binary.
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
 pub mod icons;
 pub mod image_decode;

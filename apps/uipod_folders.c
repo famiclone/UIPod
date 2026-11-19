@@ -32,13 +32,18 @@
  * themselves.
  ****************************************************************************/
 #include "config.h"
+#include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>   /* qsort */
 #include <string.h>
+#include <strings.h>  /* strcasecmp */
+#include <sys/stat.h> /* stat / lstat (must precede file.h / dir.h macros) */
+#include <time.h>
 #include "string-extra.h"
 #include "strnatcmp.h"   /* natural alphabetical sort (2 before 10) */
-#include "kernel.h"      /* HZ */
+#include "kernel.h"      /* HZ, yield */
 #include "file.h"
 #include "dir.h"
 #include "pathfuncs.h"
@@ -53,28 +58,33 @@
 #include "misc.h"
 #include "icon.h"
 #include "filetypes.h"   /* filetype_get_attr / FILE_ATTR_AUDIO */
+#include "metadata.h"    /* get_metadata, struct mp3entry, get_codec_string */
 #include "playlist.h"    /* play a track on select */
 #include "uipod_folders.h"
 #include "uipod_ui.h"
 #include "uipod_page.h"
 #include "uipod_transition.h"   /* slide on folder descend/ascend */
 #include "uipod_playlists.h"    /* Hold-A = add highlighted file/folder to a playlist */
-#include "uipod_library.h"      /* Shuffle All's track set */
+#include "uipod_library.h"      /* Shuffle All's track set + mark_stale */
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_plugins.h"
 #include "uipod_rs_ui.h"
 #include "uipod_video.h"
 #include "uipod_svg.h"
+#include "uipod_keyboard.h"
 
-#define PICKER_ROOT     "/mnt/SDCARD"   /* pickers open here, walk up to / */
-#define MAX_FOLDERS     24
-#define FPATH_LEN       MAX_PATH
-#define LOAD_BUFSZ      (MAX_FOLDERS * FPATH_LEN)
+#define PICKER_ROOT      "/mnt/SDCARD"   /* pickers & Browse root on card */
+#define BROWSE_LAST_FILE ROCKBOX_DIR "/browse_last_dir.txt"
+#define BROWSE_INFO_FILE "/tmp/uipod_info.txt"
+#define MAX_FOLDERS      24
+#define FPATH_LEN        MAX_PATH
+#define LOAD_BUFSZ       (MAX_FOLDERS * FPATH_LEN)
 
-/* libc symlink(); Rockbox does not wrap it and root paths map 1:1 to the OS
- * (app_root_realpath() == "/"), so OS and Rockbox paths are interchangeable. */
+/* libc symlink()/unlink(); Rockbox does not wrap them and root paths map 1:1 to
+ * the OS (app_root_realpath() == "/"), so OS and Rockbox paths are interchangeable. */
 extern int symlink(const char *target, const char *linkpath);
+extern int unlink(const char *pathname);
 
 /* Last browse position, so re-entering a browse view (incl. returning from
  * Now Playing) restores the folder + highlighted entry.  Session-only. */
@@ -290,18 +300,122 @@ struct picker_page
     char   curdir[FPATH_LEN];
     char   root[FPATH_LEN];
     char   title_buf[FPATH_LEN];
-    /* folder-picker mode (out!=NULL): Hold A picks a folder into out[] */
+    /* folder-picker mode (out!=NULL): Hold A (or row 0 in dest_mode) picks a folder */
     char  *out;
     size_t out_len;
     bool   picked;
+    bool   dest_mode;              /* Copy/Move destination picker with row 0 "[ Here ]" */
+    bool   dest_is_move;           /* true = Move, false = Copy */
     /* music-browse mode (music=true): rows are folders+tracks, A plays a track,
      * exits with `result` for the root dispatch (GO_TO_WPS / GO_TO_ROOT) */
     bool   music;
     bool   video;                  /* music mode over video files */
+    bool   full_browse;            /* true in root Browse (SHOW_ALL + file manager ops) */
     int    result;
     struct browse_pos *pos;        /* music mode: where the position persists */
     struct tree_context *mctx;     /* music mode: the stock browse engine state */
 };
+
+static struct browse_pos s_files_browse_pos;
+static bool s_files_browse_loaded;
+
+static void strip_trailing_slash_inplace(char *s);
+
+static void files_browse_save_pos(const struct browse_pos *pos)
+{
+    if (!pos || !pos->have_last || !pos->last_dir[0])
+        return;
+    int fd = open(BROWSE_LAST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return;
+    write(fd, pos->last_dir, strlen(pos->last_dir));
+    write(fd, "\n", 1);
+    if (pos->last_sel[0])
+        write(fd, pos->last_sel, strlen(pos->last_sel));
+    write(fd, "\n", 1);
+    close(fd);
+}
+
+static void files_browse_load_pos(const char *fallback_root)
+{
+    if (!s_files_browse_loaded)
+    {
+        s_files_browse_loaded = true;
+        int fd = open(BROWSE_LAST_FILE, O_RDONLY);
+        if (fd >= 0)
+        {
+            char rbuf[FPATH_LEN * 2 + 8];
+            int len = read(fd, rbuf, sizeof(rbuf) - 1);
+            close(fd);
+            if (len > 0)
+            {
+                rbuf[len] = '\0';
+                char *line1 = rbuf;
+                char *nl1 = strchr(line1, '\n');
+                char *line2 = NULL;
+                if (nl1)
+                {
+                    *nl1 = '\0';
+                    line2 = nl1 + 1;
+                    char *nl2 = strchr(line2, '\n');
+                    if (nl2)
+                        *nl2 = '\0';
+                }
+                size_t l1 = strlen(line1);
+                if (l1 > 0 && line1[l1 - 1] == '\r')
+                    line1[--l1] = '\0';
+                if (line1[0] == '/')
+                {
+                    strlcpy(s_files_browse_pos.last_dir, line1,
+                            sizeof(s_files_browse_pos.last_dir));
+                    strip_trailing_slash_inplace(s_files_browse_pos.last_dir);
+                    s_files_browse_pos.have_last = true;
+                }
+                if (line2 && line2[0])
+                {
+                    size_t l2 = strlen(line2);
+                    if (l2 > 0 && line2[l2 - 1] == '\r')
+                        line2[--l2] = '\0';
+                    strlcpy(s_files_browse_pos.last_sel, line2,
+                            sizeof(s_files_browse_pos.last_sel));
+                }
+            }
+        }
+    }
+
+    if (s_files_browse_pos.have_last && !dir_exists(s_files_browse_pos.last_dir))
+    {
+        /* Walk up to the nearest still-existing parent directory under fallback_root */
+        char cur[FPATH_LEN];
+        strlcpy(cur, s_files_browse_pos.last_dir, sizeof(cur));
+        size_t rlen = strlen(fallback_root);
+        while (!dir_exists(cur))
+        {
+            const char *par = NULL;
+            size_t n = path_dirname(cur, &par);
+            if (!par || n == 0 || n >= sizeof(cur))
+            {
+                strlcpy(cur, fallback_root, sizeof(cur));
+                break;
+            }
+            char next[FPATH_LEN];
+            memcpy(next, par, n);
+            next[n] = '\0';
+            strip_trailing_slash_inplace(next);
+            if (strcmp(next, cur) == 0 ||
+                (rlen > 1 && (strncmp(next, fallback_root, rlen) != 0 ||
+                              (next[rlen] != '\0' && next[rlen] != '/'))))
+            {
+                strlcpy(cur, fallback_root, sizeof(cur));
+                break;
+            }
+            strlcpy(cur, next, sizeof(cur));
+        }
+        strlcpy(s_files_browse_pos.last_dir, cur, sizeof(s_files_browse_pos.last_dir));
+        s_files_browse_pos.last_sel[0] = '\0';
+        files_browse_save_pos(&s_files_browse_pos);
+    }
+}
 
 static const char *dir_basename_str(const char *path, char *out, size_t out_len)
 {
@@ -324,7 +438,9 @@ static const char *dir_basename_str(const char *path, char *out, size_t out_len)
 static void picker_update_title(struct picker_page *p)
 {
     const char *start_dir = dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/";
-    if (!p->music && strcmp(p->curdir, start_dir) == 0)
+    if (p->dest_mode)
+        dir_basename_str(p->curdir, p->title_buf, sizeof(p->title_buf));
+    else if (!p->music && strcmp(p->curdir, start_dir) == 0)
         strlcpy(p->title_buf, str(LANG_UIPOD_ADD_DIRECTORY), sizeof(p->title_buf));
     else
         dir_basename_str(p->curdir, p->title_buf, sizeof(p->title_buf));
@@ -424,6 +540,8 @@ static void browse_save_pos(struct picker_page *p)
     else
         p->pos->last_sel[0] = '\0';
     p->pos->have_last = true;
+    if (p->full_browse)
+        files_browse_save_pos(p->pos);
 }
 
 /* qsort comparator: natural alphabetical order of the names at two offsets */
@@ -488,7 +606,8 @@ static void pick_load(struct picker_page *p)
     qsort(pick_off + nfolders, pick_count - nfolders, sizeof pick_off[0],
           pick_off_cmp);
     picker_update_title(p);
-    gui_synclist_set_nb_items(&p->lists, pick_count);
+    int total_rows = p->dest_mode ? (pick_count + 1) : pick_count;
+    gui_synclist_set_nb_items(&p->lists, total_rows);
 
     /* Default to the top, unless an ascend asked us to re-highlight the folder
      * we just came out of (matched by name). */
@@ -498,12 +617,13 @@ static void pick_load(struct picker_page *p)
         for (int i = 0; i < pick_count; i++)
             if (strcmp(pick_namebuf + pick_off[i], pick_reselect) == 0)
             {
-                sel = i;
+                sel = p->dest_mode ? (i + 1) : i;
                 break;
             }
         pick_reselect[0] = '\0';
     }
-    gui_synclist_select_item(&p->lists, sel);
+    if (total_rows > 0)
+        gui_synclist_select_item(&p->lists, sel);
 }
 
 /* render the (reloaded) current dir off-screen for a slide transition */
@@ -525,13 +645,35 @@ static void pick_slide(struct picker_page *p, enum uipod_transition_dir dir)
 
 static const char *pick_get_name(int sel, void *data, char *buf, size_t buf_len)
 {
+    struct picker_page *p = (struct picker_page *)data;
+    if (p && p->dest_mode)
+    {
+        if (sel == 0)
+        {
+            char cur_base[FPATH_LEN];
+            dir_basename_str(p->curdir, cur_base, sizeof(cur_base));
+            snprintf(buf, buf_len,
+                     str(p->dest_is_move ? LANG_UIPOD_MOVE_HERE_FMT
+                                         : LANG_UIPOD_COPY_HERE_FMT),
+                     cur_base);
+            return buf;
+        }
+        int idx = sel - 1;
+        return (idx >= 0 && idx < pick_count) ? (pick_namebuf + pick_off[idx]) : "";
+    }
     (void)buf; (void)buf_len;
-    return item_name((struct picker_page *)data, sel);
+    return item_name(p, sel);
 }
 
 static const struct uipod_svg_icon *pick_get_svg_icon(int sel, void *data)
 {
     struct picker_page *p = (struct picker_page *)data;
+    if (p && p->dest_mode)
+    {
+        if (sel == 0)
+            return uipod_svg_tag("add_dir");
+        return (sel >= 1 && sel <= pick_count) ? uipod_svg_tag("folder") : NULL;
+    }
     if (sel < 0 || sel >= item_count(p))
         return NULL;
     if (!p->music)
@@ -542,16 +684,17 @@ static const struct uipod_svg_icon *pick_get_svg_icon(int sel, void *data)
 static bool pick_get_chevron(int sel, void *data)
 {
     struct picker_page *p = (struct picker_page *)data;
+    if (p && p->dest_mode)
+        return sel >= 1 && sel <= pick_count;
     return sel >= 0 && sel < item_count(p);
 }
 
 static const char *picker_legend(struct uipod_page *self)
 {
-    /* music: no legend (A plays / opens, Hold-A adds to a playlist, B backs out).
-     * folder-picker (Settings): A opens and B backs (universal), but Hold-A to add
-     * is the one non-obvious gesture, so publicize just that. */
-    return ((struct picker_page *)self)->music ? NULL
-                                               : str(LANG_UIPOD_HOLD_A_TO_ADD);
+    struct picker_page *p = (struct picker_page *)self;
+    if (p->music || p->dest_mode)
+        return NULL;
+    return str(LANG_UIPOD_HOLD_A_TO_ADD);
 }
 
 static void picker_draw(struct uipod_page *self)
@@ -634,6 +777,819 @@ static bool folder_play_or_ctx_track(struct picker_page *p, int sel,
     return started;
 }
 
+static const struct uipod_page_vtable picker_vtable;
+static const int picker_allowed[];
+
+static bool is_lang_ukrainian(void)
+{
+    return strcmp((const char *)global_settings.lang_file, "ukrainian") == 0;
+}
+
+static bool is_protected_sys_path(const char *path)
+{
+    if (!path || !path[0])
+        return true;
+    return strcmp(path, "/") == 0 ||
+           strcmp(path, "/mnt") == 0 ||
+           strcmp(path, PICKER_ROOT) == 0 ||
+           strcmp(path, ROCKBOX_DIR) == 0;
+}
+
+/* True if `candidate` equals `dir_path` or sits inside `dir_path/...` */
+static bool is_path_equal_or_child(const char *dir_path, const char *candidate)
+{
+    size_t n = strlen(dir_path);
+    while (n > 1 && dir_path[n - 1] == '/')
+        n--;
+    if (strncmp(candidate, dir_path, n) != 0)
+        return false;
+    return candidate[n] == '\0' || candidate[n] == '/';
+}
+
+static bool is_valid_entry_name(const char *nm)
+{
+    if (!nm || !nm[0])
+        return false;
+    if (strcmp(nm, ".") == 0 || strcmp(nm, "..") == 0)
+        return false;
+    if (strchr(nm, '/') || strchr(nm, '\\'))
+        return false;
+    return true;
+}
+
+static bool delete_path_recursive(const char *path, int depth)
+{
+    if (depth > 32 || is_protected_sys_path(path))
+        return false;
+
+    struct stat st;
+    if (lstat(path, &st) != 0)
+        return false;
+
+    if (!S_ISDIR(st.st_mode))
+        return (unlink(path) == 0 || remove(path) == 0);
+
+    DIR *d = opendir(path);
+    if (!d)
+        return false;
+
+    bool ok = true;
+    struct dirent *e;
+    while ((e = readdir(d)))
+    {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' ||
+             (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;
+        char child[FPATH_LEN];
+        path_append(child, path, e->d_name, sizeof(child));
+        if (!delete_path_recursive(child, depth + 1))
+            ok = false;
+    }
+    closedir(d);
+    yield();
+    if (!ok)
+        return false;
+    return rmdir(path) == 0;
+}
+
+static bool copy_single_file(const char *src, const char *dst)
+{
+    int in_fd = open(src, O_RDONLY);
+    if (in_fd < 0)
+        return false;
+    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (out_fd < 0)
+    {
+        close(in_fd);
+        return false;
+    }
+
+    const size_t bufsz = 65536;
+    char *buf = malloc(bufsz);
+    if (!buf)
+    {
+        close(out_fd);
+        close(in_fd);
+        unlink(dst);
+        return false;
+    }
+
+    bool ok = true;
+    for (;;)
+    {
+        ssize_t r = read(in_fd, buf, bufsz);
+        if (r < 0)
+        {
+            ok = false;
+            break;
+        }
+        if (r == 0)
+            break;
+        ssize_t off = 0;
+        while (off < r)
+        {
+            ssize_t w = write(out_fd, buf + off, (size_t)(r - off));
+            if (w <= 0)
+            {
+                ok = false;
+                break;
+            }
+            off += w;
+        }
+        if (!ok)
+            break;
+        yield();
+    }
+
+    free(buf);
+    close(out_fd);
+    close(in_fd);
+    if (!ok)
+        unlink(dst);
+    return ok;
+}
+
+static bool copy_path_recursive(const char *src, const char *dst, int depth)
+{
+    if (depth > 32)
+        return false;
+
+    struct stat st;
+    if (stat(src, &st) != 0)
+        return false;
+
+    if (!S_ISDIR(st.st_mode))
+        return copy_single_file(src, dst);
+
+    if (!dir_exists(dst) && mkdir(dst) != 0 && !dir_exists(dst))
+        return false;
+
+    DIR *d = opendir(src);
+    if (!d)
+        return false;
+
+    bool ok = true;
+    struct dirent *e;
+    while ((e = readdir(d)))
+    {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' ||
+             (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;
+        char csrc[FPATH_LEN], cdst[FPATH_LEN];
+        path_append(csrc, src, e->d_name, sizeof(csrc));
+        path_append(cdst, dst, e->d_name, sizeof(cdst));
+        if (!copy_path_recursive(csrc, cdst, depth + 1))
+        {
+            ok = false;
+            break;
+        }
+    }
+    closedir(d);
+    return ok;
+}
+
+static void make_duplicate_path(const char *dir, const char *name, bool isdir,
+                                char *out_name, size_t name_cap,
+                                char *out_path, size_t path_cap)
+{
+    char stem[FPATH_LEN];
+    const char *ext = "";
+    strlcpy(stem, name, sizeof(stem));
+    if (!isdir)
+    {
+        char *dot = strrchr(stem, '.');
+        if (dot && dot != stem)
+        {
+            ext = name + (dot - stem);
+            *dot = '\0';
+        }
+    }
+    for (int n = 1; n <= 999; n++)
+    {
+        if (n == 1)
+            snprintf(out_name, name_cap, "%s_copy%s", stem, ext);
+        else
+            snprintf(out_name, name_cap, "%s_copy%d%s", stem, n, ext);
+        path_append(out_path, dir, out_name, path_cap);
+        struct stat st;
+        if (lstat(out_path, &st) != 0)
+            return;
+    }
+}
+
+static bool browse_pick_dest_dir(const char *start_dir, bool is_move,
+                                 char *out, size_t out_len)
+{
+    const char *card_root = dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/";
+    struct picker_page dp =
+    {
+        .base = { .vt = &picker_vtable, .context = CONTEXT_LIST,
+                  .allowed = picker_allowed },
+        .out = out, .out_len = out_len, .picked = false,
+        .dest_mode = true, .dest_is_move = is_move,
+    };
+    strlcpy(dp.root, card_root, sizeof(dp.root));
+    strlcpy(dp.curdir, dir_exists(start_dir) ? start_dir : card_root,
+            sizeof(dp.curdir));
+    strip_trailing_slash_inplace(dp.curdir);
+    pick_reselect[0] = '\0';
+
+    gui_synclist_init(&dp.lists, pick_get_name, &dp, false, 1, NULL);
+    gui_synclist_set_svg_icon_callback(&dp.lists, pick_get_svg_icon);
+    gui_synclist_set_chevron_callback(&dp.lists, pick_get_chevron);
+    pick_load(&dp);
+
+    push_current_activity(ACTIVITY_FILEBROWSER);
+    uipod_page_run(&dp.base);
+    pop_current_activity();
+
+    return dp.picked && !uipod_home_pending;
+}
+
+static void u64_to_grouped_str(uint64_t v, char *out, size_t cap)
+{
+    char rev[32];
+    int n = 0, digits = 0;
+    if (v == 0)
+    {
+        strlcpy(out, "0", cap);
+        return;
+    }
+    while (v > 0 && n < (int)sizeof(rev) - 2)
+    {
+        if (digits > 0 && (digits % 3) == 0)
+            rev[n++] = ',';
+        rev[n++] = (char)('0' + (v % 10));
+        v /= 10;
+        digits++;
+    }
+    size_t k = 0;
+    while (n > 0 && k + 1 < cap)
+        out[k++] = rev[--n];
+    out[k] = '\0';
+}
+
+static void format_human_bytes(uint64_t bytes, bool uk, char *out, size_t cap)
+{
+    char exact[32];
+    u64_to_grouped_str(bytes, exact, sizeof(exact));
+    const char *b_unit = uk ? "Б" : "B";
+    if (bytes < 1024ULL)
+    {
+        snprintf(out, cap, "%s %s", exact, b_unit);
+        return;
+    }
+    const char *unit = uk ? "КБ" : "KB";
+    uint64_t div = 1024ULL;
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL)
+    {
+        unit = uk ? "ГБ" : "GB";
+        div = 1024ULL * 1024ULL * 1024ULL;
+    }
+    else if (bytes >= 1024ULL * 1024ULL)
+    {
+        unit = uk ? "МБ" : "MB";
+        div = 1024ULL * 1024ULL;
+    }
+    unsigned long whole = (unsigned long)(bytes / div);
+    unsigned long frac  = (unsigned long)(((bytes % div) * 100ULL + div / 2ULL) / div);
+    if (frac >= 100UL)
+    {
+        whole++;
+        frac = 0;
+    }
+    snprintf(out, cap, "%lu.%02lu %s (%s %s)", whole, frac, unit, exact, b_unit);
+}
+
+struct dir_stats_acc
+{
+    uint64_t total_bytes;
+    unsigned long files;
+    unsigned long dirs;
+    unsigned long visited;
+    bool capped;
+};
+
+static void walk_dir_stats(const char *path, int depth, struct dir_stats_acc *acc)
+{
+    if (depth > 16 || acc->capped)
+        return;
+    DIR *d = opendir(path);
+    if (!d)
+        return;
+    struct dirent *e;
+    while ((e = readdir(d)))
+    {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' ||
+             (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;
+        if (++acc->visited > 10000UL)
+        {
+            acc->capped = true;
+            break;
+        }
+        if ((acc->visited & 255UL) == 0)
+            yield();
+        char child[FPATH_LEN];
+        path_append(child, path, e->d_name, sizeof(child));
+        struct stat st;
+        if (lstat(child, &st) != 0)
+            continue;
+        if (S_ISDIR(st.st_mode))
+        {
+            acc->dirs++;
+            walk_dir_stats(child, depth + 1, acc);
+        }
+        else
+        {
+            acc->files++;
+            if (st.st_size > 0)
+                acc->total_bytes += (uint64_t)st.st_size;
+        }
+    }
+    closedir(d);
+}
+
+static bool write_info_report(const char *name, const char *path, bool isdir)
+{
+    bool uk = is_lang_ukrainian();
+    int fd = open(BROWSE_INFO_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return false;
+
+    fdprintf(fd, "# %s\n\n", name);
+    fdprintf(fd, "## %s\n\n", uk ? "Загальне" : "General");
+
+    const char *type_str;
+    if (isdir)
+        type_str = uk ? "Папка" : "Folder";
+    else if (filetype_is_video(name))
+        type_str = uk ? "Відеофайл" : "Video File";
+    else if ((filetype_get_attr(name) & FILE_ATTR_MASK) == FILE_ATTR_AUDIO)
+        type_str = uk ? "Аудіофайл" : "Audio File";
+    else if (uipod_plugins_can_open_file(path))
+        type_str = uk ? "Документ / Плагін" : "Document / Plugin";
+    else
+        type_str = uk ? "Файл" : "File";
+
+    fdprintf(fd, "• %s: %s\n", uk ? "Тип" : "Type", type_str);
+    fdprintf(fd, "• %s: %s\n", uk ? "Шлях" : "Path", path);
+
+    struct stat st;
+    bool have_st = (stat(path, &st) == 0);
+    if (isdir)
+    {
+        struct dir_stats_acc acc = {0};
+        walk_dir_stats(path, 0, &acc);
+        char sz_buf[80];
+        format_human_bytes(acc.total_bytes, uk, sz_buf, sizeof(sz_buf));
+        const char *plus = acc.capped ? "+" : "";
+        if (uk)
+        {
+            fdprintf(fd, "• Вміст: %lu%s файлів, %lu%s папок\n",
+                     acc.files, plus, acc.dirs, plus);
+            fdprintf(fd, "• Загальний розмір: %s%s\n", sz_buf, plus);
+        }
+        else
+        {
+            fdprintf(fd, "• Contents: %lu%s files, %lu%s folders\n",
+                     acc.files, plus, acc.dirs, plus);
+            fdprintf(fd, "• Total Size: %s%s\n", sz_buf, plus);
+        }
+    }
+    else if (have_st)
+    {
+        char sz_buf[80];
+        uint64_t fbytes = st.st_size > 0 ? (uint64_t)st.st_size : 0;
+        format_human_bytes(fbytes, uk, sz_buf, sizeof(sz_buf));
+        fdprintf(fd, "• %s: %s\n", uk ? "Розмір" : "Size", sz_buf);
+    }
+
+    if (have_st)
+    {
+        struct tm tm_val;
+        if (localtime_r(&st.st_mtime, &tm_val))
+        {
+            fdprintf(fd, "• %s: %04d-%02d-%02d %02d:%02d:%02d\n",
+                     uk ? "Змінено" : "Modified",
+                     tm_val.tm_year + 1900, tm_val.tm_mon + 1, tm_val.tm_mday,
+                     tm_val.tm_hour, tm_val.tm_min, tm_val.tm_sec);
+        }
+    }
+
+    if (!isdir && (filetype_get_attr(name) & FILE_ATTR_MASK) == FILE_ATTR_AUDIO)
+    {
+        struct mp3entry *id3 = calloc(1, sizeof(*id3));
+        if (id3)
+        {
+            int afd = open(path, O_RDONLY);
+            if (afd >= 0)
+            {
+                bool got = get_metadata(id3, afd, path);
+                close(afd);
+                if (got)
+                {
+                    fdprintf(fd, "\n## %s\n\n",
+                             uk ? "Аудіо метадані" : "Audio Metadata");
+                    const char *codec = get_codec_string(id3->codectype);
+                    if (codec && codec[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Формат" : "Codec", codec);
+                    if (id3->length > 0)
+                    {
+                        unsigned long sec = id3->length / 1000UL;
+                        unsigned long hrs = sec / 3600UL;
+                        unsigned long min = (sec % 3600UL) / 60UL;
+                        unsigned long rem = sec % 60UL;
+                        if (hrs > 0)
+                            fdprintf(fd, "• %s: %lu:%02lu:%02lu\n",
+                                     uk ? "Тривалість" : "Duration", hrs, min, rem);
+                        else
+                            fdprintf(fd, "• %s: %lu:%02lu\n",
+                                     uk ? "Тривалість" : "Duration", min, rem);
+                    }
+                    if (id3->bitrate > 0)
+                        fdprintf(fd, "• %s: %u kbps%s\n",
+                                 uk ? "Бітрейт" : "Bitrate",
+                                 id3->bitrate, id3->vbr ? " (VBR)" : "");
+                    if (id3->frequency > 0)
+                        fdprintf(fd, "• %s: %lu Hz\n",
+                                 uk ? "Частота" : "Sample Rate", id3->frequency);
+                    if (id3->title && id3->title[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Назва" : "Title", id3->title);
+                    if (id3->artist && id3->artist[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Виконавець" : "Artist", id3->artist);
+                    if (id3->album && id3->album[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Альбом" : "Album", id3->album);
+                    if (id3->albumartist && id3->albumartist[0] &&
+                        (!id3->artist || strcmp(id3->albumartist, id3->artist) != 0))
+                        fdprintf(fd, "• %s: %s\n",
+                                 uk ? "Виконавець альбому" : "Album Artist",
+                                 id3->albumartist);
+                    if (id3->genre_string && id3->genre_string[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Жанр" : "Genre", id3->genre_string);
+                    if (id3->year > 0)
+                        fdprintf(fd, "• %s: %d\n", uk ? "Рік" : "Year", id3->year);
+                    else if (id3->year_string && id3->year_string[0])
+                        fdprintf(fd, "• %s: %s\n", uk ? "Рік" : "Year", id3->year_string);
+                    if (id3->tracknum > 0)
+                    {
+                        if (id3->discnum > 0)
+                            fdprintf(fd, "• %s: %d (%s %d)\n",
+                                     uk ? "Трек" : "Track", id3->tracknum,
+                                     uk ? "Диск" : "Disc", id3->discnum);
+                        else
+                            fdprintf(fd, "• %s: %d\n",
+                                     uk ? "Трек" : "Track", id3->tracknum);
+                    }
+#ifdef HAVE_ALBUMART
+                    if (id3->has_embedded_albumart)
+                        fdprintf(fd, "• %s: %s (%d KB)\n",
+                                 uk ? "Вбудована обкладинка" : "Embedded Art",
+                                 uk ? "Так" : "Yes",
+                                 (id3->albumart.size + 1023) / 1024);
+#endif
+                }
+            }
+            free(id3);
+        }
+    }
+
+    close(fd);
+    return true;
+}
+
+enum browse_ctx_act
+{
+    BCTX_PLAY = 0,
+    BCTX_PLAY_SHUFFLED,
+    BCTX_PLAY_NEXT,
+    BCTX_ADD_QUEUE,
+    BCTX_ADD_PLAYLIST,
+    BCTX_DELETE,
+    BCTX_RENAME,
+    BCTX_COPY,
+    BCTX_MOVE,
+    BCTX_INFO,
+};
+
+static enum uipod_page_result browse_file_context(struct picker_page *p,
+                                                  int sel, bool have_sel)
+{
+    if (!have_sel)
+    {
+        /* Empty folder: allow inspecting the current folder's Info */
+        char cur_base[FPATH_LEN];
+        dir_basename_str(p->curdir, cur_base, sizeof(cur_base));
+        static const char *const empty_opts[] = { ID2P(LANG_UIPOD_FILE_INFO) };
+        if (uipod_context_menu(cur_base, empty_opts, 1) == 0 &&
+            write_info_report(cur_base, p->curdir, true))
+        {
+            tree_unlock_cache(p->mctx);
+            uipod_plugins_open_file(BROWSE_INFO_FILE);
+            tree_lock_cache(p->mctx);
+            if (uipod_home_pending)
+            {
+                p->base.home = true;
+                return UIPOD_PAGE_DONE;
+            }
+            music_load(p);
+        }
+        return UIPOD_PAGE_STAY;
+    }
+
+    char chosen[FPATH_LEN];
+    strlcpy(chosen, item_name(p, sel), sizeof(chosen));
+    char path[FPATH_LEN];
+    path_append(path, p->curdir, chosen, sizeof(path));
+    bool isdir = item_isdir(p, sel);
+    bool playable_audio = !isdir && is_playable_audio_name(chosen);
+    browse_save_pos(p);
+
+    const char *opts[10];
+    enum browse_ctx_act acts[10];
+    int n = 0;
+
+    if (isdir)
+    {
+        opts[n] = ID2P(LANG_PLAY);                  acts[n++] = BCTX_PLAY;
+        opts[n] = ID2P(LANG_UIPOD_PLAY_SHUFFLED);   acts[n++] = BCTX_PLAY_SHUFFLED;
+        opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAYLIST); acts[n++] = BCTX_ADD_PLAYLIST;
+    }
+    else if (playable_audio)
+    {
+        opts[n] = ID2P(LANG_PLAY);                    acts[n++] = BCTX_PLAY;
+        opts[n] = ID2P(LANG_PLAY_NEXT);               acts[n++] = BCTX_PLAY_NEXT;
+        opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE); acts[n++] = BCTX_ADD_QUEUE;
+        opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAYLIST);   acts[n++] = BCTX_ADD_PLAYLIST;
+    }
+
+    opts[n] = ID2P(LANG_UIPOD_FILE_DELETE); acts[n++] = BCTX_DELETE;
+    opts[n] = ID2P(LANG_UIPOD_FILE_RENAME); acts[n++] = BCTX_RENAME;
+    opts[n] = ID2P(LANG_UIPOD_FILE_COPY);   acts[n++] = BCTX_COPY;
+    opts[n] = ID2P(LANG_UIPOD_FILE_MOVE);   acts[n++] = BCTX_MOVE;
+    opts[n] = ID2P(LANG_UIPOD_FILE_INFO);   acts[n++] = BCTX_INFO;
+
+    int pick = uipod_context_menu(chosen, opts, n);
+    if (pick < 0 || pick >= n)
+        return UIPOD_PAGE_STAY;
+
+    switch (acts[pick])
+    {
+        case BCTX_PLAY:
+        case BCTX_PLAY_SHUFFLED:
+        {
+            bool shuf = (acts[pick] == BCTX_PLAY_SHUFFLED);
+            bool started = false;
+            if (isdir)
+            {
+                tree_unlock_cache(p->mctx);
+                started = uipod_queue_add(path, ATTR_DIRECTORY,
+                                          PLAYLIST_REPLACE, shuf);
+                tree_lock_cache(p->mctx);
+            }
+            else
+            {
+                started = folder_play_or_ctx_track(p, sel, chosen, false);
+            }
+            if (started)
+            {
+                p->result = GO_TO_WPS;
+                return UIPOD_PAGE_DONE;
+            }
+            strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+            music_load(p);
+            break;
+        }
+
+        case BCTX_PLAY_NEXT:
+            uipod_queue_add(path, FILE_ATTR_AUDIO, PLAYLIST_INSERT, false);
+            break;
+
+        case BCTX_ADD_QUEUE:
+            uipod_queue_add(path, FILE_ATTR_AUDIO, PLAYLIST_INSERT_LAST, false);
+            break;
+
+        case BCTX_ADD_PLAYLIST:
+            tree_unlock_cache(p->mctx);
+            uipod_playlists_pick(path, isdir ? ATTR_DIRECTORY : FILE_ATTR_AUDIO);
+            tree_lock_cache(p->mctx);
+            strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+            music_load(p);
+            break;
+
+        case BCTX_DELETE:
+        {
+            if (is_protected_sys_path(path))
+            {
+                splash(HZ, ID2P(LANG_UIPOD_FILE_OP_FAILED));
+                break;
+            }
+            const char *q = str(isdir ? LANG_UIPOD_DELETE_DIR_Q
+                                      : LANG_UIPOD_DELETE_FILE_Q);
+            if (uipod_confirm(q, chosen))
+            {
+                if (delete_path_recursive(path, 0))
+                {
+                    uipod_library_mark_stale();
+                    pick_reselect[0] = '\0';
+                    music_load(p);
+                    int cnt = item_count(p);
+                    if (cnt > 0)
+                    {
+                        int next_sel = (sel < cnt) ? sel : (cnt - 1);
+                        gui_synclist_select_item(&p->lists, next_sel);
+                    }
+                    browse_save_pos(p);
+                    splash(HZ / 2, ID2P(LANG_UIPOD_DELETED));
+                }
+                else
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_FILE_OP_FAILED));
+                }
+            }
+            break;
+        }
+
+        case BCTX_RENAME:
+        {
+            char newname[FPATH_LEN];
+            strlcpy(newname, chosen, sizeof(newname));
+            if (uipod_kbd_input_ex(newname, sizeof(newname), true) == 0)
+            {
+                if (!is_valid_entry_name(newname))
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_INVALID_NAME));
+                    break;
+                }
+                if (strcmp(newname, chosen) == 0)
+                    break;
+
+                char newpath[FPATH_LEN];
+                path_append(newpath, p->curdir, newname, sizeof(newpath));
+                struct stat dst_st;
+                if (strcasecmp(newname, chosen) != 0 &&
+                    lstat(newpath, &dst_st) == 0)
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_NAME_EXISTS));
+                    break;
+                }
+                if (rename(path, newpath) == 0)
+                {
+                    uipod_library_mark_stale();
+                    strlcpy(pick_reselect, newname, sizeof(pick_reselect));
+                    music_load(p);
+                    browse_save_pos(p);
+                }
+                else
+                {
+                    splash(HZ, ID2P(LANG_UIPOD_RENAME_FAILED));
+                }
+            }
+            break;
+        }
+
+        case BCTX_COPY:
+        case BCTX_MOVE:
+        {
+            bool is_move = (acts[pick] == BCTX_MOVE);
+            char dest_dir[FPATH_LEN];
+            tree_unlock_cache(p->mctx);
+            bool picked = browse_pick_dest_dir(p->curdir, is_move,
+                                               dest_dir, sizeof(dest_dir));
+            tree_lock_cache(p->mctx);
+            if (uipod_home_pending)
+            {
+                p->base.home = true;
+                return UIPOD_PAGE_DONE;
+            }
+            if (!picked)
+            {
+                strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                music_load(p);
+                break;
+            }
+
+            char dst_name[FPATH_LEN];
+            char dst_path[FPATH_LEN];
+            strlcpy(dst_name, chosen, sizeof(dst_name));
+            path_append(dst_path, dest_dir, dst_name, sizeof(dst_path));
+
+            if (isdir && is_path_equal_or_child(path, dest_dir))
+            {
+                strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                music_load(p);
+                splash(HZ, ID2P(LANG_UIPOD_INVALID_DEST));
+                break;
+            }
+
+            if (strcmp(path, dst_path) == 0)
+            {
+                if (is_move)
+                {
+                    strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                    music_load(p);
+                    break;
+                }
+                make_duplicate_path(dest_dir, chosen, isdir,
+                                    dst_name, sizeof(dst_name),
+                                    dst_path, sizeof(dst_path));
+            }
+            else
+            {
+                struct stat dst_st;
+                if (lstat(dst_path, &dst_st) == 0)
+                {
+                    if (isdir || S_ISDIR(dst_st.st_mode))
+                    {
+                        strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                        music_load(p);
+                        splash(HZ, ID2P(LANG_UIPOD_NAME_EXISTS));
+                        break;
+                    }
+                    if (!uipod_confirm(str(LANG_UIPOD_OVERWRITE_Q), chosen))
+                    {
+                        strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                        music_load(p);
+                        break;
+                    }
+                    unlink(dst_path);
+                }
+            }
+
+            bool ok = false;
+            if (is_move)
+            {
+                if (rename(path, dst_path) == 0)
+                {
+                    ok = true;
+                }
+                else
+                {
+                    uipod_fullscreen_message(str(LANG_UIPOD_MOVING), NULL);
+                    if (copy_path_recursive(path, dst_path, 0))
+                        ok = delete_path_recursive(path, 0);
+                }
+            }
+            else
+            {
+                uipod_fullscreen_message(str(LANG_UIPOD_COPYING), NULL);
+                ok = copy_path_recursive(path, dst_path, 0);
+            }
+
+            if (ok)
+            {
+                uipod_library_mark_stale();
+                if (!is_move && strcmp(dest_dir, p->curdir) == 0)
+                    strlcpy(pick_reselect, dst_name, sizeof(pick_reselect));
+                else if (!is_move)
+                    strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                else
+                    pick_reselect[0] = '\0';
+                music_load(p);
+                if (is_move && item_count(p) > 0)
+                {
+                    int cnt = item_count(p);
+                    int next_sel = (sel < cnt) ? sel : (cnt - 1);
+                    gui_synclist_select_item(&p->lists, next_sel);
+                }
+                browse_save_pos(p);
+                splash(HZ / 2, is_move ? ID2P(LANG_UIPOD_MOVED)
+                                       : ID2P(LANG_UIPOD_COPIED));
+            }
+            else
+            {
+                strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                music_load(p);
+                splash(HZ, ID2P(LANG_UIPOD_FILE_OP_FAILED));
+            }
+            break;
+        }
+
+        case BCTX_INFO:
+        {
+            if (write_info_report(chosen, path, isdir))
+            {
+                tree_unlock_cache(p->mctx);
+                uipod_plugins_open_file(BROWSE_INFO_FILE);
+                tree_lock_cache(p->mctx);
+                if (uipod_home_pending)
+                {
+                    p->base.home = true;
+                    return UIPOD_PAGE_DONE;
+                }
+                strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+                music_load(p);
+            }
+            break;
+        }
+    }
+
+    return UIPOD_PAGE_STAY;
+}
+
 static enum uipod_page_result picker_on_action(struct uipod_page *self,
                                                  int action)
 {
@@ -644,6 +1600,28 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
     switch (action)
     {
         case ACTION_STD_OK:          /* A: open a folder, or (music) play a track */
+            if (p->dest_mode)
+            {
+                if (sel == 0)
+                {
+                    strlcpy(p->out, p->curdir, p->out_len);
+                    strip_trailing_slash_inplace(p->out);
+                    p->picked = true;
+                    return UIPOD_PAGE_DONE;
+                }
+                int idx = sel - 1;
+                if (idx >= 0 && idx < pick_count)
+                {
+                    char next[FPATH_LEN];
+                    path_append(next, p->curdir, pick_namebuf + pick_off[idx],
+                                sizeof(next));
+                    strip_trailing_slash_inplace(next);
+                    strlcpy(p->curdir, next, sizeof(p->curdir));
+                    pick_reselect[0] = '\0';
+                    pick_slide(p, UIPOD_TRANS_FORWARD);
+                }
+                return UIPOD_PAGE_STAY;
+            }
             if (!have_sel)
                 return UIPOD_PAGE_STAY;
             if (p->music && !item_isdir(p, sel))   /* a track: queue folder tracks */
@@ -690,12 +1668,35 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                 strlcpy(p->curdir, next, sizeof(p->curdir));
                 pick_reselect[0] = '\0';
                 pick_slide(p, UIPOD_TRANS_FORWARD);
+                browse_save_pos(p);
             }
             return UIPOD_PAGE_STAY;
 
-        case ACTION_STD_CONTEXT:     /* Hold A: music context menu / pick folder */
+        case ACTION_STD_CONTEXT:     /* Hold A / MENU: context menu / pick folder */
+            if (p->dest_mode)
+            {
+                if (sel == 0)
+                {
+                    strlcpy(p->out, p->curdir, p->out_len);
+                }
+                else if (sel >= 1 && sel <= pick_count)
+                {
+                    path_append(p->out, p->curdir,
+                                pick_namebuf + pick_off[sel - 1], p->out_len);
+                }
+                else
+                {
+                    return UIPOD_PAGE_STAY;
+                }
+                strip_trailing_slash_inplace(p->out);
+                p->picked = true;
+                return UIPOD_PAGE_DONE;
+            }
             if (p->music)
             {
+                if (p->full_browse)
+                    return browse_file_context(p, sel, have_sel);
+
                 if (have_sel && !p->video)
                 {
                     char chosen[FPATH_LEN];
@@ -804,6 +1805,7 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                 }
                 strlcpy(p->curdir, parent, sizeof(p->curdir));
                 pick_slide(p, UIPOD_TRANS_BACK);
+                browse_save_pos(p);
             }
             return UIPOD_PAGE_STAY;
         }
@@ -1174,7 +2176,7 @@ static bool browse_run(const char *root, const char *start, int title_lang,
         .base = { .vt = &picker_vtable, .context = CONTEXT_LIST,
                   .allowed = picker_allowed, .no_arm_back = true,
                   .enter_honor_back = true },
-        .music = true, .video = video,
+        .music = true, .video = video, .full_browse = show_all,
         .result = GO_TO_ROOT,                  /* root re-highlights our entry */
         .pos = pos, .mctx = c,
     };
@@ -1214,9 +2216,10 @@ static bool browse_run(const char *root, const char *start, int title_lang,
     (void)title_lang;
     music_load(&p);
 
-    /* If a restored folder turned up empty (its files were since removed),
-     * fall back to `start` rather than showing the "(empty)" page. */
-    if (item_count(&p) == 0 && strcmp(p.curdir, clean_start) != 0)
+    /* If a restored category folder turned up empty (its audio files were
+     * removed), fall back to `start` rather than showing the "(empty)" page.
+     * In full Browse (`show_all`), an existing empty folder is intentionally kept. */
+    if (!show_all && item_count(&p) == 0 && strcmp(p.curdir, clean_start) != 0)
     {
         strlcpy(p.curdir, clean_start, sizeof(p.curdir));
         pick_reselect[0] = '\0';
@@ -1229,6 +2232,7 @@ static bool browse_run(const char *root, const char *start, int title_lang,
         push_current_activity(ACTIVITY_FILEBROWSER);
         uipod_page_run(&p.base);
         pop_current_activity();
+        browse_save_pos(&p);
     }
 
     tree_unlock_cache(c);
@@ -1332,18 +2336,18 @@ int uipod_television_browse(void *param)
     return folder_browse(&cat_television);
 }
 
-/* root "Browse": the whole filesystem in the same browser as the categories.
- * Every entry opens at the card -- no remembered position, which could be the
- * Linux root after backing out.  An empty folder is just an empty list. */
+/* root "Browse": full SD-card file browser & manager, opening at the last
+ * visited directory (persisted across restarts in BROWSE_LAST_FILE). */
 int uipod_files_browse(void *param)
 {
     (void)param;
     uint8_t prev_src = uipod_gpu_get_header_source();
     uipod_gpu_set_header_source(UIPOD_SRC_ICON_MICROSD);
-    struct browse_pos pos = {0};   /* fresh each time: open at the card */
+    const char *card_root = dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/";
+    files_browse_load_pos(card_root);
     int r = GO_TO_ROOT;
-    browse_run("/", dir_exists(PICKER_ROOT) ? PICKER_ROOT : "/",
-               LANG_UIPOD_BROWSE, &pos, true, false, true, &r);
+    browse_run(card_root, card_root,
+               LANG_UIPOD_BROWSE, &s_files_browse_pos, true, false, true, &r);
     uipod_gpu_set_header_source(prev_src);
     return r;
 }

@@ -13,7 +13,8 @@
 
 enum uipod_mainmenu_id
 {
-    UIPOD_MM_MUSIC = 0,       /* Files */
+    UIPOD_MM_BROWSE = 0,      /* Browse (first item) */
+    UIPOD_MM_MUSIC,           /* Files */
     UIPOD_MM_EXTRAS,          /* Extras */
     UIPOD_MM_ARTISTS,         /* Artists */
     UIPOD_MM_ALBUMS,          /* Albums */
@@ -24,7 +25,6 @@ enum uipod_mainmenu_id
     UIPOD_MM_PODCASTS,
     UIPOD_MM_AUDIOBOOKS,
     UIPOD_MM_TELEVISION,
-    UIPOD_MM_BROWSE,
     UIPOD_MM_SHUFFLE,
     UIPOD_MM_COUNT,
 };

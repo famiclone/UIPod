@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 4;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 5;
 
 /// Symbol name exported by every `.uipod` shared library.
 pub const UIPOD_PLUGIN_ENTRY_SYMBOL: &[u8] = b"uipod_plugin_descriptor\0";
@@ -284,6 +284,21 @@ pub struct UIPodPluginApi {
     ///   (compensated for hardware ALSA output latency).
     pub audio_read_pcm:
         unsafe extern "C" fn(ahead_ms: u32, out_stereo: *mut i16, max_frames: usize) -> usize,
+    pub audio_play_track: unsafe extern "C" fn(path: *const c_char, start_ms: u32) -> bool,
+    pub audio_stop: extern "C" fn(),
+
+    /* ---- Unified Music Library Access ---- */
+    pub library_track_count: extern "C" fn() -> usize,
+    pub library_track_at: unsafe extern "C" fn(
+        index: usize,
+        path_out: *mut c_char,
+        path_cap: usize,
+        artist_out: *mut c_char,
+        artist_cap: usize,
+        title_out: *mut c_char,
+        title_cap: usize,
+        duration_ms_out: *mut u32,
+    ) -> bool,
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -313,6 +328,15 @@ pub struct AudioTrackInfo {
     pub title: String,
     pub artist: String,
     pub position_ms: u32,
+    pub duration_ms: u32,
+}
+
+/// Entry from UIPod's unified Music library (`Local` + `Navidrome` + `Jellyfin`).
+#[derive(Debug, Clone, Default)]
+pub struct LibraryTrack {
+    pub path: String,
+    pub artist: String,
+    pub title: String,
     pub duration_ms: u32,
 }
 
@@ -635,6 +659,57 @@ impl<'a> HostContext<'a> {
             return 0;
         }
         unsafe { (self.api.audio_read_pcm)(ahead_ms, out_stereo.as_mut_ptr(), max_frames) }
+    }
+
+    /// Starts playing `path` at `start_ms` as a non-prompting single-track snippet.
+    #[inline]
+    pub fn audio_play_track(&self, path: &str, start_ms: u32) -> bool {
+        let c = sanitize_cstring(path);
+        unsafe { (self.api.audio_play_track)(c.as_ptr(), start_ms) }
+    }
+
+    /// Stops playback cleanly.
+    #[inline]
+    pub fn audio_stop(&self) {
+        (self.api.audio_stop)();
+    }
+
+    /// Total number of deduplicated Music tracks available in UIPod's library.
+    #[inline]
+    pub fn library_track_count(&self) -> usize {
+        (self.api.library_track_count)()
+    }
+
+    /// Reads the `index`-th Music track from UIPod's unified library.
+    pub fn library_track_at(&self, index: usize) -> Option<LibraryTrack> {
+        let mut p_buf = [0u8; 512];
+        let mut a_buf = [0u8; 256];
+        let mut t_buf = [0u8; 256];
+        let mut dur_ms = 0u32;
+        let ok = unsafe {
+            (self.api.library_track_at)(
+                index,
+                p_buf.as_mut_ptr() as *mut c_char,
+                p_buf.len(),
+                a_buf.as_mut_ptr() as *mut c_char,
+                a_buf.len(),
+                t_buf.as_mut_ptr() as *mut c_char,
+                t_buf.len(),
+                &mut dur_ms,
+            )
+        };
+        if !ok {
+            return None;
+        }
+        let p_end = p_buf.iter().position(|&b| b == 0).unwrap_or(p_buf.len());
+        let a_end = a_buf.iter().position(|&b| b == 0).unwrap_or(a_buf.len());
+        let t_end = t_buf.iter().position(|&b| b == 0).unwrap_or(t_buf.len());
+        Some(LibraryTrack {
+            path: String::from_utf8_lossy(&p_buf[..p_end]).into_owned(),
+            artist: String::from_utf8_lossy(&a_buf[..a_end]).into_owned(),
+            title: String::from_utf8_lossy(&t_buf[..t_end]).into_owned(),
+            duration_ms: dur_ms,
+        })
     }
 }
 

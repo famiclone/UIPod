@@ -1,0 +1,12 @@
+[package]
+name = "uipod-plugin-music-quiz"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "music_quiz"
+crate-type = ["cdylib"]
+
+[dependencies]
+uipod-plugin-sdk = { path = "../../crates/uipod-plugin-sdk" }
