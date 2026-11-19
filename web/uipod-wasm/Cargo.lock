@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "uipod-wasm"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "uipod-ui",
  "wasm-bindgen",

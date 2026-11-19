@@ -54,11 +54,11 @@
 
 #define UIPOD_SOURCE_FILE   ROCKBOX_DIR "/source.txt"
 #define NAV_CFG_RB            ROCKBOX_DIR "/navidrome.cfg"
-#define NAV_CFG_SD_1          "/mnt/SDCARD/navidrome.cfg"
-#define NAV_CFG_SD_2          "/mnt/SDCARD/Tools/tg5040/UIPod.pak/navidrome.cfg"
+#define NAV_CFG_SD_1          UIPOD_SDCARD_ROOT "/navidrome.cfg"
+#define NAV_CFG_SD_2          UIPOD_SDCARD_ROOT "/Tools/tg5040/UIPod.pak/navidrome.cfg"
 
 #define NAV_DB_SD             ROCKBOX_DIR "/navidrome.db"
-#define NAV_DB_RAM            "/tmp/uipod-navidrome.db"
+#define NAV_DB_RAM            UIPOD_TMP_ROOT "/uipod-navidrome.db"
 #define NAV_PLAYLISTS_DIR     ROCKBOX_DIR "/Playlists_Navidrome"
 #define NAV_FAV_DIR           ROCKBOX_DIR "/Playlists_Navidrome_Fav"
 #define NAV_FAVOURITES_M3U8   NAV_FAV_DIR "/Favourites.m3u8"
@@ -411,10 +411,10 @@ void uipod_navidrome_init(void)
     mutex_init(&s_nav_db_mutex);
     source_load_from_disk();
 
-    const char *cache_root = "/tmp/uipod_navidrome_cache";
+    const char *cache_root = UIPOD_TMP_ROOT "/uipod_navidrome_cache";
     struct stat st;
-    if (stat("/mnt/SDCARD", &st) == 0 && S_ISDIR(st.st_mode))
-        cache_root = "/mnt/SDCARD/Media/navidrome";
+    if (stat(UIPOD_SDCARD_ROOT, &st) == 0 && S_ISDIR(st.st_mode))
+        cache_root = UIPOD_SDCARD_ROOT "/Media/navidrome";
 
     tp_navidrome_init(cache_root, &s_http_vt);
     load_or_import_config();
@@ -1467,8 +1467,9 @@ static void nav_short_cache_loc(const char *path, char *out, size_t cap)
         return;
     }
     const char *disp = path;
-    if (strncmp(disp, "/mnt/SDCARD/", 12) == 0)
-        disp += 11;
+    const size_t sd_len = sizeof(UIPOD_SDCARD_ROOT) - 1;
+    if (strncmp(disp, UIPOD_SDCARD_ROOT "/", sd_len + 1) == 0)
+        disp += sd_len;
     snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, disp);
 }
 

@@ -153,7 +153,7 @@ static void resolve_store_path(void)
     }
     else
     {
-        strlcpy(s_store_path, "/tmp/uipod_downloads.tsv", sizeof(s_store_path));
+        strlcpy(s_store_path, UIPOD_TMP_ROOT "/uipod_downloads.tsv", sizeof(s_store_path));
     }
 }
 

@@ -212,6 +212,9 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     if (screen == SCREEN_MAIN && uipod_gpu_render_synclist(list))
         return;
 
+    if (screen == SCREEN_MAIN)
+        uipod_gpu_prepare_cpu_fallback();
+
     const int list_start_item = list->start_item[screen];
     const bool scrollbar_in_left = (list->scrollbar == SCROLLBAR_LEFT);
     const bool scrollbar_in_right = (list->scrollbar == SCROLLBAR_RIGHT);

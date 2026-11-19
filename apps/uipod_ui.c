@@ -36,6 +36,7 @@
 #include "version.h"
 #include "uipod_svg.h"
 #include "uipod_plugins.h"
+#include "uipod_rs_ui.h"
 #include "uipod_ui.h"
 #include "uipod_page.h"
 
@@ -77,6 +78,7 @@ void uipod_header_refresh(void)
 void uipod_centered_message(const char *question, const char *detail,
                               const char *footer)
 {
+    uipod_gpu_prepare_cpu_fallback();
     FOR_NB_SCREENS(i)
     {
         struct screen *s = &screens[i];
@@ -119,6 +121,7 @@ void uipod_centered_message(const char *question, const char *detail,
 
 void uipod_fullscreen_message(const char *msg, const char *widest)
 {
+    uipod_gpu_prepare_cpu_fallback();
     if (!widest)
         widest = msg;
     FOR_NB_SCREENS(i)
@@ -289,6 +292,7 @@ struct message_page
 
 static void message_draw(struct uipod_page *self)
 {
+    uipod_gpu_prepare_cpu_fallback();
     struct message_page *p = (struct message_page *)self;
     struct screen *s = &screens[SCREEN_MAIN];
     struct viewport vp = {0};

@@ -122,6 +122,10 @@ static void init(void);
  * be INIT_ATTR. These functions must not be called after the final call
  * to root_menu() at the end of main()
  * see definition of INIT_ATTR in config.h */
+#ifdef __ANDROID__
+#define main SDL_main
+__attribute__((visibility("default")))
+#endif
 #ifdef HAVE_ARGV_MAIN
 int main(int argc, char *argv[]) INIT_ATTR MAIN_NORETURN_ATTR ;
 int main(int argc, char *argv[])

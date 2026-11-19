@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 5;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 6;
 
 /// Symbol name exported by every `.uipod` shared library.
 pub const UIPOD_PLUGIN_ENTRY_SYMBOL: &[u8] = b"uipod_plugin_descriptor\0";
@@ -299,6 +299,16 @@ pub struct UIPodPluginApi {
         title_cap: usize,
         duration_ms_out: *mut u32,
     ) -> bool,
+
+    /* ---- Responsive Canvas Extension (v6+) ---- */
+    pub canvas_begin_responsive: unsafe extern "C" fn(
+        bg_rgb: u32,
+        show_header: bool,
+        title: *const c_char,
+        out_w: *mut f32,
+        out_h: *mut f32,
+    ),
+    pub get_responsive_size: unsafe extern "C" fn(out_w: *mut f32, out_h: *mut f32),
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -411,6 +421,48 @@ impl<'a> HostContext<'a> {
     pub fn begin_frame(&self, bg_rgb: u32, show_header: bool, title: &str) {
         let c_title = sanitize_cstring(title);
         unsafe { (self.api.canvas_begin)(bg_rgb, show_header, c_title.as_ptr()) };
+    }
+
+    /// Starts a responsive full-screen vector frame adapting to the display's aspect ratio
+    /// and returns `(logical_width, logical_height)`.
+    pub fn begin_responsive_frame(
+        &self,
+        bg_rgb: u32,
+        show_header: bool,
+        title: &str,
+    ) -> (f32, f32) {
+        let c_title = sanitize_cstring(title);
+        if self.api.api_version >= 6 {
+            let mut w = SCREEN_WIDTH as f32;
+            let mut h = SCREEN_HEIGHT as f32;
+            unsafe {
+                (self.api.canvas_begin_responsive)(
+                    bg_rgb,
+                    show_header,
+                    c_title.as_ptr(),
+                    &mut w,
+                    &mut h,
+                );
+            }
+            (w.max(320.0), h.max(240.0))
+        } else {
+            unsafe { (self.api.canvas_begin)(bg_rgb, show_header, c_title.as_ptr()) };
+            (SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32)
+        }
+    }
+
+    /// Queries the current responsive `(logical_width, logical_height)` without starting a frame.
+    pub fn responsive_size(&self) -> (f32, f32) {
+        if self.api.api_version >= 6 {
+            let mut w = SCREEN_WIDTH as f32;
+            let mut h = SCREEN_HEIGHT as f32;
+            unsafe {
+                (self.api.get_responsive_size)(&mut w, &mut h);
+            }
+            (w.max(320.0), h.max(240.0))
+        } else {
+            (SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32)
+        }
     }
 
     #[inline]

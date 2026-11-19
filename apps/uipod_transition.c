@@ -15,6 +15,7 @@
 #include "settings.h"
 #include "gui/viewport.h"
 #include "window-sdl.h"   /* uipod_viz_active: visualizer owns the GL window */
+#include "uipod_rs_ui.h"
 #include "uipod_transition.h"
 
 /* full-screen frame snapshots (off the stack: ~2.25 MiB each at 1024x768x3) */
@@ -366,7 +367,7 @@ void uipod_transition_animate(enum uipod_transition_dir dir,
         s_suppress_next = false;
         if (render)
             render(ctx);
-        if (!uipod_viz_active)
+        if (!uipod_viz_active && !uipod_gpu_is_active())
             lcd_update();
         return;
     }
@@ -383,15 +384,76 @@ void uipod_transition_animate(enum uipod_transition_dir dir,
     {
         if (render)
             render(ctx);
-        lcd_update();
+        if (!uipod_gpu_is_active())
+            lcd_update();
         return;
     }
 
-    /* snapshot the screen we leave, then render the destination off-screen */
-    memcpy(s_from, fb_base(), FRAMEBUFFER_SIZE);
+    bool from_gpu = uipod_gpu_is_active();
+    if (from_gpu)
+    {
+        sdl_gl_make_current();
+        (void)uipod_rs_ui_snapshot_transition();
+    }
+    else
+    {
+        memcpy(s_from, fb_base(), FRAMEBUFFER_SIZE);
+    }
+
+    uipod_gpu_begin_transition_capture();
     lcd_set_update_suppressed(true);
     if (render)
         render(ctx);
+    lcd_set_update_suppressed(false);
+
+    bool pin_header = false;
+    bool to_gpu = uipod_gpu_did_capture_transition_frame(&pin_header);
+
+    if (from_gpu && to_gpu)
+    {
+        uint8_t gpu_kind = (style >= 0 && style <= 4) ? (uint8_t)(style + 1) : 1U;
+        int8_t dir_sign = (dir == UIPOD_TRANS_FORWARD) ? 1 : -1;
+        unsigned long dur_ms = (style == UIPOD_TRANS_STYLE_SLIDE)
+                                   ? UIPOD_TRANSITION_MS
+                                   : 135UL;
+        unsigned long start = sdl_get_ms();
+        for (;;)
+        {
+            unsigned long el = sdl_get_ms() - start;
+            if (el >= dur_ms || lcd_panel_is_dark())
+                break;
+            float prog = (float)el / (float)dur_ms;
+            int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+            sdl_gl_make_current();
+            sdl_gl_get_drawable_size(&win_w, &win_h);
+            if (uipod_rs_ui_present_transition_gpu((uint32_t)win_w,
+                                                   (uint32_t)win_h,
+                                                   gpu_kind,
+                                                   prog,
+                                                   dir_sign,
+                                                   pin_header))
+            {
+                sdl_gl_swap_window();
+            }
+        }
+        uipod_gpu_present_current_fbo();
+        return;
+    }
+
+    if (to_gpu)
+    {
+        uipod_gpu_present_current_fbo();
+        return;
+    }
+
+    if (from_gpu)
+    {
+        sdl_gl_make_current();
+        (void)uipod_rs_ui_plugin_sync_fb((uint8_t *)s_from);
+        uipod_gpu_set_active(false);
+    }
+
+    /* Legacy C screen path: render already wrote destination into `fb_base()` */
     memcpy(s_to, fb_base(), FRAMEBUFFER_SIZE);
     memcpy(fb_base(), s_from, FRAMEBUFFER_SIZE);
 

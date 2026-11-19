@@ -2,7 +2,7 @@
 
 [package]
 name = "uipod-wasm"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
 description = "WebAssembly + WebGL2 runtime for UIPod (TrimUI Brick media player)"
 license = "GPL-2.0-or-later"

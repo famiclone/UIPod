@@ -57,6 +57,23 @@ static int gl_tex_w = 0, gl_tex_h = 0; /* size gl_lcd_tex is currently allocated
  * transparent except the bottom video_overlay_rows LCD rows. */
 static bool video_through = false;
 static int  video_overlay_rows = 0;
+static bool s_gpu_active = false;
+static void (*s_gpu_repaint_fn)(void) = NULL;
+
+bool sdl_gl_is_gpu_active(void)
+{
+    return s_gpu_active;
+}
+
+void sdl_gl_set_gpu_active(bool on)
+{
+    s_gpu_active = on;
+}
+
+void sdl_gl_set_gpu_repaint_fn(void (*fn)(void))
+{
+    s_gpu_repaint_fn = fn;
+}
 
 static const char *gl_vs_src =
     "attribute vec2 a_pos;\n"
@@ -128,6 +145,10 @@ static void gl_init_present(void)
  * time, so re-bind defensively before issuing GL calls. */
 void sdl_gl_make_current(void)
 {
+#ifdef __ANDROID__
+    extern void sdl_android_pump_events(void);
+    sdl_android_pump_events();
+#endif
     if (gl_ctx)
         SDL_GL_MakeCurrent(sdlWindow, gl_ctx);
 }
@@ -147,15 +168,33 @@ const void *sdl_gl_get_proc_address(const char *name)
 static void gl_present_lcd_fade(SDL_Surface *src, float fade, uint32_t target_rgb)
 {
     int w, h;
-    float bg_r = (float)((target_rgb >> 16) & 0xFF) / 255.0f;
-    float bg_g = (float)((target_rgb >> 8)  & 0xFF) / 255.0f;
-    float bg_b = (float)( target_rgb        & 0xFF) / 255.0f;
+    float tgt_r = (float)((target_rgb >> 16) & 0xFF) / 255.0f;
+    float tgt_g = (float)((target_rgb >> 8)  & 0xFF) / 255.0f;
+    float tgt_b = (float)( target_rgb        & 0xFF) / 255.0f;
+
+    /* Sample top-left pixel `{b, g, r}` so non-4:3 margins match the active
+     * UIPod theme background seamlessly with zero black bars. */
+    float pad_r = tgt_r, pad_g = tgt_g, pad_b = tgt_b;
+    if (src && src->pixels && !video_through)
+    {
+        const uint8_t *px0 = (const uint8_t *)src->pixels;
+        float sr = (float)px0[2] / 255.0f;
+        float sg = (float)px0[1] / 255.0f;
+        float sb = (float)px0[0] / 255.0f;
+        pad_r = tgt_r + (sr - tgt_r) * fade;
+        pad_g = tgt_g + (sg - tgt_g) * fade;
+        pad_b = tgt_b + (sb - tgt_b) * fade;
+    }
 
     SDL_GL_GetDrawableSize(sdlWindow, &w, &h);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
     glViewport(0, 0, w, h);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
-    glClearColor(bg_r, bg_g, bg_b, video_through ? 0.f : 1.f);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(pad_r, pad_g, pad_b, video_through ? 0.f : 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     if (video_through)
@@ -168,14 +207,27 @@ static void gl_present_lcd_fade(SDL_Surface *src, float fade, uint32_t target_rg
         glEnable(GL_SCISSOR_TEST);
         glScissor(0, 0, w, video_overlay_rows * h / src->h);
     }
+    else if (src && src->w > 0 && src->h > 0)
+    {
+        /* Aspect-preserving centered viewport for legacy C dialogs / popups */
+        int vp_w = w, vp_h = h;
+        if ((long)w * src->h > (long)h * src->w)
+            vp_w = (int)(((long)h * src->w) / src->h);
+        else
+            vp_h = (int)(((long)w * src->h) / src->w);
+        glViewport((w - vp_w) / 2, (h - vp_h) / 2, vp_w, vp_h);
+    }
 
     glUseProgram(gl_prog);
     glUniform1f(gl_u_fade, fade);
-    glUniform3f(gl_u_bg, bg_r, bg_g, bg_b);
+    glUniform3f(gl_u_bg, tgt_r, tgt_g, tgt_b);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, gl_lcd_tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    (w < src->w || h < src->h) ? GL_LINEAR : GL_NEAREST);
+    GLint filt = (w > 0 && h > 0 && (w % src->w == 0) && (h % src->h == 0))
+                     ? GL_NEAREST
+                     : GL_LINEAR;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
     /* The LCD surface is 24bpp RGB888 -- byte order R,G,B, exactly what
      * GL_RGB/GL_UNSIGNED_BYTE expects -- so it uploads verbatim: no conversion
      * pass, and a quarter less data than RGBA.  SDL pads surface rows to 4 bytes
@@ -267,6 +319,13 @@ void sdl_window_render(void)
         return;   /* visualizer owns the GL context/window right now */
     if (lcd_panel_is_dark())
         return;   /* panel off: the surfaces stay current, the present is waste */
+    if (s_gpu_active && !video_through)
+    {
+        if (s_gpu_repaint_fn)
+            s_gpu_repaint_fn();
+        return;
+    }
+    s_gpu_active = false;
     sdl_gl_make_current();
     gl_present_lcd_fade(sim_lcd_surface, 1.0f, 0);
 }
@@ -281,13 +340,14 @@ bool sdl_window_adjust(void)
 
     get_window_dimensions(&w, &h);
 
-    if (!(SDL_GetWindowFlags(sdlWindow) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))
+    if (!(SDL_GetWindowFlags(sdlWindow) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))
         && display_zoom)
     {
         SDL_SetWindowSize(sdlWindow, display_zoom * w, display_zoom * h);
     }
     display_zoom = 0;
-    sdl_window_render();
+    if (!s_gpu_active)
+        sdl_window_render();
     return true;
 }
 
@@ -322,6 +382,9 @@ void sdl_window_setup(void)
     SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);   /* video shows through alpha 0 */
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); /* femtovg path stencil buffer */
     flags |= SDL_WINDOW_OPENGL;
+#ifdef __ANDROID__
+    flags |= SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_RESIZABLE;
+#endif
 
     if ((sdlWindow = SDL_CreateWindow(UI_TITLE, SDL_WINDOWPOS_CENTERED,
                                    SDL_WINDOWPOS_CENTERED, width * display_zoom,

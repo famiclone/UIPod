@@ -57,11 +57,11 @@
 #endif
 
 #define JF_CFG_RB         ROCKBOX_DIR "/jellyfin.cfg"
-#define JF_CFG_SD_1       "/mnt/SDCARD/jellyfin.cfg"
-#define JF_CFG_SD_2       "/mnt/SDCARD/Tools/tg5040/UIPod.pak/jellyfin.cfg"
+#define JF_CFG_SD_1       UIPOD_SDCARD_ROOT "/jellyfin.cfg"
+#define JF_CFG_SD_2       UIPOD_SDCARD_ROOT "/Tools/tg5040/UIPod.pak/jellyfin.cfg"
 
 #define JF_DB_SD          ROCKBOX_DIR "/jellyfin.db"
-#define JF_DB_RAM         "/tmp/uipod-jellyfin.db"
+#define JF_DB_RAM         UIPOD_TMP_ROOT "/uipod-jellyfin.db"
 #define JF_PLAYLISTS_DIR  ROCKBOX_DIR "/Playlists_Jellyfin"
 #define JF_COPY_BUF       (256 * 1024)
 #define JF_SCHEMA_VERSION 1
@@ -396,13 +396,13 @@ void uipod_jellyfin_init(void)
 {
     mutex_init(&s_jf_db_mutex);
 
-    const char *video_root = "/tmp/uipod_jellyfin_videos";
-    const char *audio_root = "/tmp/uipod_jellyfin_music";
+    const char *video_root = UIPOD_TMP_ROOT "/uipod_jellyfin_videos";
+    const char *audio_root = UIPOD_TMP_ROOT "/uipod_jellyfin_music";
     struct stat st;
-    if (stat("/mnt/SDCARD", &st) == 0 && S_ISDIR(st.st_mode))
+    if (stat(UIPOD_SDCARD_ROOT, &st) == 0 && S_ISDIR(st.st_mode))
     {
-        video_root = "/mnt/SDCARD/Media/jellyfin";
-        audio_root = "/mnt/SDCARD/Media/jellyfin/Music";
+        video_root = UIPOD_SDCARD_ROOT "/Media/jellyfin";
+        audio_root = UIPOD_SDCARD_ROOT "/Media/jellyfin/Music";
     }
 
     tp_jellyfin_init(video_root, audio_root, &s_jf_http_vt);
@@ -1595,8 +1595,9 @@ static void jf_short_cache_loc(const char *path, char *out, size_t cap)
         return;
     }
     const char *disp = path;
-    if (strncmp(disp, "/mnt/SDCARD/", 12) == 0)
-        disp += 11;
+    const size_t sd_len = sizeof(UIPOD_SDCARD_ROOT) - 1;
+    if (strncmp(disp, UIPOD_SDCARD_ROOT "/", sd_len + 1) == 0)
+        disp += sd_len;
     snprintf(out, cap, "%s%s", UIPOD_INDIC_PLAIN, disp);
 }
 

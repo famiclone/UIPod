@@ -630,6 +630,7 @@ void uipod_visualizer_run(void)
 bool uipod_visualizer_fade_to_black(void)
 {
     uint32_t bg_rgb = (uint32_t)(global_settings.bg_color & 0xFFFFFF);
+    bool was_gpu = uipod_gpu_is_active();
     backlight_set_timeout(0);
     sdl_gl_make_current();
     SDL_GL_SetSwapInterval(1);
@@ -642,7 +643,23 @@ bool uipod_visualizer_fade_to_black(void)
         float fade = (dt >= VIZ_FADE_TICKS)
                          ? 0.0f
                          : 1.0f - (float)dt / (float)VIZ_FADE_TICKS;
-        sdl_gl_present_lcd_fade_rgb(fade, bg_rgb);
+        if (was_gpu && uipod_rs_ui_is_ready())
+        {
+            int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+            sdl_gl_make_current();
+            sdl_gl_get_drawable_size(&win_w, &win_h);
+            if (uipod_rs_ui_present_fade_rgb_gpu((uint32_t)win_w,
+                                                 (uint32_t)win_h,
+                                                 fade,
+                                                 bg_rgb))
+            {
+                SDL_GL_SwapWindow(sdlWindow);
+            }
+        }
+        else
+        {
+            sdl_gl_present_lcd_fade_rgb(fade, bg_rgb);
+        }
 
         int act = get_action(CONTEXT_STD, TIMEOUT_NOBLOCK);
         bool blanked = power_display_off();
@@ -656,7 +673,23 @@ bool uipod_visualizer_fade_to_black(void)
                 backlight_set_timeout_quiet(global_settings.backlight_timeout);
             else
                 backlight_set_timeout(global_settings.backlight_timeout);
-            sdl_gl_present_lcd_fade_rgb(1.0f, bg_rgb);
+            if (was_gpu && uipod_rs_ui_is_ready())
+            {
+                int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+                sdl_gl_make_current();
+                sdl_gl_get_drawable_size(&win_w, &win_h);
+                if (uipod_rs_ui_present_fade_rgb_gpu((uint32_t)win_w,
+                                                     (uint32_t)win_h,
+                                                     1.0f,
+                                                     bg_rgb))
+                {
+                    SDL_GL_SwapWindow(sdlWindow);
+                }
+            }
+            else
+            {
+                sdl_gl_present_lcd_fade_rgb(1.0f, bg_rgb);
+            }
             uipod_viz_active = false;
             return true;
         }

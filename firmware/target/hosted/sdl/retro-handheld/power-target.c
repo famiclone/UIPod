@@ -17,6 +17,57 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
+#ifdef __ANDROID__
+#include <SDL.h>
+#include "system.h"
+#include "power-target.h"
+#include "power.h"
+#include "powermgmt.h"
+
+#ifdef HAVE_TRIMUI_SAFE_POWEROFF
+void trimui_safe_poweroff(void) {}
+#endif
+#ifdef HAVE_TRIMUI_DEEP_SLEEP
+void trimui_deep_sleep(void) {}
+#endif
+
+bool charging_state(void)
+{
+    int pct = -1;
+    SDL_PowerState st = SDL_GetPowerInfo(NULL, &pct);
+    return st == SDL_POWERSTATE_CHARGING || st == SDL_POWERSTATE_CHARGED;
+}
+
+unsigned int power_input_status(void)
+{
+    return charging_state() ? POWER_INPUT_USB_CHARGER : POWER_INPUT_NONE;
+}
+
+bool retrohh_usb_host_connected(void)
+{
+    return false;
+}
+
+unsigned int power_get_battery_capacity(void)
+{
+    int pct = -1;
+    (void)SDL_GetPowerInfo(NULL, &pct);
+    return (pct >= 0 && pct <= 100) ? (unsigned int)pct : 100U;
+}
+
+int  retrohh_cpu_get_choice(void)    { return 0; }
+void retrohh_cpu_set_choice(int khz) { (void)khz; }
+void retrohh_cpu_apply_saved(void)   {}
+void retrohh_cpu_hold_dynamic(void)  {}
+void retrohh_cpu_release_dynamic(void) {}
+
+void retrohh_charge_limit_init(void)       {}
+bool retrohh_charge_limit_hidden(void)     { return true; }
+int  retrohh_charge_limit_get_target(void) { return 100; }
+void retrohh_charge_limit_cycle(int dir)   { (void)dir; }
+
+#else /* !__ANDROID__ */
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -597,3 +648,5 @@ void retrohh_charge_limit_cycle(int dir)
     else
         batt_care_tick();            /* apply the new cap immediately */
 }
+
+#endif /* !__ANDROID__ */

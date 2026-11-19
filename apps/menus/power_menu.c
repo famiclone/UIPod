@@ -588,11 +588,19 @@ MAKE_MENU(uipod_power_menu, ID2P(LANG_UIPOD_DEVICE), NULL, Icon_Submenu_Entered,
 MAKE_MENU(uipod_power_menu_nobatt, ID2P(LANG_UIPOD_DEVICE), NULL, Icon_Submenu_Entered,
           &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff,
           &tp_pw_cpu);
+#ifdef __ANDROID__
+MAKE_MENU(uipod_power_menu_android, ID2P(LANG_UIPOD_DEVICE), NULL, Icon_Submenu_Entered,
+          &tp_pw_brightness, &tp_pw_screenoff, &tp_pw_idlepoweroff);
+#endif
 
 int uipod_power_page(void)
 {
+#ifdef __ANDROID__
+    const struct menu_item_ex *m = &uipod_power_menu_android;
+#else
     const struct menu_item_ex *m =
         retrohh_charge_limit_hidden() ? &uipod_power_menu_nobatt : &uipod_power_menu;
+#endif
     do_menu(m, NULL, NULL, false);
     return 0;
 }

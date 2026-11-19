@@ -9,10 +9,10 @@
     <meta name="theme-color" content="#0a0b0d" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>UIPod — TrimUI Brick Media Player &amp; WebAssembly Simulator</title>
+    <title>UIPod v0.5.0 — TrimUI Brick &amp; Android Handheld Media Player</title>
     <meta
       name="description"
-      content="Try UIPod directly in your browser via WebAssembly + WebGL2. iPod Mini-inspired offline, Navidrome & Jellyfin media player for TrimUI Brick."
+      content="Try UIPod v0.5.0 directly in your browser via WebAssembly + WebGL2. iPod Mini-inspired offline, Navidrome & Jellyfin media player for TrimUI Brick and Android retro handhelds."
     />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
@@ -28,7 +28,7 @@
             <span class="dot"></span>
           </span>
           <span class="brand-name">UIPOD</span>
-          <span class="brand-ver">v0.3.0</span>
+          <span class="brand-ver">v0.5.0</span>
           <span class="status-pill" id="wasm-status">
             <span class="status-dot"></span>
             <span data-i18n="hero_badge_wasm">WASM · WEBGL2</span>
@@ -68,14 +68,15 @@
         <div class="container">
           <div class="hero-header">
             <div class="eyebrow" data-i18n="hero_eyebrow">
-              TRIMUI BRICK · TG5040 · NEXTUI
+              TRIMUI BRICK (TG5040) · ANDROID HANDHELDS (ARM64) · NEXTUI
             </div>
             <h1 class="hero-title" data-i18n="hero_title">
-              UIPod for TrimUI Brick
+              UIPod for Retro Handhelds
             </h1>
             <p class="hero-sub" data-i18n="hero_sub">
-              An iPod Mini-inspired offline, Navidrome, and Jellyfin media player built on a
-              customized Rockbox core with a pure-Rust GPU interface. Try the WebAssembly build
+              An iPod Mini-inspired offline, Navidrome, and Jellyfin media player for TrimUI Brick
+              (NextUI) and Android retro handhelds (Retroid, Odin, Anbernic, Ayaneo). Built on a
+              customized Rockbox core with a pure-Rust GPU interface — try the WebAssembly build
               directly in your browser.
             </p>
           </div>
@@ -183,9 +184,9 @@
                     </svg>
                   </button>
                   <div class="now-meta">
-                    <div class="now-title" id="hud-track-title">Midnight Tape Loop</div>
+                    <div class="now-title" id="hud-track-title">AquaBIOS 2000</div>
                     <div class="now-sub">
-                      <span id="hud-track-artist">Brickwave Collective</span>
+                      <span id="hud-track-artist">Cyberia 99</span>
                       <span class="sep">·</span>
                       <span id="hud-theme-name">UIPod Classic</span>
                     </div>
@@ -202,7 +203,7 @@
                   <button type="button" class="jump-btn" data-jump="main" data-i18n="quick_main">Main Menu</button>
                   <button type="button" class="jump-btn" data-jump="now_playing" data-i18n="quick_np">Now Playing</button>
                   <button type="button" class="jump-btn" data-jump="visualizer" data-i18n="quick_viz">Visualizers</button>
-                  <button type="button" class="jump-btn" data-jump="plugin:tetris" data-i18n="quick_games">Tetris</button>
+                  <button type="button" class="jump-btn" data-jump="plugin:sound_racer" data-i18n="quick_games">Sound Racer</button>
                   <button type="button" class="jump-btn" data-jump="keyboard" data-i18n="quick_kbd">Keyboard</button>
                   <button type="button" class="jump-btn" data-jump="plugin:about" data-i18n="quick_manual">Manual</button>
                 </div>
@@ -476,52 +477,67 @@
           </div>
 
           <div class="bento-grid">
-            <article class="bento-card wide">
+            <article class="bento-card">
               <div class="bento-tag">uipod-ui · OpenGL ES 3.0 / WebGL2</div>
-              <h3>1024×768 Rust Vector UI</h3>
-              <p>
-                Rendered in pure Rust with <code>taffy</code> layouts, <code>femtovg</code> vector
-                graphics, <strong>Geologica</strong> typography, and 4-shade Bayer-dithered album
-                covers — running on TrimUI Brick and compiled to WebAssembly for this page.
+              <h3 data-i18n="f_ui_title">1024×768 Rust Vector UI</h3>
+              <p data-i18n="f_ui_desc">
+                Rendered in pure Rust with taffy layouts, femtovg vector graphics, Geologica
+                typography, 38 four-shade themes, 6 screen transitions, and Bayer-dithered
+                monochrome album art — running identically on TrimUI Brick, Android OpenGL ES 3.0,
+                and WebAssembly.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">Android 8.0+ · arm64-v8a APK</div>
+              <h3 data-i18n="f_android_title">Android Handheld Port (arm64-v8a)</h3>
+              <p data-i18n="f_android_desc">
+                Native APK for Android 8.0+ retro handhelds (Retroid, Odin, Anbernic, Ayaneo). Exact
+                centered 4:3 OLED frame, background foreground-service playback with screen off,
+                hardware MediaPlayer video for Movies/Jellyfin, and physical gamepad + volume rocker
+                sync.
               </p>
             </article>
 
             <article class="bento-card">
               <div class="bento-tag">viz_gl · 10 GLSL Shaders</div>
-              <h3>4-Shade Audio Visualizers</h3>
-              <p>
-                Two-pass ping-pong FBO feedback engine driven by a 1024-pt FFT: Cassette Deck,
-                Analog VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon,
-                Liquid Metal, Chladni Plate, Star Warp, and LCD Plasma.
+              <h3 data-i18n="f_viz_title">10 Bayer-Dithered Visualizers</h3>
+              <p data-i18n="f_viz_desc">
+                Two-pass ping-pong FBO feedback shaders driven by a 1024-pt FFT: Cassette Deck
+                (spinning reels + 28-segment LED meter), centered Analog Stereo VU Meter, Sonic
+                Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate,
+                Star Warp, and LCD Plasma.
               </p>
             </article>
 
             <article class="bento-card">
               <div class="bento-tag">Local · Navidrome · Jellyfin</div>
-              <h3>Unified Media Library</h3>
-              <p>
-                Combines SD-card FLAC/Opus/MP3/M4B files with Navidrome and Jellyfin libraries into
-                one deduplicated SQLite index, with background prefetching, hardware CedarX video,
-                and offline downloads.
+              <h3 data-i18n="f_lib_title">Browse File Manager &amp; Unified Library</h3>
+              <p data-i18n="f_lib_desc">
+                Browse sits first on the Main Menu with last-folder memory and file management
+                (Delete, Rename, Copy, Move, Info). Merges local SD/storage folders, Navidrome, and
+                Jellyfin into one deduplicated SQLite library with offline downloads.
               </p>
             </article>
 
             <article class="bento-card">
               <div class="bento-tag">DSP · Equalizer · Effects</div>
-              <h3>AutoEQ, Texture Warp &amp; Tape Mode</h3>
-              <p>
+              <h3 data-i18n="f_dsp_title">AutoEQ, Texture Warp &amp; Tape Mode</h3>
+              <p data-i18n="f_dsp_desc">
                 Built on Rockbox’s 32-bit DSP core with a 10-band parametric EQ, searchable offline
-                AutoEQ headphone database, granular time-stretching, and cassette simulation with
-                Wow &amp; Flutter, Tape Hiss, Crinkles, and motor stop/start effects.
+                AutoEQ database, Ableton Texture-style granular Speed stretching (1/16×–1.5×), and
+                Walkman Tape Mode with Wow &amp; Flutter, Tape Hiss, Crinkles, Saturation, HF
+                Roll-Off, and motor FX.
               </p>
             </article>
 
             <article class="bento-card">
               <div class="bento-tag">uipod-plugin-sdk · .uipod</div>
-              <h3>Native Rust Plugins</h3>
-              <p>
-                Versioned C-ABI plugin runtime powering Sound Racer, Music Quiz, Tetris, Snake,
-                Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.
+              <h3 data-i18n="f_plg_title">Native Rust Plugins (.uipod)</h3>
+              <p data-i18n="f_plg_desc">
+                Versioned C-ABI plugin runtime powering Music Quiz, Sound Racer (with .nsf / chiptune
+                support &amp; cached song maps), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD
+                Plasma, and Text Viewer.
               </p>
             </article>
           </div>
@@ -599,44 +615,68 @@
       <!-- INSTALL & WEB STUDIO -->
       <section id="install" class="section">
         <div class="container">
-          <div class="install-grid">
-            <div>
-              <h2 data-i18n="sec_inst_title">Installation</h2>
+          <div class="section-head">
+            <h2 data-i18n="sec_inst_title">Installation</h2>
+          </div>
+
+          <div class="install-platforms">
+            <article class="platform-card">
+              <div class="bento-tag">TG5040 · UIPod.pak.zip</div>
+              <h3 data-i18n="inst_brick_title">TrimUI Brick / Hammer (NextUI)</h3>
               <ol class="install-steps">
-                <li>
-                  Download <code>UIPod.pak.zip</code> from GitHub Releases or install via
-                  <strong>NextUI Pak Store</strong>.
+                <li data-i18n="inst_brick_1">
+                  Download UIPod.pak.zip from GitHub Releases or install via NextUI Pak Store.
                 </li>
-                <li>
-                  Extract <code>UIPod.pak</code> to
-                  <code>/mnt/SDCARD/Tools/tg5040/UIPod.pak</code>.
+                <li data-i18n="inst_brick_2">
+                  Extract UIPod.pak to /mnt/SDCARD/Tools/tg5040/UIPod.pak.
                 </li>
-                <li>
-                  Open <strong>Tools → UIPod</strong> on your TrimUI Brick. USB-C MTP file transfer
-                  works while UIPod is running without interrupting playback.
+                <li data-i18n="inst_brick_3">
+                  Open Tools → UIPod. Plug in USB-C anytime for MTP file transfer without stopping
+                  playback.
                 </li>
               </ol>
+            </article>
 
-              <div class="cta-row">
-                <a
-                  class="btn-primary"
-                  href="https://github.com/famiclone/UIPod/releases"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-i18n="inst_btn_release"
-                >
-                  Download Release
-                </a>
-                <a
-                  class="btn-ghost"
-                  href="https://github.com/famiclone/UIPod"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-i18n="inst_btn_repo"
-                >
-                  GitHub Repository
-                </a>
-              </div>
+            <article class="platform-card">
+              <div class="bento-tag">Android 8.0+ · arm64-v8a APK</div>
+              <h3 data-i18n="inst_android_title">Android Handhelds (arm64-v8a)</h3>
+              <ol class="install-steps">
+                <li data-i18n="inst_android_1">
+                  Download UIPod-v0.5.0-android-arm64.apk from GitHub Releases (Android 8.0+ / API
+                  26+).
+                </li>
+                <li data-i18n="inst_android_2">
+                  Install the APK on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped
+                  device.
+                </li>
+                <li data-i18n="inst_android_3">
+                  Grant media storage access to scan local folders, or configure Navidrome /
+                  Jellyfin in Settings → Sources.
+                </li>
+              </ol>
+            </article>
+          </div>
+
+          <div class="install-footer-row">
+            <div class="cta-row">
+              <a
+                class="btn-primary"
+                href="https://github.com/famiclone/UIPod/releases"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-i18n="inst_btn_release"
+              >
+                Download Release
+              </a>
+              <a
+                class="btn-ghost"
+                href="https://github.com/famiclone/UIPod"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-i18n="inst_btn_repo"
+              >
+                GitHub Repository
+              </a>
             </div>
 
             <div class="roadmap-box">
@@ -645,7 +685,7 @@
                 <li class="done">
                   <span class="r-badge">LIVE</span>
                   <div>
-                    <strong>WebAssembly UIPod Simulator</strong>
+                    <strong>WebAssembly UIPod Simulator (v0.5.0)</strong>
                     <p>Rust <code>uipod-ui</code> + <code>VizEngine</code> compiled to WASM/WebGL2 with Web Audio DSP.</p>
                   </div>
                 </li>
@@ -673,7 +713,7 @@
     <footer class="footer">
       <div class="container footer-inner">
         <span data-i18n="footer_credit">
-          GPL-2.0 · UIPod for TrimUI Brick / NextUI · Built with Rust, Rockbox &amp; WebAssembly
+          GPL-2.0 · UIPod for TrimUI Brick &amp; Android Handhelds · Built with Rust, Rockbox &amp; WebAssembly
         </span>
         <a href="https://github.com/famiclone/UIPod" target="_blank" rel="noopener noreferrer">
           github.com/famiclone/UIPod

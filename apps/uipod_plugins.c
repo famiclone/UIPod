@@ -58,7 +58,7 @@ extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
 extern unsigned int pcm_alsa_output_delay_us(void);
 
 #define BUNDLED_PLUGINS_DIR   ROCKBOX_DIR "/plugins"
-#define SDCARD_PLUGINS_DIR    "/mnt/SDCARD/Plugins/UIPod"
+#define SDCARD_PLUGINS_DIR    UIPOD_SDCARD_ROOT "/Plugins/UIPod"
 #define PLUGIN_HOLD_B_TICKS   (65 * HZ / 100)
 #define MAX_CAT_PLUGINS       128
 #define MAX_PLUGIN_MENU_ITEMS 32
@@ -70,6 +70,8 @@ static bool s_menu_on_screen      = false;
 static bool s_prev_menu_cancelled = false;
 static bool s_gpu_fbo_unsynced    = false;
 static bool s_has_presented_frame = false;
+static bool s_plugin_has_header   = false;
+static bool s_trans_snapshotted   = false;
 static char s_last_menu_title[128];
 #ifdef HAVE_PRIORITY_SCHEDULING
 static int  s_saved_ui_prio       = PRIORITY_USER_INTERFACE;
@@ -100,7 +102,7 @@ static void sync_gpu_fbo_to_rockbox_fb_if_needed(void)
     if (!s_gpu_fbo_unsynced)
         return;
     s_gpu_fbo_unsynced = false;
-    if (!uipod_gpu_ui_ensure_ready())
+    if (uipod_gpu_is_active() || !uipod_gpu_ui_ensure_ready())
         return;
     struct viewport *prev_vp = lcd_set_viewport(NULL);
     fb_data *fb = FBADDR(0, 0);
@@ -139,9 +141,9 @@ static size_t host_get_data_dir(char *out, size_t cap)
         return 0;
 
     char dir[512];
-    if (dir_exists("/mnt/SDCARD"))
+    if (dir_exists(UIPOD_SDCARD_ROOT))
     {
-        mkdir("/mnt/SDCARD/Plugins");
+        mkdir(UIPOD_SDCARD_ROOT "/Plugins");
         mkdir(SDCARD_PLUGINS_DIR);
         snprintf(dir, sizeof(dir), "%s/.data", SDCARD_PLUGINS_DIR);
         mkdir(dir);
@@ -161,7 +163,7 @@ static size_t host_get_data_dir(char *out, size_t cap)
         }
         else
         {
-            strlcpy(dir, "/tmp/uipod_plugin_data", sizeof(dir));
+            strlcpy(dir, UIPOD_TMP_ROOT "/uipod_plugin_data", sizeof(dir));
             mkdir(dir);
         }
     }
@@ -180,10 +182,82 @@ static struct UIPodPluginTheme host_get_theme(void)
     return t;
 }
 
-static void host_canvas_begin(uint32_t bg_rgb, bool show_header, const char *title)
+static void compute_logical_size_for_window(int win_w, int win_h,
+                                            float *out_w, float *out_h)
 {
+    uint32_t pw = (win_w > 0) ? (uint32_t)win_w : (uint32_t)LCD_WIDTH;
+    uint32_t ph = (win_h > 0) ? (uint32_t)win_h : (uint32_t)LCD_HEIGHT;
+    float aspect = (float)pw / (float)ph;
+    float diff43 = aspect - (4.0f / 3.0f);
+    if (diff43 < 0.0f)
+        diff43 = -diff43;
+
+    float sw, sh;
+    if (diff43 < 0.01f)
+    {
+        sw = 1024.0f;
+        sh = 768.0f;
+    }
+    else if (aspect >= 1.2f)
+    {
+        sh = 768.0f;
+        sw = (float)(int)(768.0f * aspect + 0.5f);
+        if (sw < 920.0f)
+            sw = 920.0f;
+    }
+    else
+    {
+        float clamped = (aspect > 0.35f) ? aspect : 0.35f;
+        sw = 920.0f;
+        sh = (float)(int)(920.0f / clamped + 0.5f);
+        if (sh < 768.0f)
+            sh = 768.0f;
+    }
+
+    if (out_w)
+        *out_w = sw;
+    if (out_h)
+        *out_h = sh;
+}
+
+static void host_get_responsive_size(float *out_w, float *out_h)
+{
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    compute_logical_size_for_window(win_w, win_h, out_w, out_h);
+}
+
+static void host_canvas_begin_internal(uint32_t bg_rgb,
+                                       bool show_header,
+                                       const char *title,
+                                       bool responsive,
+                                       float *out_w,
+                                       float *out_h)
+{
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+
     if (!uipod_gpu_ui_ensure_ready())
+    {
+        if (responsive)
+            compute_logical_size_for_window(win_w, win_h, out_w, out_h);
+        else
+        {
+            if (out_w) *out_w = 1024.0f;
+            if (out_h) *out_h = 768.0f;
+        }
         return;
+    }
+
+    if ((s_menu_on_screen || !s_has_presented_frame) &&
+        !s_trans_snapshotted &&
+        uipod_gpu_is_active())
+    {
+        (void)uipod_rs_ui_snapshot_transition();
+        s_trans_snapshotted = true;
+    }
+
+    s_plugin_has_header = show_header;
 
     struct UIPodRsHeader hdr;
     const struct UIPodRsHeader *hdr_ptr = NULL;
@@ -194,12 +268,31 @@ static void host_canvas_begin(uint32_t bg_rgb, bool show_header, const char *tit
         hdr_ptr = &hdr;
     }
 
-    uipod_rs_ui_plugin_begin((uint32_t)global_settings.bg_color,
-                             (uint32_t)global_settings.fg_color,
-                             (uint32_t)global_settings.fg1_color,
-                             (uint32_t)global_settings.fg2_color,
-                             bg_rgb,
-                             hdr_ptr);
+    uipod_rs_ui_plugin_begin_ex((uint32_t)global_settings.bg_color,
+                                (uint32_t)global_settings.fg_color,
+                                (uint32_t)global_settings.fg1_color,
+                                (uint32_t)global_settings.fg2_color,
+                                bg_rgb,
+                                hdr_ptr,
+                                (uint32_t)win_w,
+                                (uint32_t)win_h,
+                                responsive,
+                                out_w,
+                                out_h);
+}
+
+static void host_canvas_begin(uint32_t bg_rgb, bool show_header, const char *title)
+{
+    host_canvas_begin_internal(bg_rgb, show_header, title, false, NULL, NULL);
+}
+
+static void host_canvas_begin_responsive(uint32_t bg_rgb,
+                                         bool show_header,
+                                         const char *title,
+                                         float *out_w,
+                                         float *out_h)
+{
+    host_canvas_begin_internal(bg_rgb, show_header, title, true, out_w, out_h);
 }
 
 static void host_canvas_fill_rect(float x, float y, float w, float h,
@@ -277,6 +370,8 @@ static void host_canvas_present(void)
         enum uipod_transition_dir dir = (s_menu_on_screen && s_has_presented_frame)
                                             ? UIPOD_TRANS_BACK
                                             : UIPOD_TRANS_FORWARD;
+        bool had_gpu_snap     = s_trans_snapshotted;
+        s_trans_snapshotted   = false;
         s_menu_on_screen      = false;
         s_prev_menu_cancelled = false;
         s_gpu_fbo_unsynced    = false;
@@ -284,23 +379,69 @@ static void host_canvas_present(void)
         s_last_menu_title[0]  = '\0';
         uipod_transition_take_back();
 
+        (void)uipod_rs_ui_plugin_flush_fbo();
+
         if (!lcd_panel_is_dark())
         {
+            if (had_gpu_snap)
+            {
+                int style = global_settings.transition_style;
+                if (style != UIPOD_TRANS_STYLE_OFF)
+                {
+                    uint8_t gpu_kind = (style >= 0 && style <= 4)
+                                           ? (uint8_t)(style + 1)
+                                           : 1U;
+                    int8_t dir_sign = (dir == UIPOD_TRANS_FORWARD) ? 1 : -1;
+                    unsigned long dur_ms = (style == UIPOD_TRANS_STYLE_SLIDE)
+                                               ? UIPOD_TRANSITION_MS
+                                               : 135UL;
+                    unsigned long start = sdl_get_ms();
+                    for (;;)
+                    {
+                        unsigned long el = sdl_get_ms() - start;
+                        if (el >= dur_ms || lcd_panel_is_dark())
+                            break;
+                        float prog = (float)el / (float)dur_ms;
+                        int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+                        sdl_gl_make_current();
+                        sdl_gl_get_drawable_size(&win_w, &win_h);
+                        if (uipod_rs_ui_present_transition_gpu(
+                                (uint32_t)win_w,
+                                (uint32_t)win_h,
+                                gpu_kind,
+                                prog,
+                                dir_sign,
+                                s_plugin_has_header))
+                        {
+                            sdl_gl_swap_window();
+                        }
+                    }
+                }
+                uipod_gpu_note_rendered_screen(s_plugin_has_header);
+                s_gpu_fbo_unsynced = true;
+                pump_background_threads();
+                return;
+            }
+
             FOR_NB_SCREENS(i)
                 viewportmanager_theme_undo(i, false);
             uipod_transition_animate(dir, present_canvas_to_fb_cb, NULL);
             FOR_NB_SCREENS(i)
                 viewportmanager_theme_enable(i, false, NULL);
+            uipod_gpu_note_rendered_screen(s_plugin_has_header);
+            s_gpu_fbo_unsynced = true;
             pump_background_threads();
             return;
         }
     }
 
+    s_trans_snapshotted   = false;
     s_has_presented_frame = true;
 
     if (lcd_panel_is_dark())
     {
         (void)uipod_rs_ui_plugin_flush_fbo();
+        uipod_gpu_set_active(true);
         s_gpu_fbo_unsynced = true;
         sleep(HZ / 20);
         return;
@@ -310,6 +451,7 @@ static void host_canvas_present(void)
     sdl_gl_get_drawable_size(&win_w, &win_h);
     if (uipod_rs_ui_plugin_present_gpu((uint32_t)win_w, (uint32_t)win_h))
     {
+        uipod_gpu_set_active(true);
         sdl_gl_swap_window();
         s_gpu_fbo_unsynced = true;
     }
@@ -318,7 +460,9 @@ static void host_canvas_present(void)
 
 static uint8_t *host_fb_ptr(void)
 {
-    s_gpu_fbo_unsynced = false;
+    s_trans_snapshotted = false;
+    s_gpu_fbo_unsynced  = false;
+    uipod_gpu_prepare_cpu_fallback();
     lcd_set_viewport(NULL);
     return (uint8_t *)FBADDR(0, 0);
 }
@@ -864,6 +1008,8 @@ static const struct UIPodPluginApi s_host_api = {
     .audio_stop              = host_audio_stop,
     .library_track_count     = host_library_track_count,
     .library_track_at        = host_library_track_at,
+    .canvas_begin_responsive = host_canvas_begin_responsive,
+    .get_responsive_size     = host_get_responsive_size,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */
@@ -877,6 +1023,8 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
     s_prev_menu_cancelled = false;
     s_gpu_fbo_unsynced    = false;
     s_has_presented_frame = false;
+    s_plugin_has_header   = false;
+    s_trans_snapshotted   = false;
     s_last_menu_title[0]  = '\0';
     action_wait_for_release();
 
@@ -922,6 +1070,8 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
     s_menu_on_screen      = false;
     s_prev_menu_cancelled = false;
     s_has_presented_frame = false;
+    s_plugin_has_header   = false;
+    s_trans_snapshotted   = false;
     s_last_menu_title[0]  = '\0';
 
     FOR_NB_SCREENS(i)
@@ -946,7 +1096,13 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
 
 void uipod_plugins_init(void)
 {
+#ifdef __ANDROID__
+    const char *nlibdir = getenv("UIPOD_NATIVE_LIB_DIR");
+    uipod_rs_plugins_init((nlibdir && nlibdir[0]) ? nlibdir : BUNDLED_PLUGINS_DIR,
+                          SDCARD_PLUGINS_DIR);
+#else
     uipod_rs_plugins_init(BUNDLED_PLUGINS_DIR, SDCARD_PLUGINS_DIR);
+#endif
 }
 
 bool uipod_plugins_menu_driven_active(void)

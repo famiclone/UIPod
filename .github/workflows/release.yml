@@ -99,6 +99,25 @@ jobs:
           ./build.sh
           ./package.sh
 
+      - name: Install Rust & Android arm64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Android SDK/NDK/SDL2/OpenSSL toolchain
+        uses: actions/cache@v4
+        with:
+          path: build-android/.toolchain
+          key: uipod-android-tc-v1-${{ runner.os }}
+
+      - name: Build & sign UIPod Android APK (arm64-v8a)
+        env:
+          UIPOD_VERSION: ${{ steps.ver.outputs.tag }}
+          ANDROID_HOME: ${{ github.workspace }}/build-android/.toolchain/android-sdk
+        run: |
+          chmod +x ./build-android.sh
+          ./build-android.sh
+
       - name: Verify stamped pak.json version matches tag
         env:
           EXPECTED_TAG: ${{ steps.ver.outputs.tag }}
@@ -172,6 +191,7 @@ jobs:
         run: |
           SAFE_VER="$(printf '%s' "$RELEASE_TAG" | sed 's/[^A-Za-z0-9._+-]/-/g')"
           BRICK_ZIP="dist/UIPod-${SAFE_VER}-brick.zip"
+          ANDROID_APK="dist/UIPod-${SAFE_VER}-android-arm64.apk"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
               --title "UIPod ${RELEASE_TAG}" \
@@ -179,11 +199,13 @@ jobs:
             gh release upload "$RELEASE_TAG" \
               dist/UIPod.pak.zip \
               "$BRICK_ZIP" \
+              "$ANDROID_APK" \
               --clobber
           else
             gh release create "$RELEASE_TAG" \
               dist/UIPod.pak.zip \
               "$BRICK_ZIP" \
+              "$ANDROID_APK" \
               --title "UIPod ${RELEASE_TAG}" \
               --notes-file /tmp/release-notes.md
           fi

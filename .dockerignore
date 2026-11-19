@@ -1,4 +1,5 @@
-.git
-build*
-dist
-target
+# Toolchain Dockerfiles (`Dockerfile.uipod` / `Dockerfile.android`) do not COPY
+# workspace files (sources are bind-mounted at `docker run` time).
+*
+!Dockerfile.uipod
+!Dockerfile.android

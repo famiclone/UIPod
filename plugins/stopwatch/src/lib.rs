@@ -133,9 +133,8 @@ fn run_stopwatch(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         } else {
             ctx.tr("Stopwatch", "Секундомір")
         };
-        ctx.begin_frame(t.bg, true, hdr_title);
-
-        let w = SCREEN_WIDTH as f32;
+        let (w, _h) = ctx.begin_responsive_frame(t.bg, true, hdr_title);
+        let _ = SCREEN_WIDTH;
         // Mode tabs pill at top (Stopwatch | Timer)
         let tab_y = CONTENT_TOP_Y + 4.0;
         let tab_w = 220.0_f32;

@@ -1360,6 +1360,33 @@ impl VizEngine {
             glow::PixelUnpackData::Slice(&self.dsp.audio_tex),
         );
 
+        let aspect = (win_w.max(1) as f32) / (win_h.max(1) as f32);
+        let (want_cw, want_ch, want_fw, want_fh) = if aspect >= 1.0 {
+            let cw = ((192.0 * aspect).round() as i32).clamp(160, 640);
+            let fw = ((384.0 * aspect).round() as i32).clamp(320, 1280);
+            (cw, 192, fw, 384)
+        } else {
+            let ch = ((192.0 / aspect.max(0.35)).round() as i32).clamp(192, 640);
+            let fh = ((384.0 / aspect.max(0.35)).round() as i32).clamp(384, 1280);
+            (192, ch, 384, fh)
+        };
+        if self.fbo_coarse.w != want_cw || self.fbo_coarse.h != want_ch {
+            if let (Ok(new_c), Ok(new_f)) = (
+                Self::create_ping_pong(&self.gl, want_cw, want_ch),
+                Self::create_ping_pong(&self.gl, want_fw, want_fh),
+            ) {
+                for i in 0..2 {
+                    self.gl.delete_framebuffer(self.fbo_coarse.fbo[i]);
+                    self.gl.delete_texture(self.fbo_coarse.tex[i]);
+                    self.gl.delete_framebuffer(self.fbo_fine.fbo[i]);
+                    self.gl.delete_texture(self.fbo_fine.tex[i]);
+                }
+                self.fbo_coarse = new_c;
+                self.fbo_fine = new_f;
+                self.needs_clear = true;
+            }
+        }
+
         let pp = if self.fine_grain {
             &mut self.fbo_fine
         } else {

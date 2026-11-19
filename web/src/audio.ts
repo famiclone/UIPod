@@ -1,6 +1,6 @@
 /**
  * UIPod Web Audio Engine:
- * - Plays 5 built-in procedurally synthesized stereo tracks (zero external copyright assets!)
+ * - Plays bundled Y2K MP3 demo tracks (`./audio/aquabios-2000.mp3`, `./audio/chrome-breakbeat.mp3`)
  * - Decodes & plays any user-dropped audio file (MP3, FLAC, WAV, OGG, M4A)
  * - Real 10-band Parametric EQ + AutoEQ headphone target curves
  * - Real Tape Mode DSP (Wow & Flutter LFO delay, Tape Hiss, Analog Saturation, HF Roll-Off, Stop/Start motor ramp)
@@ -20,20 +20,17 @@ export interface DspParams {
   speed: number;     // 50..150 (%)
 }
 
-export interface TrackEntry {
-  index: number;
-  title: string;
-  artist: string;
-  album: string;
-  codec: string;
-  durationMs: number;
-  isUserFile: boolean;
-  buffer?: AudioBuffer;
-}
+const BUILTIN_TRACK_URLS: string[] = [
+  './audio/aquabios-2000.mp3',
+  './audio/chrome-breakbeat.mp3',
+  './audio/possibility-2000.mp3',
+  './audio/distortedspaceship.mp3',
+];
+
+const BUILTIN_TRACK_DURATIONS_SEC: number[] = [23.22, 23.325, 52.723, 65.907];
 
 const EQ_FREQS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
-// Realistic 10-band AutoEQ compensation curves (dB) matching UIPod's headphone database spirit
 const AUTOEQ_CURVES: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],                           // 0: Off / Flat
   [-4.5, -5.2, -4.0, -1.8, 0.4, 1.5, 2.2, 3.4, 1.8, 1.0],   // 1: Sony WH-1000XM4
@@ -67,15 +64,17 @@ export class UIPodAudioEngine {
   private pcmOut = new Int16Array(2048);
 
   private sourceNode: AudioBufferSourceNode | null = null;
-  private demoCache = new Map<number, AudioBuffer>();
+  private builtinCache = new Map<number, AudioBuffer>();
+  private builtinLoading = new Map<number, Promise<AudioBuffer>>();
   private userBuffers = new Map<number, AudioBuffer>();
+  private playSeq = 0;
 
   public playing = false;
   public currentTrack = 0;
-  public trackCount = 5;
-  private offsetSec = 42.0;
+  public trackCount = BUILTIN_TRACK_URLS.length;
+  private offsetSec = 0.0;
   private startCtxTime = 0;
-  private currentDurSec = 192.0;
+  private currentDurSec = BUILTIN_TRACK_DURATIONS_SEC[0];
   private volumeNorm = 0.8;
 
   public dsp: DspParams = {
@@ -101,9 +100,6 @@ export class UIPodAudioEngine {
     const ctx = new AudioContext();
     this.ctx = ctx;
 
-    // Signal Chain:
-    // Source -> 10-band EQ -> Tape Delay (Wow/Flutter) -> Tape Shaper (Sat) -> Tape Lowpass (HF Roll-Off)
-    //        -> (+ Tape Hiss) -> PreTapGain -> (Analyser L/R) -> MasterGain -> Destination
     let prev: AudioNode | null = null;
     this.eqFilters = EQ_FREQS.map((freq, idx) => {
       const f = ctx.createBiquadFilter();
@@ -120,7 +116,6 @@ export class UIPodAudioEngine {
     delay.delayTime.value = 0.012;
     this.tapeDelay = delay;
 
-    // Dual-rate analog Wow (0.65 Hz capstan) + Flutter (6.2 Hz pinch roller) LFOs
     const wowOsc1 = ctx.createOscillator();
     wowOsc1.frequency.value = 0.65;
     const wowGain1 = ctx.createGain();
@@ -154,7 +149,6 @@ export class UIPodAudioEngine {
     preTap.gain.value = 1.0;
     this.preTapGain = preTap;
 
-    // Tape Hiss noise loop
     const noiseLen = ctx.sampleRate * 2;
     const noiseBuf = ctx.createBuffer(2, noiseLen, ctx.sampleRate);
     for (let ch = 0; ch < 2; ch++) {
@@ -181,7 +175,6 @@ export class UIPodAudioEngine {
     this.hissNode = hissSrc;
     this.hissGain = hissGain;
 
-    // Stereo Analyser Tap (pre-volume, matching UIPod's ALSA pre-volume PCM tap!)
     const splitter = ctx.createChannelSplitter(2);
     const analyserL = ctx.createAnalyser();
     const analyserR = ctx.createAnalyser();
@@ -192,7 +185,7 @@ export class UIPodAudioEngine {
     this.analyserR = analyserR;
 
     const master = ctx.createGain();
-    master.gain.value = this.volumeNorm * this.volumeNorm;
+    master.gain.value = Math.pow(this.volumeNorm, 2.1);
     this.masterGain = master;
 
     this.eqFilters[this.eqFilters.length - 1].connect(delay);
@@ -271,16 +264,13 @@ export class UIPodAudioEngine {
   public setVolume(norm: number): void {
     this.volumeNorm = Math.max(0, Math.min(1, norm));
     if (this.masterGain && this.ctx) {
-      // Perceptual loudness curve matching UIPod's 40-step volume curve
       const gain = this.volumeNorm === 0 ? 0 : Math.pow(this.volumeNorm, 2.1);
       this.masterGain.gain.setTargetAtTime(gain, this.ctx.currentTime, 0.02);
     }
   }
 
-  /** Authentic tactile iPod Click Wheel piezo click impulse. */
   public playMenuClick(): void {
-    if (!this.ctx) return; // Don't force AudioContext before first user gesture
-    if (this.ctx.state !== 'running') return;
+    if (!this.ctx || this.ctx.state !== 'running') return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -303,160 +293,43 @@ export class UIPodAudioEngine {
     return Math.round(buf.duration * 1000);
   }
 
-  private getOrSynthTrackBuffer(ctx: AudioContext, trackIndex: number): AudioBuffer {
+  private async loadTrackBuffer(ctx: AudioContext, trackIndex: number): Promise<AudioBuffer> {
     const userBuf = this.userBuffers.get(trackIndex);
     if (userBuf) return userBuf;
-    const cached = this.demoCache.get(trackIndex);
+
+    const idx = trackIndex % BUILTIN_TRACK_URLS.length;
+    const cached = this.builtinCache.get(idx);
     if (cached) return cached;
 
-    // Synthesize a lush 16-second stereo musical loop tailored to each built-in track!
-    const sr = ctx.sampleRate;
-    const loopSec = 16;
-    const len = sr * loopSec;
-    const buf = ctx.createBuffer(2, len, sr);
-    const L = buf.getChannelData(0);
-    const R = buf.getChannelData(1);
+    const inflight = this.builtinLoading.get(idx);
+    if (inflight) return inflight;
 
-    const style = trackIndex % 5;
-    const bpm = [86, 118, 76, 128, 92][style];
-    const beatSec = 60 / bpm;
-
-    // Musical chord progressions (Hz)
-    const chords: number[][][] = [
-      // 0: Midnight Tape Loop (Warm Lo-Fi Rhodes Dm9 -> G13 -> Cmaj9 -> A7b9)
-      [[146.83, 220.0, 261.63, 329.63], [196.0, 246.94, 329.63, 392.0], [130.81, 196.0, 246.94, 293.66], [110.0, 164.81, 220.0, 277.18]],
-      // 1: Phosphor Horizon (Synthwave Am -> F -> C -> G)
-      [[110.0, 220.0, 261.63, 329.63], [87.31, 174.61, 220.0, 261.63], [130.81, 196.0, 261.63, 329.63], [98.0, 196.0, 246.94, 293.66]],
-      // 2: 4-Shade Rain (Ambient Dub Cm9 -> Abmaj7 -> Fm9 -> Gsus4)
-      [[130.81, 155.56, 196.0, 293.66], [103.83, 155.56, 207.65, 246.94], [87.31, 130.81, 174.61, 207.65], [98.0, 130.81, 196.0, 261.63]],
-      // 3: Pixel Velocity (Chiptune Electro Em -> C -> G -> D)
-      [[164.81, 246.94, 329.63, 392.0], [130.81, 196.0, 261.63, 329.63], [196.0, 246.94, 293.66, 392.0], [146.83, 220.0, 293.66, 369.99]],
-      // 4: Velvet Cassette (Chillhop Fmaj7 -> Em7 -> Dm7 -> Cmaj7)
-      [[174.61, 220.0, 261.63, 329.63], [164.81, 196.0, 246.94, 293.66], [146.83, 174.61, 220.0, 261.63], [130.81, 164.81, 196.0, 246.94]],
-    ];
-    const prog = chords[style];
-    const barSec = beatSec * 4;
-
-    let rng = (trackIndex + 1) * 133791;
-    const rand = () => {
-      rng = (rng * 1664525 + 1013904223) >>> 0;
-      return (rng / 0xffffffff) * 2 - 1;
-    };
-
-    for (let i = 0; i < len; i++) {
-      const t = i / sr;
-      const barIdx = Math.floor(t / barSec) % 4;
-      const beatInBar = (t % barSec) / beatSec;
-      const beatFrac = beatInBar - Math.floor(beatInBar);
-      const stepIdx = Math.floor(beatInBar * 4);
-      const stepFrac = beatInBar * 4 - stepIdx;
-      const chord = prog[barIdx];
-
-      // 1. Punchy Analog Kick on beats 0 & 2 (plus syncopation on style 1 & 3)
-      let kick = 0;
-      const kickHit =
-        Math.floor(beatInBar) === 0 ||
-        Math.floor(beatInBar) === 2 ||
-        (style === 1 && stepIdx === 10) ||
-        (style === 3 && stepIdx === 14);
-      if (kickHit) {
-        const kt = stepIdx % 4 === 0 ? beatFrac * beatSec : stepFrac * (beatSec * 0.25);
-        if (kt < 0.28) {
-          const pitch = 46 + 115 * Math.exp(-kt * 28);
-          const env = Math.exp(-kt * 11.5);
-          kick = Math.sin(2 * Math.PI * pitch * kt) * env * 0.52;
-        }
+    const promise = (async () => {
+      const resp = await fetch(BUILTIN_TRACK_URLS[idx]);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch ${BUILTIN_TRACK_URLS[idx]} (${resp.status})`);
       }
-
-      // 2. Crisp Snare / Clap on beats 1 & 3
-      let snare = 0;
-      if (Math.floor(beatInBar) === 1 || Math.floor(beatInBar) === 3) {
-        const st = beatFrac * beatSec;
-        if (st < 0.18) {
-          const nEnv = Math.exp(-st * 24);
-          const body = Math.sin(2 * Math.PI * 195 * st) * Math.exp(-st * 32) * 0.24;
-          snare = (rand() * 0.28 * nEnv + body) * (style === 2 ? 0.55 : 0.9);
-        }
-      }
-
-      // 3. Stereo Hi-Hat groove
-      let hatL = 0;
-      let hatR = 0;
-      const ht = stepFrac * (beatSec * 0.25);
-      if (ht < 0.045 && (stepIdx % 2 === 0 || style === 3)) {
-        const hEnv = Math.exp(-ht * 85) * (stepIdx % 4 === 2 ? 0.12 : 0.065);
-        const n = rand();
-        hatL = n * hEnv * (stepIdx % 2 === 0 ? 1.15 : 0.7);
-        hatR = -n * hEnv * (stepIdx % 2 === 0 ? 0.7 : 1.15);
-      }
-
-      // 4. Warm Sub-Bass line following root notes
-      const rootFreq = chord[0] * 0.5;
-      const bassPulse = 0.65 + 0.35 * Math.exp(-beatFrac * 4.0);
-      const bass =
-        (Math.sin(2 * Math.PI * rootFreq * t) * 0.75 +
-          Math.sin(2 * Math.PI * rootFreq * 2 * t) * 0.25) *
-        0.24 *
-        bassPulse;
-
-      // 5. Lush Stereo Chords / Pads with slow chorus detune
-      let padL = 0;
-      let padR = 0;
-      const sidechain = 0.65 + 0.35 * Math.min(1, beatFrac * 2.5);
-      for (let n = 0; n < chord.length; n++) {
-        const f = chord[n];
-        const det = 1 + (n % 2 === 0 ? 0.0028 : -0.0028);
-        const w1 = Math.sin(2 * Math.PI * f * t);
-        const w2 = Math.sin(2 * Math.PI * f * det * t + 0.7);
-        const harm = style === 1 || style === 3 ? Math.sin(2 * Math.PI * f * 2 * t) * 0.25 : 0;
-        padL += (w1 + harm) * 0.085;
-        padR += (w2 + harm) * 0.085;
-      }
-      padL *= sidechain;
-      padR *= sidechain;
-
-      // 6. Stereo Arpeggio / Lead Melody
-      const arpNote = chord[(stepIdx + barIdx) % chord.length] * (style === 3 ? 2.0 : 1.0);
-      const arpEnv = Math.exp(-stepFrac * (style === 2 ? 2.2 : 5.0));
-      let arp = 0;
-      if (style === 3) {
-        // Crisp chiptune square-ish lead
-        const s = Math.sin(2 * Math.PI * arpNote * t);
-        arp = Math.tanh(s * 3.2) * 0.11 * arpEnv;
-      } else {
-        arp =
-          (Math.sin(2 * Math.PI * arpNote * t) +
-            0.3 * Math.sin(2 * Math.PI * arpNote * 2 * t)) *
-          0.11 *
-          arpEnv;
-      }
-      const pan = Math.sin(t * 0.9) * 0.45;
-      const arpL = arp * (0.5 - pan * 0.5);
-      const arpR = arp * (0.5 + pan * 0.5);
-
-      // Smooth fade at loop seam (12ms)
-      let seam = 1;
-      const fadeSamples = Math.floor(sr * 0.012);
-      if (i < fadeSamples) seam = i / fadeSamples;
-      else if (i > len - fadeSamples) seam = (len - i) / fadeSamples;
-
-      L[i] = Math.tanh((kick + snare + hatL + bass + padL + arpL) * 0.92) * seam;
-      R[i] = Math.tanh((kick + snare + hatR + bass + padR + arpR) * 0.92) * seam;
-    }
-
-    this.demoCache.set(trackIndex, buf);
-    return buf;
+      const arr = await resp.arrayBuffer();
+      const buf = await ctx.decodeAudioData(arr);
+      this.builtinCache.set(idx, buf);
+      this.builtinLoading.delete(idx);
+      return buf;
+    })();
+    this.builtinLoading.set(idx, promise);
+    return promise;
   }
 
-  public playTrack(trackIndex: number, startSec = 0): void {
-    const ctx = this.ensureContext();
+  private startDecodedBuffer(
+    ctx: AudioContext,
+    buf: AudioBuffer,
+    trackIndex: number,
+    startSec: number,
+  ): void {
     this.stopSource(false);
-
-    this.currentTrack = trackIndex;
-    const buf = this.getOrSynthTrackBuffer(ctx, trackIndex);
     const isUser = this.userBuffers.has(trackIndex);
-    this.currentDurSec = isUser ? buf.duration : [192, 214, 238, 176, 205][trackIndex % 5];
-    this.offsetSec = Math.max(0, Math.min(startSec, this.currentDurSec - 0.5));
+    this.currentTrack = trackIndex;
+    this.currentDurSec = buf.duration;
+    this.offsetSec = Math.max(0, Math.min(startSec, Math.max(0, buf.duration - 0.25)));
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -466,18 +339,16 @@ export class UIPodAudioEngine {
     const targetRate = Math.max(0.5, Math.min(1.5, this.dsp.speed / 100));
     const now = ctx.currentTime;
     if (this.dsp.tape && this.dsp.stopStart) {
-      // Authentic cassette motor spin-up!
       src.playbackRate.setValueAtTime(0.32, now);
       src.playbackRate.exponentialRampToValueAtTime(targetRate, now + 0.24);
     } else {
       src.playbackRate.setValueAtTime(targetRate, now);
     }
 
-    const bufOffset = isUser ? this.offsetSec : this.offsetSec % buf.duration;
+    const bufOffset = this.offsetSec % Math.max(0.1, buf.duration);
     src.start(now, bufOffset);
     src.onended = () => {
       if (this.sourceNode === src && isUser && this.playing) {
-        // Advance to next track when user file completes
         const next = (this.currentTrack + 1) % Math.max(1, this.trackCount);
         this.playTrack(next, 0);
       }
@@ -489,16 +360,52 @@ export class UIPodAudioEngine {
     this.applyDsp(this.dsp);
   }
 
+  public playTrack(trackIndex: number, startSec = 0): void {
+    const ctx = this.ensureContext();
+    const seq = ++this.playSeq;
+    this.currentTrack = trackIndex;
+    this.offsetSec = startSec;
+    this.playing = true;
+
+    const userBuf = this.userBuffers.get(trackIndex);
+    if (userBuf) {
+      this.startDecodedBuffer(ctx, userBuf, trackIndex, startSec);
+      return;
+    }
+
+    const idx = trackIndex % BUILTIN_TRACK_URLS.length;
+    this.currentDurSec = BUILTIN_TRACK_DURATIONS_SEC[idx] ?? 23.0;
+    const cached = this.builtinCache.get(idx);
+    if (cached) {
+      this.startDecodedBuffer(ctx, cached, trackIndex, startSec);
+      return;
+    }
+
+    this.stopSource(false);
+    void this.loadTrackBuffer(ctx, trackIndex)
+      .then((buf) => {
+        if (seq !== this.playSeq || !this.playing) return;
+        this.startDecodedBuffer(ctx, buf, trackIndex, startSec);
+      })
+      .catch((err) => {
+        console.warn('Audio track load error:', err);
+        if (seq === this.playSeq) {
+          this.playing = false;
+        }
+      });
+  }
+
   public setPlaying(shouldPlay: boolean, trackIndex?: number): void {
     if (typeof trackIndex === 'number' && trackIndex !== this.currentTrack) {
       this.currentTrack = trackIndex;
       this.offsetSec = 0;
     }
     if (shouldPlay) {
-      if (!this.playing) {
+      if (!this.playing || !this.sourceNode) {
         this.playTrack(this.currentTrack, this.offsetSec);
       }
     } else if (this.playing) {
+      this.playSeq++;
       this.offsetSec = this.getPositionSec();
       this.stopSource(this.dsp.tape && this.dsp.stopStart);
       this.playing = false;
@@ -520,7 +427,6 @@ export class UIPodAudioEngine {
     const now = this.ctx.currentTime;
     try {
       if (withTapeSpinDown) {
-        // Authentic Walkman cassette motor spin-down!
         src.playbackRate.cancelScheduledValues(now);
         src.playbackRate.setValueAtTime(src.playbackRate.value, now);
         src.playbackRate.exponentialRampToValueAtTime(0.18, now + 0.26);
@@ -534,7 +440,7 @@ export class UIPodAudioEngine {
   }
 
   public getPositionSec(): number {
-    if (!this.playing || !this.ctx) return this.offsetSec;
+    if (!this.playing || !this.ctx || !this.sourceNode) return this.offsetSec;
     const rate = Math.max(0.5, Math.min(1.5, this.dsp.speed / 100));
     const elapsed = (this.ctx.currentTime - this.startCtxTime) * rate;
     const pos = this.offsetSec + elapsed;
@@ -551,13 +457,9 @@ export class UIPodAudioEngine {
   }
 
   public getSampleRate(): number {
-    return this.ctx?.sampleRate ?? 48000;
+    return this.ctx?.sampleRate ?? 44100;
   }
 
-  /**
-   * Reads 1024 interleaved stereo S16 PCM frames (`2048` i16 values) from the live Web Audio tap
-   * so UIPod's real Rust `VizDsp` (FFT, beat detector, VU needles, oscilloscope) reacts in real time.
-   */
   public readStereoPcmS16(): Int16Array {
     if (!this.playing || !this.analyserL || !this.analyserR) {
       this.pcmOut.fill(0);

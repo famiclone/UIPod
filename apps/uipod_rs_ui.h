@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #define UIPOD_RS_LIST_VISIBLE_ROWS 8
+#define UIPOD_RS_MAX_VISIBLE_ROWS  24
 #define UIPOD_RS_HEADER_BAND_ROWS  120
 
 /* Prefix for `callback_get_item_indicator` to render plain right-aligned
@@ -136,6 +137,46 @@ bool  uipod_rs_ui_plugin_begin(uint32_t bg_rgb,
                                uint32_t fg2_rgb,
                                uint32_t clear_rgb,
                                const struct UIPodRsHeader *header);
+bool  uipod_rs_ui_plugin_begin_ex(uint32_t bg_rgb,
+                                  uint32_t fg_rgb,
+                                  uint32_t fg1_rgb,
+                                  uint32_t fg2_rgb,
+                                  uint32_t clear_rgb,
+                                  const struct UIPodRsHeader *header,
+                                  uint32_t win_w,
+                                  uint32_t win_h,
+                                  bool responsive,
+                                  float *out_logical_w,
+                                  float *out_logical_h);
+
+size_t uipod_rs_ui_visible_rows_for_window(uint32_t win_w, uint32_t win_h);
+bool   uipod_rs_ui_render_header_gpu(uint32_t bg_rgb,
+                                     uint32_t fg_rgb,
+                                     uint32_t fg1_rgb,
+                                     uint32_t fg2_rgb,
+                                     const struct UIPodRsHeader *header,
+                                     uint32_t win_w,
+                                     uint32_t win_h);
+bool   uipod_rs_ui_render_list_gpu(const struct UIPodRsListScreen *screen,
+                                   uint32_t win_w,
+                                   uint32_t win_h);
+bool   uipod_rs_ui_render_now_playing_gpu(const struct UIPodRsNowPlaying *np,
+                                          uint32_t win_w,
+                                          uint32_t win_h);
+bool   uipod_rs_ui_render_keyboard_gpu(const struct UIPodRsKeyboard *kbd,
+                                       uint32_t win_w,
+                                       uint32_t win_h);
+bool   uipod_rs_ui_snapshot_transition(void);
+bool   uipod_rs_ui_present_transition_gpu(uint32_t win_w,
+                                          uint32_t win_h,
+                                          uint8_t kind,
+                                          float progress,
+                                          int8_t dir,
+                                          bool pin_header);
+bool   uipod_rs_ui_present_fade_rgb_gpu(uint32_t win_w,
+                                        uint32_t win_h,
+                                        float fade,
+                                        uint32_t target_rgb);
 void  uipod_rs_ui_plugin_fill_rect(float x, float y, float w, float h,
                                    float radius, uint32_t rgb);
 void  uipod_rs_ui_plugin_stroke_rect(float x, float y, float w, float h,
@@ -200,6 +241,15 @@ uint8_t uipod_gpu_get_header_source(void);
 bool uipod_gpu_ui_ensure_ready(void);
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,
                            const char *override_title);
+int  uipod_gpu_visible_list_rows(void);
+bool uipod_gpu_check_window_resized(void);
+bool uipod_gpu_is_active(void);
+void uipod_gpu_set_active(bool active);
+void uipod_gpu_begin_transition_capture(void);
+bool uipod_gpu_did_capture_transition_frame(bool *out_pin_header);
+void uipod_gpu_present_current_fbo(void);
+void uipod_gpu_note_rendered_screen(bool has_header);
+void uipod_gpu_prepare_cpu_fallback(void);
 bool uipod_gpu_render_header(void);
 bool uipod_gpu_render_synclist(struct gui_synclist *list);
 bool uipod_gpu_render_keyboard(const char *text,

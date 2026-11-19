@@ -55,5 +55,8 @@ void sdl_gl_set_video_through(bool on, int overlay_rows);
 /* Query current GL drawable dimensions and swap directly for zero-copy GPU plugins. */
 void sdl_gl_get_drawable_size(int *out_w, int *out_h);
 void sdl_gl_swap_window(void);
+bool sdl_gl_is_gpu_active(void);
+void sdl_gl_set_gpu_active(bool on);
+void sdl_gl_set_gpu_repaint_fn(void (*fn)(void));
 
 #endif /* #ifndef __WINDOWSDL_H__ */

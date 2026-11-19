@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 5u
+#define UIPOD_PLUGIN_API_VERSION 6u
 
 enum uipod_plugin_category
 {
@@ -120,6 +120,14 @@ struct UIPodPluginApi
                                  char *artist_out, size_t artist_cap,
                                  char *title_out, size_t title_cap,
                                  uint32_t *duration_ms_out);
+
+    /* Responsive Canvas Extension (v6+) */
+    void     (*canvas_begin_responsive)(uint32_t bg_rgb,
+                                        bool show_header,
+                                        const char *title,
+                                        float *out_w,
+                                        float *out_h);
+    void     (*get_responsive_size)(float *out_w, float *out_h);
 };
 
 struct UIPodPluginInfoC

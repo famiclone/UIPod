@@ -56,7 +56,7 @@
 #define PL_MAX        256
 #define PL_NAMEBUF    (PL_MAX * 64)   /* packed NUL-terminated names */
 
-#define OFFLINE_PL_DIR "/tmp/uipod_offline_pl"
+#define OFFLINE_PL_DIR UIPOD_TMP_ROOT "/uipod_offline_pl"
 
 enum pl_source_dir
 {

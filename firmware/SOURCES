@@ -82,7 +82,9 @@ target/hosted/sysfs.c
 target/hosted/sdl/retro-handheld/backlight-target.c
 target/hosted/sdl/retro-handheld/power-target.c
 target/hosted/sdl/retro-handheld/video-target.c
+#ifndef __ANDROID__
 target/hosted/sdl/retro-handheld/video-audio.c
+#endif
 target/hosted/sdl/retro-handheld/button-target.c
 target/hosted/sdl/retro-handheld/powermgmt-target.c
 target/hosted/sdl/retro-handheld/uipod-https-target.c
@@ -301,8 +303,13 @@ drivers/audio/aic310x.c
 #endif /* defined(HAVE_*) */
 #else /* PLATFORM_HOSTED */
 #if defined(HAVE_SDL_AUDIO) || defined(SIMULATOR)
+#ifdef __ANDROID__
+drivers/audio/audiohw-android.c
+target/hosted/sdl/pcm-sdl-android.c
+#else
 drivers/audio/trimpod-alsa.c
 target/hosted/sdl/pcm-alsa.c
+#endif
 target/hosted/sdl/tape_deck_fx.c
 #endif
 #endif /* (CONFIG_PLATFORM & PLATFORM_NATIVE) */

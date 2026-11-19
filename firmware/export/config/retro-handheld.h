@@ -96,7 +96,11 @@
 /* Hold/lock switch (Brick side toggle): blocks all input when engaged. */
 #define HAS_BUTTON_HOLD
 
+#ifdef __ANDROID__
+#define BOOTDIR "/data/data/dev.famiclone.uipod/files/uipod"
+#else
 #define BOOTDIR "/tmp/uipod"
+#endif
 
 /* No special storage */
 #define CONFIG_STORAGE STORAGE_HOSTFS

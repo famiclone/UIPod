@@ -42,6 +42,7 @@
 #include "option_select.h"
 #include "misc.h"
 #include "string-extra.h"
+#include "lcd.h"
 #include "uipod_rs_ui.h"
 
 /* initial setup of wps_data  */
@@ -217,9 +218,17 @@ void sb_skin_update(enum screen_type screen, bool force)
         {
             if (force)
                 skin_request_full_update(CUSTOM_STATUSBAR);
+            bool gpu_hdr = (screen == SCREEN_MAIN &&
+                            get_current_activity() != ACTIVITY_USBSCREEN);
+            bool prev_sup = lcd_is_update_suppressed();
+            if (gpu_hdr)
+                lcd_set_update_suppressed(true);
             skin_update(CUSTOM_STATUSBAR, screen, SKIN_REFRESH_NON_STATIC);
-            if (screen == SCREEN_MAIN && get_current_activity() != ACTIVITY_USBSCREEN)
+            if (gpu_hdr)
+            {
+                lcd_set_update_suppressed(prev_sup);
                 uipod_gpu_render_header();
+            }
         }
         next_update[i] = current_tick + update_delay; /* don't update too often */
     }

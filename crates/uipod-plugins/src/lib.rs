@@ -77,7 +77,7 @@ impl DlLibrary {
         if desc.magic != UIPOD_PLUGIN_MAGIC {
             return Err(format!("Invalid plugin magic: 0x{:08X}", desc.magic));
         }
-        if desc.api_version != UIPOD_PLUGIN_API_VERSION {
+        if desc.api_version != UIPOD_PLUGIN_API_VERSION && desc.api_version != 5 {
             return Err(format!(
                 "Incompatible plugin ABI v{} (host v{})",
                 desc.api_version, UIPOD_PLUGIN_API_VERSION
@@ -152,7 +152,24 @@ fn is_scannable_plugin_file(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    ext.eq_ignore_ascii_case("uipod") || ext.eq_ignore_ascii_case("so")
+    if ext.eq_ignore_ascii_case("uipod") {
+        return true;
+    }
+    #[cfg(target_os = "android")]
+    {
+        if ext.eq_ignore_ascii_case("so") {
+            return path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("libuipod_plugin_"))
+                .unwrap_or(false);
+        }
+        false
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        ext.eq_ignore_ascii_case("so")
+    }
 }
 
 fn probe_plugin_file(path: &Path, is_user_sdcard: bool) -> Result<PluginMeta, String> {
@@ -215,13 +232,18 @@ pub struct PluginRegistry {
     plugins: Vec<PluginMeta>,
 }
 
+#[cfg(target_os = "android")]
+const DEFAULT_SDCARD_ROOT: &str = "/storage/emulated/0";
+#[cfg(not(target_os = "android"))]
+const DEFAULT_SDCARD_ROOT: &str = "/mnt/SDCARD";
+
 impl PluginRegistry {
     fn new() -> Self {
         Self {
             bundled_dir: PathBuf::from("/tmp/uipod/plugins"),
             user_dirs: vec![
-                PathBuf::from("/mnt/SDCARD/Plugins/UIPod"),
-                PathBuf::from("/mnt/SDCARD/Media/Plugins"),
+                PathBuf::from(format!("{DEFAULT_SDCARD_ROOT}/Plugins/UIPod")),
+                PathBuf::from(format!("{DEFAULT_SDCARD_ROOT}/Media/Plugins")),
             ],
             plugins: Vec::new(),
         }
@@ -233,15 +255,14 @@ impl PluginRegistry {
         if !sd_primary.as_os_str().is_empty() {
             self.user_dirs.push(sd_primary.to_path_buf());
         }
-        let alt = PathBuf::from("/mnt/SDCARD/Media/Plugins");
+        let alt = PathBuf::from(format!("{DEFAULT_SDCARD_ROOT}/Media/Plugins"));
         if alt != sd_primary {
             self.user_dirs.push(alt);
         }
     }
 
     pub fn rescan(&mut self) -> usize {
-        // Ensure SD-card drop-in folder `/mnt/SDCARD/Plugins/UIPod` exists if `/mnt/SDCARD` is mounted
-        if Path::new("/mnt/SDCARD").is_dir() {
+        if Path::new(DEFAULT_SDCARD_ROOT).is_dir() {
             if let Some(primary_sd) = self.user_dirs.first() {
                 let _ = fs::create_dir_all(primary_sd);
             }
@@ -776,6 +797,29 @@ mod tests {
             false
         }
 
+        unsafe extern "C" fn m_begin_resp(
+            _: u32,
+            _: bool,
+            _: *const c_char,
+            out_w: *mut f32,
+            out_h: *mut f32,
+        ) {
+            if !out_w.is_null() {
+                *out_w = 1024.0;
+            }
+            if !out_h.is_null() {
+                *out_h = 768.0;
+            }
+        }
+        unsafe extern "C" fn m_resp_size(out_w: *mut f32, out_h: *mut f32) {
+            if !out_w.is_null() {
+                *out_w = 1024.0;
+            }
+            if !out_h.is_null() {
+                *out_h = 768.0;
+            }
+        }
+
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
             get_ticks_ms: m_ticks,
@@ -810,6 +854,8 @@ mod tests {
             audio_stop: m_anop,
             library_track_count: m_libcnt,
             library_track_at: m_libat,
+            canvas_begin_responsive: m_begin_resp,
+            get_responsive_size: m_resp_size,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");

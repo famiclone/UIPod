@@ -9,7 +9,7 @@ use std::path::Path;
 
 use uipod_plugin_sdk::{
     btn, uipod_declare_plugin, FontWeight, HostContext, MenuItem, MenuOutcome, PluginCategory,
-    PluginKind, TextAlign, CONTENT_TOP_Y, SCREEN_HEIGHT, SCREEN_WIDTH,
+    PluginKind, TextAlign, CONTENT_TOP_Y,
 };
 
 const FONT_SIZES: [f32; 3] = [28.0, 34.0, 42.0];
@@ -311,12 +311,26 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
         .unwrap_or(0);
 
     let text_x = 32.0_f32;
-    let content_h = (SCREEN_HEIGHT as f32) - CONTENT_TOP_Y - 56.0;
-    let max_text_w = (SCREEN_WIDTH as f32) - 64.0 - 36.0;
+    let (mut cur_sw, mut cur_sh) = ctx.responsive_size();
+    let mut content_h = cur_sh - CONTENT_TOP_Y - 56.0;
+    let mut max_text_w = (cur_sw - 64.0 - 36.0).max(240.0);
 
     let mut wrapped = wrap_paragraphs(ctx, &raw_text, FONT_SIZES[cfg.size_idx], max_text_w);
 
     loop {
+        let t = ctx.theme();
+        let (sw, sh) = ctx.begin_responsive_frame(t.bg, true, &doc_title);
+        if (sw - cur_sw).abs() > 1.0 || (sh - cur_sh).abs() > 1.0 {
+            let frac_num = top_line;
+            let frac_den = wrapped.len().max(1);
+            cur_sw = sw;
+            cur_sh = sh;
+            content_h = cur_sh - CONTENT_TOP_Y - 56.0;
+            max_text_w = (cur_sw - 64.0 - 36.0).max(240.0);
+            wrapped = wrap_paragraphs(ctx, &raw_text, FONT_SIZES[cfg.size_idx], max_text_w);
+            top_line = (frac_num * wrapped.len()) / frac_den;
+        }
+
         let fsz = FONT_SIZES[cfg.size_idx];
         let line_h = (fsz * LINE_SPACINGS[cfg.spacing_idx]).round();
         let vis_lines = ((content_h / line_h).floor() as usize).max(1);
@@ -324,9 +338,6 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
         if top_line > max_top {
             top_line = max_top;
         }
-
-        let t = ctx.theme();
-        ctx.begin_frame(t.bg, true, &doc_title);
 
         for i in 0..vis_lines {
             let idx = top_line + i;
@@ -356,7 +367,7 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
 
         if wrapped.len() > vis_lines {
             ctx.draw_scrollbar(
-                (SCREEN_WIDTH as f32) - 48.0,
+                cur_sw - 48.0,
                 CONTENT_TOP_Y,
                 16.0,
                 content_h,
@@ -383,7 +394,7 @@ fn run_text_viewer(ctx: &mut HostContext, file_path: Option<&Path>) -> i32 {
         );
         ctx.draw_text(
             text_x,
-            (SCREEN_HEIGHT as f32) - 26.0,
+            cur_sh - 26.0,
             &footer,
             23.0,
             FontWeight::Medium,

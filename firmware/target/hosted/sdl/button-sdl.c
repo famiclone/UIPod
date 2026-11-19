@@ -21,7 +21,11 @@
 #include <math.h>
 #include <stdlib.h>         /* EXIT_SUCCESS */
 #include <stdio.h>
-#ifdef RETRO_HANDHELD
+#ifdef __ANDROID__
+#include <pthread.h>
+#include "lcd.h"
+#endif
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
 #include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -60,7 +64,7 @@ bool button_hold(void) {
 }
 #endif
 
-#ifdef RETRO_HANDHELD
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
 static void media_key(int code, bool down);
 #endif
 extern bool debug_wps;
@@ -85,9 +89,78 @@ bool power_display_off(void) { return power_blanked; }
  * JOYBUTTON/JOYHAT/JOYAXIS events to Rockbox buttons in event_handler. */
 static SDL_Joystick **joysticks = NULL;
 static int num_joysticks = 0;
+#ifdef __ANDROID__
+#define MAX_ANDROID_PADS 8
+static SDL_GameController *s_controllers[MAX_ANDROID_PADS];
+static int s_dpad_btns = 0;
+static int s_stick_btns = 0;
+
+static void sync_directional_btns(void)
+{
+    btn &= ~(BUTTON_UP | BUTTON_DOWN | BUTTON_LEFT | BUTTON_RIGHT);
+    btn |= (s_dpad_btns | s_stick_btns);
+}
+
+static void android_open_controller(int joy_idx)
+{
+    if (joy_idx < 0 || !SDL_IsGameController(joy_idx))
+        return;
+    SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(joy_idx);
+    for (int i = 0; i < MAX_ANDROID_PADS; i++)
+    {
+        if (s_controllers[i])
+        {
+            SDL_Joystick *j = SDL_GameControllerGetJoystick(s_controllers[i]);
+            if (j && SDL_JoystickInstanceID(j) == jid)
+                return;
+        }
+    }
+    for (int i = 0; i < MAX_ANDROID_PADS; i++)
+    {
+        if (!s_controllers[i])
+        {
+            s_controllers[i] = SDL_GameControllerOpen(joy_idx);
+            break;
+        }
+    }
+}
+
+static int android_controller_btn_to_rb(Uint8 cbtn)
+{
+    switch (cbtn)
+    {
+        case SDL_CONTROLLER_BUTTON_A:             return BUTTON_A;
+        case SDL_CONTROLLER_BUTTON_B:             return BUTTON_B;
+        case SDL_CONTROLLER_BUTTON_X:             return BUTTON_X;
+        case SDL_CONTROLLER_BUTTON_Y:             return BUTTON_Y;
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return BUTTON_L;
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return BUTTON_R;
+        case SDL_CONTROLLER_BUTTON_START:         return BUTTON_START;
+        case SDL_CONTROLLER_BUTTON_BACK:
+        case SDL_CONTROLLER_BUTTON_GUIDE:
+        case SDL_CONTROLLER_BUTTON_MISC1:
+        case SDL_CONTROLLER_BUTTON_PADDLE1:
+        case SDL_CONTROLLER_BUTTON_PADDLE2:
+        case SDL_CONTROLLER_BUTTON_PADDLE3:
+        case SDL_CONTROLLER_BUTTON_PADDLE4:
+        case SDL_CONTROLLER_BUTTON_TOUCHPAD:      return BUTTON_MENU;
+        default:                                  return BUTTON_NONE;
+    }
+}
+#endif
 
 static void open_joysticks(void)
 {
+#ifdef __ANDROID__
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0)
+    {
+        SDL_GameControllerEventState(SDL_ENABLE);
+        SDL_JoystickEventState(SDL_ENABLE);
+        int n = SDL_NumJoysticks();
+        for (int i = 0; i < n; i++)
+            android_open_controller(i);
+    }
+#else
     if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) < 0)
     {
         DEBUGF("SDL_INIT_JOYSTICK failed: %s\n", SDL_GetError());
@@ -101,6 +174,7 @@ static void open_joysticks(void)
         for (int i = 0; i < num_joysticks; i++)
             joysticks[i] = SDL_JoystickOpen(i);
     }
+#endif
 }
 
 static void close_joysticks(void)
@@ -180,16 +254,14 @@ static bool event_handler(SDL_Event *event)
             sdl_app_has_input_focus = 1;
         else if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
             sdl_app_has_input_focus = 0;
-        else if(event->window.event == SDL_WINDOWEVENT_RESIZED)
+        else if (event->window.event == SDL_WINDOWEVENT_RESIZED ||
+                 event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
         {
             SDL_LockMutex(window_mutex);
             sdl_window_adjustment_needed();
             SDL_UnlockMutex(window_mutex);
-            static unsigned long last_tick;
-            if (TIME_AFTER(current_tick, last_tick + HZ/20) && !button_queue_full())
-                  button_queue_post(SDLK_UNKNOWN, 0); /* update window on main thread */
-            else
-                  last_tick = current_tick;
+            if (!button_queue_full())
+                button_queue_post(BUTTON_NONE, 0);
         }
 #endif /* SDL_MAJOR_VERSION */
         break;
@@ -205,7 +277,71 @@ static bool event_handler(SDL_Event *event)
             power_key_held = (event->type == SDL_KEYDOWN);
             break;
         }
-#ifdef RETRO_HANDHELD
+#if defined(__ANDROID__)
+        {
+            bool down = (event->type == SDL_KEYDOWN);
+            int mapped = BUTTON_NONE;
+            switch (event->key.keysym.scancode)
+            {
+                case SDL_SCANCODE_AC_BACK:
+                case SDL_SCANCODE_BACKSPACE:
+                    mapped = BUTTON_B;
+                    break;
+                case SDL_SCANCODE_RETURN:
+                case SDL_SCANCODE_KP_ENTER:
+                case SDL_SCANCODE_SELECT:
+                    mapped = BUTTON_A;
+                    break;
+                case SDL_SCANCODE_MENU:
+                case SDL_SCANCODE_APPLICATION:
+                case SDL_SCANCODE_ESCAPE:
+                    mapped = BUTTON_MENU;
+                    break;
+                case SDL_SCANCODE_VOLUMEUP:
+                    mapped = BUTTON_VOL_UP;
+                    break;
+                case SDL_SCANCODE_VOLUMEDOWN:
+                    mapped = BUTTON_VOL_DOWN;
+                    break;
+                case SDL_SCANCODE_UP:
+                    if (down) s_dpad_btns |= BUTTON_UP; else s_dpad_btns &= ~BUTTON_UP;
+                    sync_directional_btns();
+                    break;
+                case SDL_SCANCODE_DOWN:
+                    if (down) s_dpad_btns |= BUTTON_DOWN; else s_dpad_btns &= ~BUTTON_DOWN;
+                    sync_directional_btns();
+                    break;
+                case SDL_SCANCODE_LEFT:
+                    if (down) s_dpad_btns |= BUTTON_LEFT; else s_dpad_btns &= ~BUTTON_LEFT;
+                    sync_directional_btns();
+                    break;
+                case SDL_SCANCODE_RIGHT:
+                    if (down) s_dpad_btns |= BUTTON_RIGHT; else s_dpad_btns &= ~BUTTON_RIGHT;
+                    sync_directional_btns();
+                    break;
+                case SDL_SCANCODE_AUDIOPLAY:
+                case SDL_SCANCODE_AUDIOMUTE:
+                    if (down && !event->key.repeat)
+                        button_queue_post(SYS_MEDIA_KEY, MEDIA_KEY_PLAYPAUSE);
+                    break;
+                case SDL_SCANCODE_AUDIONEXT:
+                    if (down && !event->key.repeat)
+                        button_queue_post(SYS_MEDIA_KEY, MEDIA_KEY_NEXT);
+                    break;
+                case SDL_SCANCODE_AUDIOPREV:
+                    if (down && !event->key.repeat)
+                        button_queue_post(SYS_MEDIA_KEY, MEDIA_KEY_PREV);
+                    break;
+                default:
+                    break;
+            }
+            if (mapped != BUTTON_NONE)
+            {
+                if (down) btn |= mapped;
+                else      btn &= ~mapped;
+            }
+        }
+#elif defined(RETRO_HANDHELD)
         {
             static const struct { SDL_Scancode scancode; int key; } media[] = {
                 { SDL_SCANCODE_AUDIOPLAY, KEY_PLAYPAUSE },
@@ -221,11 +357,128 @@ static bool event_handler(SDL_Event *event)
 #endif
         break;
 
+#ifdef __ANDROID__
+    case SDL_APP_WILLENTERBACKGROUND:
+    case SDL_APP_DIDENTERBACKGROUND:
+        lcd_set_panel_dark(true);
+        break;
+    case SDL_APP_WILLENTERFOREGROUND:
+    case SDL_APP_DIDENTERFOREGROUND:
+        lcd_set_panel_dark(false);
+        sdl_window_render();
+        break;
+    case SDL_CONTROLLERDEVICEADDED:
+        android_open_controller(event->cdevice.which);
+        break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+        for (int i = 0; i < MAX_ANDROID_PADS; i++)
+        {
+            if (s_controllers[i])
+            {
+                SDL_Joystick *j = SDL_GameControllerGetJoystick(s_controllers[i]);
+                if (j && SDL_JoystickInstanceID(j) == event->cdevice.which)
+                {
+                    SDL_GameControllerClose(s_controllers[i]);
+                    s_controllers[i] = NULL;
+                }
+            }
+        }
+        break;
+    case SDL_CONTROLLERBUTTONDOWN:
+    case SDL_CONTROLLERBUTTONUP:
+    {
+        bool down = (event->type == SDL_CONTROLLERBUTTONDOWN);
+        switch (event->cbutton.button)
+        {
+            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                if (down) s_dpad_btns |= BUTTON_UP; else s_dpad_btns &= ~BUTTON_UP;
+                sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                if (down) s_dpad_btns |= BUTTON_DOWN; else s_dpad_btns &= ~BUTTON_DOWN;
+                sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                if (down) s_dpad_btns |= BUTTON_LEFT; else s_dpad_btns &= ~BUTTON_LEFT;
+                sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                if (down) s_dpad_btns |= BUTTON_RIGHT; else s_dpad_btns &= ~BUTTON_RIGHT;
+                sync_directional_btns();
+                break;
+            default:
+            {
+                int b = android_controller_btn_to_rb(event->cbutton.button);
+                if (b != BUTTON_NONE)
+                {
+                    if (down) btn |= b;
+                    else      btn &= ~b;
+                }
+                break;
+            }
+        }
+        break;
+    }
+    case SDL_CONTROLLERAXISMOTION:
+    {
+        const int DEADZONE = 16000;
+        const int TRIG_THRESH = 8000;
+        Sint16 v = event->caxis.value;
+        switch (event->caxis.axis)
+        {
+            case SDL_CONTROLLER_AXIS_LEFTX:
+                s_stick_btns &= ~(BUTTON_LEFT | BUTTON_RIGHT);
+                if (v < -DEADZONE)     s_stick_btns |= BUTTON_LEFT;
+                else if (v > DEADZONE) s_stick_btns |= BUTTON_RIGHT;
+                sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_AXIS_LEFTY:
+                s_stick_btns &= ~(BUTTON_UP | BUTTON_DOWN);
+                if (v < -DEADZONE)     s_stick_btns |= BUTTON_UP;
+                else if (v > DEADZONE) s_stick_btns |= BUTTON_DOWN;
+                sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+                if (v > TRIG_THRESH) btn |= BUTTON_L2;
+                else                 btn &= ~BUTTON_L2;
+                break;
+            case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+                if (v > TRIG_THRESH) btn |= BUTTON_R2;
+                else                 btn &= ~BUTTON_R2;
+                break;
+            default:
+                break;
+        }
+        break;
+    }
+#endif
+
     /* Gamepad (read directly via SDL's joystick layer, no gptokeyb2). */
     case SDL_JOYBUTTONDOWN:
     case SDL_JOYBUTTONUP:
     {
+#ifdef __ANDROID__
+        int b = BUTTON_NONE;
+        if (SDL_GameControllerFromInstanceID(event->jbutton.which) != NULL)
+        {
+            /* SDL's Android controller table leaves indices >= 15 unmapped:
+             * 15/16 = digital L2/R2, 17/18 = C/Z, 20..35 = BUTTON_1..16. */
+            if (event->jbutton.button == 15)
+                b = BUTTON_L2;
+            else if (event->jbutton.button == 16)
+                b = BUTTON_R2;
+            else if (event->jbutton.button >= 17)
+                b = BUTTON_MENU;
+            else
+                break;
+        }
+        else
+        {
+            b = joybutton_to_button(event->jbutton.button);
+        }
+#else
         int b = joybutton_to_button(event->jbutton.button);
+#endif
         if (b != BUTTON_NONE)
         {
             if (event->type == SDL_JOYBUTTONDOWN)
@@ -237,6 +490,10 @@ static bool event_handler(SDL_Event *event)
     }
     case SDL_JOYHATMOTION:
     {
+#ifdef __ANDROID__
+        if (SDL_GameControllerFromInstanceID(event->jhat.which) != NULL)
+            break;
+#endif
         /* Brick d-pad is a hat; rebuild the four direction bits each event. */
         int hat = event->jhat.value;
         btn &= ~(BUTTON_UP | BUTTON_DOWN | BUTTON_LEFT | BUTTON_RIGHT);
@@ -248,6 +505,10 @@ static bool event_handler(SDL_Event *event)
     }
     case SDL_JOYAXISMOTION:
     {
+#ifdef __ANDROID__
+        if (SDL_GameControllerFromInstanceID(event->jaxis.which) != NULL)
+            break;
+#endif
         /* L2/R2 triggers report as axes; any positive deflection = pressed
          * (matches NextUI's val > 0 test).  Non-trigger axes map to nothing. */
         int b = joyaxis_to_button(event->jaxis.axis);
@@ -286,7 +547,7 @@ static bool event_handler(SDL_Event *event)
 }
 
 
-#ifdef RETRO_HANDHELD
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
 /* With a joystick open SDL_WaitEvent polls every 1 ms.  Block in poll() instead,
  * on our own handles to the input nodes SDL reads, plus a pipe that
  * gui_message_loop_wake() writes after an SDL_PushEvent and a watch for nodes
@@ -582,7 +843,7 @@ static void wait_for_input(void)
 
 void gui_message_loop_wake(void)
 {
-#ifdef RETRO_HANDHELD
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
     if (wake_pipe[1] >= 0)
     {
         ssize_t n = write(wake_pipe[1], "", 1);
@@ -590,6 +851,37 @@ void gui_message_loop_wake(void)
     }
 #endif
 }
+
+#ifdef __ANDROID__
+static pthread_t s_sdl_main_tid;
+static bool      s_sdl_main_tid_set = false;
+static bool      s_pumping_events = false;
+
+void sdl_android_input_init(void)
+{
+    s_sdl_main_tid = pthread_self();
+    s_sdl_main_tid_set = true;
+    SDL_ShowCursor(SDL_DISABLE);
+    open_joysticks();
+}
+
+void sdl_android_pump_events(void)
+{
+    if (!s_sdl_main_tid_set || !pthread_equal(pthread_self(), s_sdl_main_tid))
+        return;
+    if (s_pumping_events)
+        return;
+    s_pumping_events = true;
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+    {
+        int was = btn;
+        (void)event_handler(&event);
+        released |= was & ~btn;
+    }
+    s_pumping_events = false;
+}
+#endif
 
 static bool dispatch_event(SDL_Event *event)
 {
@@ -609,7 +901,7 @@ void gui_message_loop(void)
     /* Open the gamepad here, on the same thread that pumps SDL events. */
     open_joysticks();
 
-#ifdef RETRO_HANDHELD
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
     open_input_fds();
     if (num_input_fds > NODE_SLOT)
     {

@@ -141,7 +141,8 @@ void power_off(void)
     SDL_PushEvent(&event);
     gui_message_loop_wake();
     /* wait for event thread to finish */
-    SDL_WaitThread(evt_thread, NULL);
+    if (evt_thread)
+        SDL_WaitThread(evt_thread, NULL);
 
 
     sim_do_exit();
@@ -237,6 +238,13 @@ void system_init(void)
     sigaction(SIGABRT, &sa, NULL);
 
 
+#ifdef __ANDROID__
+    /* Keep audio playing when the handheld screen turns off or app backgrounds */
+    SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "0");
+    SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO, "0");
+    SDL_SetHint("SDL_ACCELEROMETER_AS_JOYSTICK", "0");
+#endif
+
     if (SDL_InitSubSystem(SDL_INIT_TIMER))
         panicf("%s", SDL_GetError());
 
@@ -249,7 +257,12 @@ void system_init(void)
 #endif
 #endif
 
-#ifndef __APPLE__ /* MacOS requires events to be handled on main thread */
+#if defined(__ANDROID__)
+    {
+        extern void sdl_android_input_init(void);
+        sdl_android_input_init();
+    }
+#elif !defined(__APPLE__) /* MacOS requires events to be handled on main thread */
     s = SDL_CreateSemaphore(0); /* 0-count so it blocks */
 
     #if SDL_MAJOR_VERSION > 1

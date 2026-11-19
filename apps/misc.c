@@ -52,6 +52,7 @@
 #include "pcm_mixer.h"
 #include "playlist.h"
 #include "uipod_library.h"
+#include "uipod_rs_ui.h"
 #include "uipod_ui.h"      /* uipod_fullscreen_message */
 #include "trimpod_alsa.h"    /* trimpod_alsa_volume_overwritten */
 #include "yesno.h"
@@ -324,6 +325,7 @@ static bool clean_shutdown(enum shutdown_type sd_type,
     {
         bool batt_safe = battery_level_safe();
 
+        uipod_gpu_prepare_cpu_fallback();
         FOR_NB_SCREENS(i)
         {
             screens[i].clear_display();
@@ -527,6 +529,16 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
                     setvol();
                     firstvolume = false;
                 }
+            }
+            return 0;
+        }
+#elif defined(__ANDROID__)
+        case SYS_VOLUME_CHANGED:
+        {
+            int volume = button_get_data();
+            if (global_status.volume != volume) {
+                global_status.volume = volume;
+                status_save(false);
             }
             return 0;
         }

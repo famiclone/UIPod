@@ -74,9 +74,9 @@
 #include "uipod_svg.h"
 #include "uipod_keyboard.h"
 
-#define PICKER_ROOT      "/mnt/SDCARD"   /* pickers & Browse root on card */
+#define PICKER_ROOT      UIPOD_SDCARD_ROOT   /* pickers & Browse root on card */
 #define BROWSE_LAST_FILE ROCKBOX_DIR "/browse_last_dir.txt"
-#define BROWSE_INFO_FILE "/tmp/uipod_info.txt"
+#define BROWSE_INFO_FILE UIPOD_TMP_ROOT "/uipod_info.txt"
 #define MAX_FOLDERS      24
 #define FPATH_LEN        MAX_PATH
 #define LOAD_BUFSZ       (MAX_FOLDERS * FPATH_LEN)
@@ -119,31 +119,31 @@ struct folder_category
  * The farm dirs live in tmpfs (NOT /tmp/uipod, a vfat bind-mount that cannot
  * hold symlinks). */
 static struct folder_category cat_music = {
-    .store_file = "folders.txt", .default_path = "/mnt/SDCARD/Music",
-    .farm_path = "/tmp/uipod_music",
+    .store_file = "folders.txt", .default_path = UIPOD_SDCARD_ROOT "/Music",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_music",
     .title_lang = LANG_UIPOD_FOLDERS, .browse_lang = LANG_UIPOD_FILES,
 };
 static struct folder_category cat_podcast = {
-    .store_file = "podcasts.txt", .default_path = "/mnt/SDCARD/Podcasts",
-    .farm_path = "/tmp/uipod_podcasts",
+    .store_file = "podcasts.txt", .default_path = UIPOD_SDCARD_ROOT "/Podcasts",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_podcasts",
     .title_lang = LANG_UIPOD_PODCAST_FOLDERS,
     .browse_lang = LANG_UIPOD_PODCASTS,
 };
 static struct folder_category cat_audiobook = {
-    .store_file = "audiobooks.txt", .default_path = "/mnt/SDCARD/Audiobooks",
-    .farm_path = "/tmp/uipod_audiobooks",
+    .store_file = "audiobooks.txt", .default_path = UIPOD_SDCARD_ROOT "/Audiobooks",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_audiobooks",
     .title_lang = LANG_UIPOD_AUDIOBOOK_FOLDERS,
     .browse_lang = LANG_UIPOD_AUDIOBOOKS,
 };
 static struct folder_category cat_movies = {
-    .store_file = "movies.txt", .default_path = "/mnt/SDCARD/Movies",
-    .farm_path = "/tmp/uipod_movies",
+    .store_file = "movies.txt", .default_path = UIPOD_SDCARD_ROOT "/Movies",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_movies",
     .title_lang = LANG_UIPOD_MOVIE_FOLDERS,
     .browse_lang = LANG_UIPOD_VIDEOS, .video = true,
 };
 static struct folder_category cat_television = {
-    .store_file = "television.txt", .default_path = "/mnt/SDCARD/Television",
-    .farm_path = "/tmp/uipod_television",
+    .store_file = "television.txt", .default_path = UIPOD_SDCARD_ROOT "/Television",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_television",
     .title_lang = LANG_UIPOD_TELEVISION_FOLDERS,
     .browse_lang = LANG_UIPOD_TELEVISION, .video = true,
 };
@@ -185,11 +185,11 @@ static void folders_load(struct folder_category *cat)
         strlcpy(cat->folders[0], cat->default_path, FPATH_LEN);
         cat->n_folders = 1;
         if (cat == &cat_music && cat->n_folders < MAX_FOLDERS)
-            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media", FPATH_LEN);
+            strlcpy(cat->folders[cat->n_folders++], UIPOD_SDCARD_ROOT "/Media", FPATH_LEN);
         else if (cat == &cat_movies && cat->n_folders < MAX_FOLDERS)
-            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media", FPATH_LEN);
+            strlcpy(cat->folders[cat->n_folders++], UIPOD_SDCARD_ROOT "/Media", FPATH_LEN);
         else if (cat == &cat_television && cat->n_folders < MAX_FOLDERS)
-            strlcpy(cat->folders[cat->n_folders++], "/mnt/SDCARD/Media/jellyfin/Shows", FPATH_LEN);
+            strlcpy(cat->folders[cat->n_folders++], UIPOD_SDCARD_ROOT "/Media/jellyfin/Shows", FPATH_LEN);
         return;
     }
     static char rbuf[LOAD_BUFSZ];

@@ -1328,7 +1328,7 @@ impl TextViewerApp {
  * ========================================================================== */
 pub struct MusicQuizGame {
     pool: Vec<(String, u32)>,
-    choices: [usize; 4],
+    choices: Vec<usize>,
     correct_slot: usize,
     cursor: usize,
     score: u32,
@@ -1345,19 +1345,17 @@ pub struct MusicQuizGame {
 
 impl MusicQuizGame {
     fn new(track_labels: &[(String, u32)]) -> Self {
-        let pool = if track_labels.len() >= 4 {
+        let pool = if !track_labels.is_empty() {
             track_labels.to_vec()
         } else {
             vec![
-                ("Brickwave Collective - Midnight Tape Loop".into(), 192_000),
-                ("Kyiv Synth Lab - Phosphor Horizon".into(), 214_000),
-                ("Mono District - 4-Shade Rain".into(), 238_000),
-                ("TG5040 Sound Team - Pixel Velocity".into(), 176_000),
+                ("Cyberia 99 - AquaBIOS 2000".into(), 23_220),
+                ("NetRunner 2000 - Chrome Breakbeat (Y2K Mix)".into(), 23_325),
             ]
         };
         let mut g = Self {
             pool,
-            choices: [0, 1, 2, 3],
+            choices: Vec::new(),
             correct_slot: 0,
             cursor: 0,
             score: 0,
@@ -1376,11 +1374,12 @@ impl MusicQuizGame {
     }
 
     fn setup_round(&mut self) {
-        let n = self.pool.len();
+        let n = self.pool.len().max(1);
+        let choice_cnt = n.min(4);
         let target = self.rng.range(n);
         let mut picked = vec![target];
         let mut guard = 0;
-        while picked.len() < 4 && guard < 128 {
+        while picked.len() < choice_cnt && guard < 128 {
             guard += 1;
             let cand = self.rng.range(n);
             if !picked.contains(&cand) {
@@ -1391,12 +1390,8 @@ impl MusicQuizGame {
             let j = self.rng.range(i + 1);
             picked.swap(i, j);
         }
-        for i in 0..4 {
-            self.choices[i] = picked[i % picked.len()];
-            if self.choices[i] == target {
-                self.correct_slot = i;
-            }
-        }
+        self.correct_slot = picked.iter().position(|&idx| idx == target).unwrap_or(0);
+        self.choices = picked;
         self.cursor = 0;
         self.round_timer = 15.0;
         self.reveal_timer = 0.0;
@@ -1405,8 +1400,8 @@ impl MusicQuizGame {
     }
 
     fn snippet_offset_ms(&mut self, track_idx: usize) -> u32 {
-        let dur = self.pool.get(track_idx).map(|t| t.1).unwrap_or(180_000);
-        let lo = (dur as f32 * 0.20) as u32;
+        let dur = self.pool.get(track_idx).map(|t| t.1).unwrap_or(23_000);
+        let lo = (dur as f32 * 0.15) as u32;
         let span = ((dur as f32 * 0.45) as u32).max(1000);
         lo + (self.rng.next_u32() % span)
     }
@@ -1440,7 +1435,7 @@ impl MusicQuizGame {
 
         if self.needs_snippet {
             self.needs_snippet = false;
-            let trk = self.choices[self.correct_slot];
+            let trk = self.choices.get(self.correct_slot).copied().unwrap_or(0);
             let pos = self.snippet_offset_ms(trk);
             return PluginAction::PlayTrackAt(trk, pos);
         }
@@ -1454,12 +1449,13 @@ impl MusicQuizGame {
             return PluginAction::Continue;
         }
 
+        let n_choices = self.choices.len().max(1);
         if (pressed & btn::UP) != 0 {
-            self.cursor = (self.cursor + 3) % 4;
+            self.cursor = (self.cursor + n_choices - 1) % n_choices;
         } else if (pressed & btn::DOWN) != 0 {
-            self.cursor = (self.cursor + 1) % 4;
+            self.cursor = (self.cursor + 1) % n_choices;
         } else if (pressed & btn::X) != 0 {
-            let trk = self.choices[self.correct_slot];
+            let trk = self.choices.get(self.correct_slot).copied().unwrap_or(0);
             let pos = self.snippet_offset_ms(trk);
             return PluginAction::PlayTrackAt(trk, pos);
         } else if (pressed & btn::A) != 0 {
@@ -1529,11 +1525,11 @@ impl MusicQuizGame {
         // Countdown timer bar
         ui.plugin_draw_progress_bar(theme, hx, hy + hh + 16.0, hw, 18.0, self.round_timer / 15.0);
 
-        // 4 Choice rows
+        // Choice rows (2..4 depending on library size)
         let list_y = hy + hh + 54.0;
         let row_h = 84.0f32;
         let gap = 14.0f32;
-        for i in 0..4 {
+        for (i, &song_idx) in self.choices.iter().enumerate() {
             let y = list_y + i as f32 * (row_h + gap);
             let is_sel = i == self.cursor;
             let is_correct = i == self.correct_slot;
@@ -1560,7 +1556,7 @@ impl MusicQuizGame {
 
             let lbl = self
                 .pool
-                .get(self.choices[i])
+                .get(song_idx)
                 .map(|t| t.0.as_str())
                 .unwrap_or("Track");
             ui.plugin_draw_text(hx + 84.0, y + row_h * 0.5, lbl, 30.0, 2, 0, text_col);

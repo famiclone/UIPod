@@ -18,6 +18,65 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
+#ifdef __ANDROID__
+#include <jni.h>
+#include <SDL.h>
+#include <stdbool.h>
+#include "config.h"
+#include "lcd.h"
+#include "backlight-target.h"
+
+static void android_set_window_brightness(int step)
+{
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    if (!env)
+        return;
+    jclass cls = (*env)->FindClass(env, "dev/famiclone/uipod/UIPodActivity");
+    if (!cls)
+    {
+        (*env)->ExceptionClear(env);
+        return;
+    }
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "setAppBrightness", "(I)V");
+    if (mid)
+        (*env)->CallStaticVoidMethod(env, cls, mid, (jint)step);
+    else
+        (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+static int s_saved_step = DEFAULT_BRIGHTNESS_SETTING;
+
+bool backlight_hw_init(void)
+{
+    lcd_set_panel_dark(false);
+    return true;
+}
+
+void backlight_hw_on(void)
+{
+    lcd_set_panel_dark(false);
+    android_set_window_brightness(s_saved_step);
+}
+
+void backlight_hw_off(void)
+{
+    lcd_set_panel_dark(true);
+    android_set_window_brightness(0);
+}
+
+void backlight_hw_brightness(int brightness)
+{
+    if (brightness > MAX_BRIGHTNESS_SETTING)
+        brightness = MAX_BRIGHTNESS_SETTING;
+    if (brightness < MIN_BRIGHTNESS_SETTING)
+        brightness = MIN_BRIGHTNESS_SETTING;
+    s_saved_step = brightness;
+    android_set_window_brightness(brightness);
+}
+
+#else /* !__ANDROID__ */
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -148,3 +207,5 @@ void backlight_hw_brightness(int brightness)
     }
 
 }
+
+#endif /* !__ANDROID__ */

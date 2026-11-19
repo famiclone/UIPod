@@ -30,6 +30,7 @@
 #include "splash.h"
 #include "backlight.h"
 #include "statusbar-skinned.h"
+#include "uipod_rs_ui.h"
 
 struct gui_yesno
 {
@@ -62,6 +63,8 @@ static int put_message(struct screen *display,
  */
 static void gui_yesno_draw(struct gui_yesno * yn)
 {
+    if (yn->display->screen_type == SCREEN_MAIN)
+        uipod_gpu_prepare_cpu_fallback();
     struct screen * display=yn->display;
     struct viewport *vp = &yn->vp;
     int vp_lines = yn->vp_lines;

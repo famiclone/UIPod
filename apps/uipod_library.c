@@ -507,7 +507,7 @@ static void sync_roots(void)
  * there took ~15 s.  The index is worked on in tmpfs instead and copied back
  * to the card in one sequential pass after a reconcile that changed it. */
 #define DB_SD    ROCKBOX_DIR "/library.db"
-#define DB_RAM   "/tmp/uipod-library.db"
+#define DB_RAM   UIPOD_TMP_ROOT "/uipod-library.db"
 #define COPY_BUF (256 * 1024)
 
 static bool db_in_ram;

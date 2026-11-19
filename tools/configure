@@ -889,6 +889,23 @@ rhhconf () {
     lcd_orientation="landscape"
 }
 
+# Android Handheld (arm64-v8a SDL2 + OpenGL ES 3.0 + AAudio) config.
+androidhhconf () {
+    adeps="${ANDROID_DEPS_DIR:-/opt/android-deps}"
+    rsffi="$rootdir/target/aarch64-linux-android/release/libuipod_ffi.a"
+    extradefines="$extradefines -DOS_USE_BYTESWAP_H"
+    GCCOPTS="$GCCOPTS -fPIC -I$adeps/include -Wno-unused-command-line-argument -Wno-ignored-optimization-argument -Wno-unknown-warning-option -Wno-incompatible-pointer-types -Wno-int-conversion"
+    GLOBAL_LDOPTS="`echo "$GLOBAL_LDOPTS" | sed 's/-Wl,-z,defs//g'` -L$adeps/lib"
+    SHARED_LDFLAGS="-shared -lm -lc"
+    LDOPTS="-shared -Wl,-soname,libmain.so -Wl,--no-undefined -Wl,-Bsymbolic $rsffi $adeps/lib/libssl.a $adeps/lib/libcrypto.a -L$adeps/lib -lSDL2 -lGLESv2 -lEGL -llog -landroid -lm -ldl"
+
+    rbdir="/data/data/dev.famiclone.uipod/files/uipod"
+    bindir="/data/data/dev.famiclone.uipod/files/uipod"
+    libdir="/data/data/dev.famiclone.uipod/files/uipod"
+    sharedir="/data/data/dev.famiclone.uipod/files/uipod"
+    lcd_orientation="landscape"
+}
+
 devkitarmcc () {
     if [ -z "$DEVKITPRO" ]; then
         echo "ERROR: You need a devkitPro toolchain and libraries installed"
@@ -2950,6 +2967,28 @@ fi
     bmp2rb_native="$rootdir/tools/bmp2rb -f 9"
     output="uipod"
     bootoutput="uipod"
+    appextra="recorder:gui"
+    t_cpu="hosted"
+    t_manufacturer="sdl"
+    t_model="retro-handheld"
+    ;;
+
+   215|android-handheld)
+    target_id=122
+    application="yes"
+    modelname="retro-handheld"
+    app_type="sdl-app"
+    target="RETRO_HANDHELD"
+    memory=96
+    uname="Linux"
+    simcc "sdl-app"
+    androidhhconf
+    tool="cp "
+    boottool="cp "
+    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
+    bmp2rb_native="$rootdir/tools/bmp2rb -f 9"
+    output="libmain.so"
+    bootoutput="libmain.so"
     appextra="recorder:gui"
     t_cpu="hosted"
     t_manufacturer="sdl"

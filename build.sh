@@ -71,6 +71,10 @@ docker run --rm \
   else
     cd $BUILD_DIR
   fi
+  if [ -f /build/tools/bmp2rb ] && ! head -c 4 /build/tools/bmp2rb 2>/dev/null | grep -q 'ELF'; then
+    rm -f /build/tools/bmp2rb /build/tools/codepages /build/tools/rdf2binary \
+          /build/tools/convbdf /build/tools/scramble /build/tools/mkboot /build/tools/*.o
+  fi
   rm -f rbversion.h firmware/common/version.o
   if [ -f uipod ] && [ /build/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a -nt uipod ]; then
     rm -f uipod

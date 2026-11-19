@@ -38,6 +38,7 @@
 #include "viewport.h"
 #include "appevents.h"
 #include "statusbar-skinned.h"
+#include "uipod_rs_ui.h"
 
 /* The minimum number of pending button events in queue before starting
  * to limit list drawing interval.
@@ -102,7 +103,7 @@ int list_get_nb_lines(struct gui_synclist *list, enum screen_type screen)
         list->parent[screen]->width >= 800 &&
         list->parent[screen]->height >= 500)
     {
-        return 8; /* UIPOD_RS_LIST_VISIBLE_ROWS */
+        return uipod_gpu_visible_list_rows();
     }
     int lines = skinlist_get_line_count(screen, list);
     if (lines < 0)
@@ -729,6 +730,8 @@ bool list_do_action(int context, int timeout,
     current_lists = NULL;
     keyclick_set_callback(NULL, NULL);
     remove_event_ex(GUI_EVENT_NEED_UI_UPDATE, _lists_uiviewport_update_callback, NULL);
+    if (uipod_gpu_check_window_resized())
+        gui_synclist_draw(lists);
     return gui_synclist_do_button(lists, action);
 }
 

@@ -1,24 +1,24 @@
 # UIPod — User Manual & About
 
-Version: v0.4.0
-Target: TrimUI Brick / Hammer (tg5040, NextUI, 1024x768 HiDPI)
+Version: v0.5.0
+Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
-UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player built on a customized Rockbox audio core with a pure-Rust OpenGL ES GPU UI engine, 4-shade monochrome themes, AutoEQ headphone profiles, Bayer-dithered 4-shade GPU audio visualizers, and native Rust (.uipod) games & utilities.
+UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player built on a customized Rockbox audio core with a pure-Rust OpenGL ES 3.0 GPU UI engine, dynamic native-HiDPI multi-screen layout (16:9, 16:10, 3:2, 4:3, 1:1, and portrait), 4-shade monochrome themes, AutoEQ headphone profiles, Bayer-dithered 4-shade GPU audio visualizers, and native Rust (.uipod) games & utilities.
 
 ## 1. Global Controls
 
-• D-Pad Up / Down — Navigate lists and menus (hold to fast-scroll)
+• D-Pad Up / Down (or Left Stick) — Navigate lists and menus (hold to fast-scroll)
 • D-Pad Left / Right (or L1 / R1) — Page up / down in lists; previous / next track on Now Playing (hold to seek)
 • A — Select / Open item; Play / Pause on Now Playing
 • Hold A — Open context menu on tracks, albums, folders, or playlists
 • B — Go back one screen
 • Hold B — Return directly to the Main Menu from anywhere
 • START — Play / Pause music globally (or open Pause Menu inside games)
-• MENU — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
-• VOL + / VOL - — Adjust volume (40 perceptual loudness steps, works even with screen off or locked)
+• MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
+• VOL + / VOL - — Adjust volume (40 perceptual steps on TrimUI Brick; synced with hardware STREAM_MUSIC on Android)
 • SELECT + VOL + / VOL - — Adjust screen brightness anywhere
-• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; skip tracks in Sound Racer
+• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Sound Racer
 • Side Switch — Input Hold / Lock (volume rocker stays active without waking the screen)
 
 ## 2. Media Library & Sources

@@ -1,8 +1,8 @@
-# UIPod for TrimUI Brick
+# UIPod for TrimUI Brick & Android Handhelds
 
-An iPod-inspired offline, **Navidrome**, and **Jellyfin** media player built for the **TrimUI Brick (`tg5040`)** running [NextUI](https://github.com/LoveRetro/NextUI).
+An iPod-inspired offline, **Navidrome**, and **Jellyfin** media player built for the **TrimUI Brick (`tg5040`)** running [NextUI](https://github.com/LoveRetro/NextUI) and **Android retro handhelds (`arm64-v8a`)**.
 
-Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with native `1024×768` HiDPI pure-Rust UI rendering (`uipod-ui`), pure-Rust Navidrome (`uipod-navidrome`) & Jellyfin (`uipod-jellyfin`) streaming/caching modules, hardware CedarX video playback, AutoEQ headphone profiles, and Bayer-dithered 4-shade GPU audio visualizers.
+Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core with dynamic native-HiDPI pure-Rust OpenGL ES 3.0 UI rendering (`uipod-ui` across `16:9`, `16:10`, `3:2`, `4:3`, `1:1`, and portrait displays), pure-Rust Navidrome (`uipod-navidrome`) & Jellyfin (`uipod-jellyfin`) streaming/caching modules, hardware video playback, AutoEQ headphone profiles, native `.uipod` plugins/games, and Bayer-dithered 4-shade GPU audio visualizers.
 
 ## Features
 
@@ -37,13 +37,26 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) core
 ### NextUI Pak Store Format
 Each GitHub Release also attaches `UIPod.pak.zip` matching `pak.json` (`release_filename` + `version` tag) for direct NextUI Pak Store compatibility.
 
+### Android Handhelds (`arm64-v8a`)
+1. Download `UIPod-<version>-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases) (Android 8.0+ / API 26+).
+2. Install on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped Android device.
+3. Grant media storage access to scan local folders, or configure Navidrome / Jellyfin in **Settings → Sources**.
+
 ## Building Locally
 
+### TrimUI Brick (`tg5040`)
 Requires Docker (`tg5040` cross-toolchain + Rust `aarch64-unknown-linux-gnu` are built automatically from `Dockerfile.uipod`):
 
 ```sh
 ./build.sh      # cross-compile Rust crates + firmware -> build-uipod/
 ./package.sh    # assemble dist/UIPod.pak, dist/UIPod.pak.zip & dist/UIPod-<ver>-brick.zip
+```
+
+### Android (`arm64-v8a`)
+Self-bootstraps JDK 17, Android SDK/NDK, SDL2, and OpenSSL under `build-android/.toolchain/` on macOS or Linux:
+
+```sh
+./build-android.sh   # assemble & sign dist/UIPod-<ver>-android-arm64.apk
 ```
 
 ## Versioning & Automated Releases

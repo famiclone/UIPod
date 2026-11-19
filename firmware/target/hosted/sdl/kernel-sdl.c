@@ -205,8 +205,15 @@ void tick_start(unsigned int interval_in_ms)
 #ifndef HAVE_SDL_THREADS
 void wait_for_interrupt(void)
 {
+#ifdef __ANDROID__
+    extern void sdl_android_pump_events(void);
+    sdl_android_pump_events();
+    SDL_CondWaitTimeout(wfi_cond, wfi_mutex, 10);
+    sdl_android_pump_events();
+#else
     /* the exit may come at any time, during the CondWait or before,
      * so check it twice */
     SDL_CondWait(wfi_cond, wfi_mutex);
+#endif
 }
 #endif

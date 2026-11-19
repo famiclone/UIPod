@@ -24,6 +24,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
@@ -41,6 +42,7 @@
 #include <openssl/x509v3.h>
 
 #include "uipod-https-target.h"
+#include "uipod_paths.h"
 
 #define DNS_UDP_TIMEOUT_MS       1800
 #define DNS_DOH_TIMEOUT_MS       2500
@@ -245,6 +247,10 @@ static void try_udhcpc_once(void)
 
 static bool ensure_ipv4_route(void)
 {
+#ifdef __ANDROID__
+    s_net_down = false;
+    return true;
+#endif
     if (proc_has_ipv4_default_route())
     {
         s_net_down = false;
@@ -986,6 +992,37 @@ static int resolve_ipv4_fast(const char *host, const char *ca_file,
         return n;
     }
 
+#ifdef __ANDROID__
+    {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(host, NULL, &hints, &res) == 0 && res)
+        {
+            int count = 0;
+            for (struct addrinfo *p = res; p && count < max_ips; p = p->ai_next)
+            {
+                if (p->ai_family == AF_INET && p->ai_addr)
+                {
+                    const struct sockaddr_in *sin = (const struct sockaddr_in *)p->ai_addr;
+                    out_ips[count++] = sin->sin_addr;
+                }
+            }
+            freeaddrinfo(res);
+            if (count > 0)
+            {
+                snprintf(s_dns_cache.host, sizeof(s_dns_cache.host), "%s", host);
+                int csave = count < MAX_RESOLVED_IPS ? count : MAX_RESOLVED_IPS;
+                memcpy(s_dns_cache.ips, out_ips, (size_t)csave * sizeof(struct in_addr));
+                s_dns_cache.count = csave;
+                s_dns_cache.ts_ms = now;
+                return count;
+            }
+        }
+    }
+#endif
+
     uint8_t qbuf[300];
     uint16_t txid = (uint16_t)(((unsigned)getpid() ^ (unsigned)now) & 0xFFFF);
     if (txid == 0)
@@ -1139,8 +1176,8 @@ static char *curl_fallback_alloc(const char *host, const char *path,
             snprintf(resolve_arg, sizeof(resolve_arg), "%s:443:%s", host, ipbuf);
     }
 
-    char tmp_out[128];
-    snprintf(tmp_out, sizeof(tmp_out), "/tmp/uipod_https_%d.tmp", (int)getpid());
+    char tmp_out[160];
+    snprintf(tmp_out, sizeof(tmp_out), UIPOD_TMP_ROOT "/uipod_https_%d.tmp", (int)getpid());
     unlink(tmp_out);
 
     bool is_gh_api = (strcasecmp(host, "api.github.com") == 0);

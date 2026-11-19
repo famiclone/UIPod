@@ -1495,21 +1495,42 @@ kbd {
 }
 
 /* Install & Roadmap */
-.install-grid {
+.install-platforms {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 36px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.platform-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+  min-width: 0;
+}
+
+.platform-card h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
 }
 
 .install-steps {
-  margin: 20px 0 26px;
+  margin: 0;
   padding-left: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  font-size: 14px;
   color: var(--text-muted);
-  line-height: 1.6;
+  line-height: 1.58;
+}
+
+.install-footer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: 24px;
+  align-items: start;
 }
 
 .cta-row {
@@ -1620,7 +1641,8 @@ kbd {
     max-width: 100%;
   }
   .bento-grid,
-  .install-grid {
+  .install-platforms,
+  .install-footer-row {
     grid-template-columns: minmax(0, 1fr);
   }
   .bento-card.wide {

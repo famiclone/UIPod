@@ -1,6 +1,6 @@
 /***************************************************************************
  * UIPod: Thin Strangler-Fig C glue bridging Rockbox runtime state to the
- * pure-Rust GPU UI engine (`crates/uipod-ui`).
+ * pure-Rust native-HiDPI GPU UI engine (`crates/uipod-ui`).
  ****************************************************************************/
 #include "config.h"
 
@@ -19,6 +19,7 @@
 #include "gui/wps.h"
 #include "lang.h"
 #include "lcd.h"
+#include "lcd-sdl.h"
 #include "misc.h"
 #include "power.h"
 #include "powermgmt.h"
@@ -38,6 +39,10 @@
 #include "window-sdl.h"
 
 static uint8_t s_header_source_override = UIPOD_SRC_ICON_NONE;
+static bool    s_capturing_transition = false;
+static bool    s_captured_transition_frame = false;
+static bool    s_prev_had_header = false;
+static bool    s_curr_had_header = false;
 
 void uipod_gpu_set_header_source(uint8_t src_icon)
 {
@@ -49,12 +54,152 @@ uint8_t uipod_gpu_get_header_source(void)
     return s_header_source_override;
 }
 
+bool uipod_gpu_is_active(void)
+{
+    return sdl_gl_is_gpu_active();
+}
+
+void uipod_gpu_set_active(bool active)
+{
+    sdl_gl_set_gpu_active(active);
+}
+
+int uipod_gpu_visible_list_rows(void)
+{
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    size_t rows = uipod_rs_ui_visible_rows_for_window((uint32_t)win_w,
+                                                      (uint32_t)win_h);
+    if (rows < 5)
+        rows = 5;
+    if (rows > UIPOD_RS_MAX_VISIBLE_ROWS)
+        rows = UIPOD_RS_MAX_VISIBLE_ROWS;
+    return (int)rows;
+}
+
+void uipod_gpu_begin_transition_capture(void)
+{
+    s_prev_had_header = sdl_gl_is_gpu_active() && s_curr_had_header;
+    s_capturing_transition = true;
+    s_captured_transition_frame = false;
+}
+
+bool uipod_gpu_did_capture_transition_frame(bool *out_pin_header)
+{
+    bool got = s_captured_transition_frame;
+    s_capturing_transition = false;
+    s_captured_transition_frame = false;
+    if (out_pin_header)
+        *out_pin_header = got && s_prev_had_header && s_curr_had_header;
+    return got;
+}
+
+void uipod_gpu_present_current_fbo(void)
+{
+    if (uipod_viz_active || !sdl_gl_get_context())
+        return;
+
+    sdl_gl_set_gpu_active(true);
+    if (lcd_panel_is_dark())
+        return;
+
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_make_current();
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    if (uipod_rs_ui_plugin_present_gpu((uint32_t)win_w, (uint32_t)win_h))
+        sdl_gl_swap_window();
+}
+
+static int s_last_rendered_w = 0;
+static int s_last_rendered_h = 0;
+
+bool uipod_gpu_check_window_resized(void)
+{
+    if (!sdl_gl_get_context())
+        return false;
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    if (s_last_rendered_w > 0 && s_last_rendered_h > 0 &&
+        (win_w != s_last_rendered_w || win_h != s_last_rendered_h))
+    {
+        return true;
+    }
+    return false;
+}
+
+void uipod_gpu_note_rendered_screen(bool has_header)
+{
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    s_last_rendered_w = win_w;
+    s_last_rendered_h = win_h;
+    s_curr_had_header = has_header;
+    if (s_capturing_transition)
+    {
+        s_captured_transition_frame = true;
+        sdl_gl_set_gpu_active(true);
+        return;
+    }
+    uipod_gpu_present_current_fbo();
+}
+
+void uipod_gpu_prepare_cpu_fallback(void)
+{
+    if (!sdl_gl_is_gpu_active())
+        return;
+
+    sdl_gl_set_gpu_active(false);
+    struct viewport *prev_vp = lcd_set_viewport(NULL);
+    fb_data *fb = FBADDR(0, 0);
+    bool synced = false;
+    if (!uipod_viz_active && sdl_gl_get_context() && uipod_rs_ui_is_ready())
+    {
+        sdl_gl_make_current();
+        synced = uipod_rs_ui_plugin_sync_fb((uint8_t *)fb);
+    }
+    if (!synced)
+    {
+        unsigned int bg = (unsigned int)global_settings.bg_color;
+        fb_data px;
+        px.b = (unsigned char)(bg & 0xFF);
+        px.g = (unsigned char)((bg >> 8) & 0xFF);
+        px.r = (unsigned char)((bg >> 16) & 0xFF);
+        for (int i = 0; i < LCD_FBWIDTH * LCD_FBHEIGHT; i++)
+            fb[i] = px;
+    }
+    if (s_curr_had_header && !uipod_viz_active && uipod_rs_ui_is_ready())
+    {
+        struct UIPodRsHeader hdr;
+        uipod_gpu_fill_header(&hdr, NULL);
+        (void)uipod_rs_ui_render_header((uint32_t)global_settings.bg_color,
+                                        (uint32_t)global_settings.fg_color,
+                                        (uint32_t)global_settings.fg1_color,
+                                        (uint32_t)global_settings.fg2_color,
+                                        &hdr,
+                                        (uint8_t *)fb);
+    }
+    if (sim_lcd_surface)
+    {
+        SDL_Surface *lcd = SDL_CreateRGBSurfaceFrom(fb, LCD_FBWIDTH, LCD_FBHEIGHT,
+                                                    LCD_DEPTH,
+                                                    LCD_FBWIDTH * LCD_DEPTH / 8,
+                                                    0, 0, 0, 0);
+        if (lcd)
+        {
+            SDL_BlitSurface(lcd, NULL, sim_lcd_surface, NULL);
+            SDL_FreeSurface(lcd);
+        }
+    }
+    lcd_set_viewport(prev_vp);
+}
+
 bool uipod_gpu_ui_ensure_ready(void)
 {
     /* Never touch the SDL GLES context while the visualizer thread owns it */
     if (uipod_viz_active || !sdl_gl_get_context())
         return false;
 
+    sdl_gl_set_gpu_repaint_fn(uipod_gpu_present_current_fbo);
     sdl_gl_make_current();
 
     if (uipod_rs_ui_is_ready())
@@ -158,6 +303,24 @@ bool uipod_gpu_render_header(void)
     struct UIPodRsHeader hdr;
     uipod_gpu_fill_header(&hdr, NULL);
 
+    if (sdl_gl_is_gpu_active())
+    {
+        if (!s_curr_had_header)
+            return true;
+        int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+        sdl_gl_get_drawable_size(&win_w, &win_h);
+        bool ok = uipod_rs_ui_render_header_gpu((uint32_t)global_settings.bg_color,
+                                                (uint32_t)global_settings.fg_color,
+                                                (uint32_t)global_settings.fg1_color,
+                                                (uint32_t)global_settings.fg2_color,
+                                                &hdr,
+                                                (uint32_t)win_w,
+                                                (uint32_t)win_h);
+        if (ok && !s_capturing_transition)
+            uipod_gpu_present_current_fbo();
+        return ok;
+    }
+
     struct viewport *prev_vp = lcd_set_viewport(NULL);
     fb_data *fb = FBADDR(0, 0);
     bool ok = uipod_rs_ui_render_header((uint32_t)global_settings.bg_color,
@@ -197,6 +360,7 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
     }
     sb_set_title_text(resolved_title, list->title_icon, SCREEN_MAIN);
 
+    int vis_rows = uipod_gpu_visible_list_rows();
     int total = (list->nb_items > 0) ? list->nb_items : 0;
     int start = list->start_item[SCREEN_MAIN];
     if (start < 0)
@@ -204,17 +368,17 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
     if (start > total)
         start = total;
 
-    char label_bufs[UIPOD_RS_LIST_VISIBLE_ROWS][MAX_PATH];
-    char rval_bufs[UIPOD_RS_LIST_VISIBLE_ROWS][128];
-    char ftag_bufs[UIPOD_RS_LIST_VISIBLE_ROWS][32];
-    struct UIPodRsListRow rows[UIPOD_RS_LIST_VISIBLE_ROWS];
+    static char label_bufs[UIPOD_RS_MAX_VISIBLE_ROWS][MAX_PATH];
+    static char rval_bufs[UIPOD_RS_MAX_VISIBLE_ROWS][128];
+    static char ftag_bufs[UIPOD_RS_MAX_VISIBLE_ROWS][32];
+    struct UIPodRsListRow rows[UIPOD_RS_MAX_VISIBLE_ROWS];
     size_t row_count = 0;
 
     bool cursor_visible = (list->cursor_style != SYNCLIST_CURSOR_NOSTYLE);
     int sel_begin = list->selected_item;
     int sel_end   = sel_begin + ((list->selected_size > 0) ? list->selected_size : 1);
 
-    for (int r = 0; r < UIPOD_RS_LIST_VISIBLE_ROWS && (start + r) < total; r++)
+    for (int r = 0; r < vis_rows && (start + r) < total; r++)
     {
         int idx = start + r;
         char scratch[MAX_PATH];
@@ -293,15 +457,13 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
     sc.row_count     = row_count;
     sc.total_items   = (size_t)total;
     sc.start_item    = (size_t)start;
-    sc.visible_items = UIPOD_RS_LIST_VISIBLE_ROWS;
+    sc.visible_items = (size_t)vis_rows;
 
-    struct viewport *prev_vp = lcd_set_viewport(NULL);
-    fb_data *fb = FBADDR(0, 0);
-    bool ok = uipod_rs_ui_render_list(&sc, (uint8_t *)fb);
-    lcd_set_viewport(prev_vp);
-
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    bool ok = uipod_rs_ui_render_list_gpu(&sc, (uint32_t)win_w, (uint32_t)win_h);
     if (ok)
-        lcd_update();
+        uipod_gpu_note_rendered_screen(true);
     return ok;
 }
 
@@ -328,12 +490,10 @@ bool uipod_gpu_render_keyboard(const char *text,
         kbd.row_counts[i] = row_counts[i];
     kbd.keys = keys;
 
-    struct viewport *prev_vp = lcd_set_viewport(NULL);
-    fb_data *fb = FBADDR(0, 0);
-    bool ok = uipod_rs_ui_render_keyboard(&kbd, (uint8_t *)fb);
-    lcd_set_viewport(prev_vp);
-
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    bool ok = uipod_rs_ui_render_keyboard_gpu(&kbd, (uint32_t)win_w, (uint32_t)win_h);
     if (ok)
-        lcd_update();
+        uipod_gpu_note_rendered_screen(false);
     return ok;
 }

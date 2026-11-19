@@ -1,0 +1,116 @@
+# UIPod Android (arm64-v8a) self-contained cross-compilation & APK packaging toolchain:
+# - Android SDK 34 + Build-Tools 34.0.0 + NDK r26d (aarch64-linux-android26-clang)
+# - Pre-built SDL2 2.30.9 (`libSDL2.so` with AAudio + OpenSLES + HIDAPI + `org.libsdl.app.*`)
+# - Pre-built static OpenSSL 3.0.15 (`libssl.a` + `libcrypto.a`, `-fPIC`, no symbol clash)
+# - Rust stable toolchain with `aarch64-linux-android` target
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_NDK_HOME=/opt/android-sdk/ndk/26.3.11579264 \
+    RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+        build-essential \
+        ca-certificates \
+        curl \
+        unzip \
+        zip \
+        git \
+        perl \
+        python3 \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1. Android SDK (Platform 34, Build-Tools 34.0.0, NDK r26d)
+RUN mkdir -p "$ANDROID_HOME/cmdline-tools" \
+    && curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+        -o /tmp/cmdtools.zip \
+    && unzip -q /tmp/cmdtools.zip -d "$ANDROID_HOME/cmdline-tools" \
+    && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
+    && rm -f /tmp/cmdtools.zip \
+    && yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null \
+    && "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+        "platforms;android-34" \
+        "build-tools;35.0.0" \
+        "ndk;26.3.11579264" \
+    && chmod -R a+rX "$ANDROID_HOME"
+
+# 2. Cross-compiler wrappers (`aarch64-linux-android-*`) for Rockbox `tools/configure` + Rust
+RUN NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" \
+    && printf '#!/bin/sh\nexec %s/aarch64-linux-android26-clang "$@"\n' "$NDK_BIN"   > /usr/local/bin/aarch64-linux-android-gcc \
+    && printf '#!/bin/sh\nexec %s/aarch64-linux-android26-clang++ "$@"\n' "$NDK_BIN" > /usr/local/bin/aarch64-linux-android-g++ \
+    && printf '#!/bin/sh\nexec %s/aarch64-linux-android26-clang "$@"\n' "$NDK_BIN"   > /usr/local/bin/aarch64-linux-android-as \
+    && chmod +x /usr/local/bin/aarch64-linux-android-gcc /usr/local/bin/aarch64-linux-android-g++ /usr/local/bin/aarch64-linux-android-as \
+    && ln -sf "$NDK_BIN/llvm-ar"                         /usr/local/bin/aarch64-linux-android-gcc-ar \
+    && ln -sf "$NDK_BIN/llvm-ar"                         /usr/local/bin/aarch64-linux-android-ar \
+    && ln -sf "$NDK_BIN/llvm-ranlib"                     /usr/local/bin/aarch64-linux-android-gcc-ranlib \
+    && ln -sf "$NDK_BIN/llvm-ranlib"                     /usr/local/bin/aarch64-linux-android-ranlib \
+    && ln -sf "$NDK_BIN/ld.lld"                          /usr/local/bin/aarch64-linux-android-ld \
+    && ln -sf "$NDK_BIN/llvm-objcopy"                    /usr/local/bin/aarch64-linux-android-objcopy \
+    && ln -sf "$NDK_BIN/llvm-strip"                      /usr/local/bin/aarch64-linux-android-strip \
+    && printf '%s\n' \
+        '#!/bin/sh' \
+        'if [ "$1" = "--print-sysroot" ]; then' \
+        '  exec '"$NDK_BIN"'/aarch64-linux-android26-clang --print-sysroot' \
+        'fi' \
+        'exec '"$NDK_BIN"'/aarch64-linux-android26-clang -E "$@"' \
+        > /usr/local/bin/aarch64-linux-android-cpp \
+    && chmod +x /usr/local/bin/aarch64-linux-android-cpp \
+    && mkdir -p /opt/android-deps/lib \
+    && "$NDK_BIN/llvm-ar" rcs /opt/android-deps/lib/libgcc.a
+
+# 3. Static OpenSSL 3.0.15 (`libssl.a` + `libcrypto.a`, `-fPIC`) for Navidrome, Jellyfin & AutoEQ HTTPS
+RUN mkdir -p /tmp/src /opt/android-deps/include /opt/android-deps/lib \
+    && curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.15/openssl-3.0.15.tar.gz \
+        | tar -xz -C /tmp/src \
+    && cd /tmp/src/openssl-3.0.15 \
+    && ANDROID_NDK_ROOT="$ANDROID_NDK_HOME" \
+       PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" \
+       ./Configure android-arm64 -D__ANDROID_API__=26 no-shared no-tests -fPIC \
+       --prefix=/opt/android-deps --openssldir=/opt/android-deps/ssl \
+    && ANDROID_NDK_ROOT="$ANDROID_NDK_HOME" \
+       PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" \
+       make -j"$(nproc)" build_libs \
+    && ANDROID_NDK_ROOT="$ANDROID_NDK_HOME" \
+       PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" \
+       make install_dev \
+    && rm -rf /tmp/src \
+    && chmod -R a+rX /opt/android-deps
+
+# 4. SDL2 2.30.9 (`libSDL2.so` via official `Android.mk` + Java glue `org/libsdl/app/*`)
+RUN mkdir -p /tmp/sdl /opt/android-deps/include/SDL2 /opt/sdl2-java \
+    && curl -fsSL https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.tar.gz \
+        | tar -xz -C /tmp/sdl \
+    && cd /tmp/sdl/SDL2-2.30.9 \
+    && "$ANDROID_NDK_HOME/ndk-build" \
+        NDK_PROJECT_PATH=/tmp/sdl/SDL2-2.30.9 \
+        APP_BUILD_SCRIPT=/tmp/sdl/SDL2-2.30.9/Android.mk \
+        NDK_LIBS_OUT=/tmp/sdl/libs \
+        NDK_OUT=/tmp/sdl/obj \
+        APP_ABI=arm64-v8a \
+        APP_PLATFORM=android-26 \
+        -j"$(nproc)" SDL2 \
+    && cp -a /tmp/sdl/SDL2-2.30.9/include/*.h /opt/android-deps/include/SDL2/ \
+    && cp /tmp/sdl/obj/local/arm64-v8a/libSDL2.so /opt/android-deps/lib/libSDL2.so \
+    && cp -a /tmp/sdl/SDL2-2.30.9/android-project/app/src/main/java/org /opt/sdl2-java/ \
+    && rm -rf /tmp/sdl \
+    && chmod -R a+rX /opt/android-deps /opt/sdl2-java \
+    && printf '%s\n' \
+        '#!/bin/sh' \
+        'case "$1" in' \
+        '  --cflags) echo "-I/opt/android-deps/include/SDL2 -D_REENTRANT" ;;' \
+        '  --libs|--static-libs) echo "-L/opt/android-deps/lib -lSDL2" ;;' \
+        '  --version) echo "2.30.9" ;;' \
+        'esac' \
+        > /usr/local/bin/sdl2-config \
+    && chmod +x /usr/local/bin/sdl2-config
+
+# 5. Rust stable + `aarch64-linux-android` target
+ENV PATH=/opt/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable --target aarch64-linux-android \
+    && chmod -R a+rX /opt/rustup /opt/cargo \
+    && ln -sf /opt/cargo/bin/* /usr/local/bin/

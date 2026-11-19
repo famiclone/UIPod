@@ -1,5 +1,7 @@
 # /
 /build*
+!/build.sh
+!/build-android.sh
 /sim*
 /output
 /dist

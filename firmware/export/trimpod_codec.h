@@ -22,6 +22,10 @@
  * table lands on evenly spaced loudness steps instead of snapping to whole dB.
  * Limits below are in 0.1 dB units; 0 = unity into the hardware ceiling
  * launch.sh pins (DAC volume 160, NextUI's shipped max). */
+#ifdef __ANDROID__
+AUDIOHW_SETTING(VOLUME,      "dB",   1,  1, -800,   0,    0)
+#else
 AUDIOHW_SETTING(VOLUME,      "dB",   1,  1, -800,   0, -220)
+#endif
 
 #endif /* _TRIMPOD_CODEC_H */

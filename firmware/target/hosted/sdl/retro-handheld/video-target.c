@@ -6,6 +6,190 @@
  * found on LD_LIBRARY_PATH), and libdivx_shim.so (DivX) and the sound's route
  * to Trimpod (video-audio.c), both preloaded.
  ****************************************************************************/
+#ifdef __ANDROID__
+#include <jni.h>
+#include <stdbool.h>
+#include <string.h>
+#include <SDL.h>
+#include "config.h"
+#include "window-sdl.h"
+#include "video-target.h"
+
+static bool s_video_running = false;
+
+static jclass find_activity_cls(JNIEnv *env)
+{
+    if (!env)
+        return NULL;
+    jclass cls = (*env)->FindClass(env, "dev/famiclone/uipod/UIPodActivity");
+    if (!cls)
+        (*env)->ExceptionClear(env);
+    return cls;
+}
+
+bool retrohh_video_probe(const char *path, struct retrohh_video_info *info)
+{
+    if (!info)
+        return false;
+    memset(info, 0, sizeof(*info));
+    info->width  = 1280;
+    info->height = 720;
+    (void)path;
+    return path != NULL && path[0] != '\0';
+}
+
+bool retrohh_video_start(const char *path, int start_ms)
+{
+    if (!path || !path[0])
+        return false;
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return false;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoStart", "(Ljava/lang/String;I)Z");
+    jboolean ok = JNI_FALSE;
+    if (mid)
+    {
+        jstring jpath = (*env)->NewStringUTF(env, path);
+        if (jpath)
+        {
+            ok = (*env)->CallStaticBooleanMethod(env, cls, mid, jpath, (jint)start_ms);
+            (*env)->DeleteLocalRef(env, jpath);
+        }
+    }
+    else
+    {
+        (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    s_video_running = (ok == JNI_TRUE);
+    return s_video_running;
+}
+
+void retrohh_video_stop(void)
+{
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (cls)
+    {
+        jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoStop", "()V");
+        if (mid)
+            (*env)->CallStaticVoidMethod(env, cls, mid);
+        else
+            (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, cls);
+    }
+    s_video_running = false;
+    sdl_gl_set_video_through(false, 0);
+}
+
+bool retrohh_video_running(void)
+{
+    if (!s_video_running)
+        return false;
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return false;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoIsRunning", "()Z");
+    jboolean r = JNI_FALSE;
+    if (mid)
+        r = (*env)->CallStaticBooleanMethod(env, cls, mid);
+    else
+        (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+    s_video_running = (r == JNI_TRUE);
+    return s_video_running;
+}
+
+bool retrohh_video_status(int *position_ms, int *duration_ms, bool *playing)
+{
+    if (!s_video_running)
+        return false;
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return false;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoGetState", "()[I");
+    bool ready = false;
+    if (mid)
+    {
+        jintArray arr = (jintArray)(*env)->CallStaticObjectMethod(env, cls, mid);
+        if (arr && (*env)->GetArrayLength(env, arr) >= 4)
+        {
+            jint vals[4] = {0, 0, 0, 0};
+            (*env)->GetIntArrayRegion(env, arr, 0, 4, vals);
+            if (vals[0] != 0)
+            {
+                if (position_ms) *position_ms = (int)vals[1];
+                if (duration_ms) *duration_ms = (int)vals[2];
+                if (playing)     *playing     = (vals[3] != 0);
+                ready = true;
+            }
+        }
+        if (arr)
+            (*env)->DeleteLocalRef(env, arr);
+    }
+    else
+    {
+        (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    return ready;
+}
+
+void retrohh_video_pause(bool paused)
+{
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoPause", "(Z)V");
+    if (mid)
+        (*env)->CallStaticVoidMethod(env, cls, mid, paused ? JNI_TRUE : JNI_FALSE);
+    else
+        (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+void retrohh_video_seek(int position_ms)
+{
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoSeek", "(I)V");
+    if (mid)
+        (*env)->CallStaticVoidMethod(env, cls, mid, (jint)position_ms);
+    else
+        (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+void retrohh_video_set_aspect(const struct retrohh_video_info *info,
+                              enum retrohh_video_aspect aspect)
+{
+    (void)info;
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+    jclass cls = find_activity_cls(env);
+    if (!cls)
+        return;
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "videoSetStretch", "(Z)V");
+    if (mid)
+        (*env)->CallStaticVoidMethod(env, cls, mid,
+                                     (aspect == RETROHH_VIDEO_STRETCH) ? JNI_TRUE : JNI_FALSE);
+    else
+        (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+void retrohh_video_set_overlay(bool video_visible, int overlay_rows)
+{
+    sdl_gl_set_video_through(video_visible, overlay_rows);
+}
+
+#else /* !__ANDROID__ */
+
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -347,3 +531,5 @@ void retrohh_video_set_overlay(bool video_visible, int overlay_rows)
 {
     sdl_gl_set_video_through(video_visible, overlay_rows);
 }
+
+#endif /* !__ANDROID__ */

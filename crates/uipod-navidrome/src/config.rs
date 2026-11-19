@@ -56,6 +56,9 @@ impl StreamQuality {
     }
 }
 
+#[cfg(target_os = "android")]
+pub const DEFAULT_CACHE_LOCATION: &str = "/storage/emulated/0/Media";
+#[cfg(not(target_os = "android"))]
 pub const DEFAULT_CACHE_LOCATION: &str = "/mnt/SDCARD/Media";
 
 pub fn normalize_cache_location(raw: &str) -> String {

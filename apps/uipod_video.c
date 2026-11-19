@@ -39,6 +39,7 @@
 #include "recorder/bmp.h"
 #include "video-target.h"
 #include "uipod_page.h"      /* uipod_home_pending */
+#include "uipod_rs_ui.h"
 #include "uipod_video.h"
 
 extern void retrohh_cpu_hold_dynamic(void);     /* power-target.c owns CPU policy */
@@ -475,6 +476,7 @@ static void hide_video(void)
 {
     struct screen *display = &screens[SCREEN_MAIN];
 
+    uipod_gpu_prepare_cpu_fallback();
     retrohh_video_set_overlay(false, 0);
     display->set_background(LCD_BLACK);
     display->clear_display();

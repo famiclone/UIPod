@@ -616,19 +616,23 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
             }
         }
 
-        // ---- Render 1024x768 4-Shade GPU Canvas ----
+        // ---- Render Responsive 4-Shade GPU Canvas ----
         let theme = ctx.theme();
         let hdr_title = ctx.tr("Music Quiz", "Вгадай мелодію");
-        ctx.begin_frame(theme.bg, true, hdr_title);
+        let (sw, _sh) = ctx.begin_responsive_frame(theme.bg, true, hdr_title);
+        let cx = sw * 0.5;
+        let inner_w = (sw - 64.0).max(320.0);
 
         if matches!(phase, RoundPhase::Summary) {
             // Final Score Summary Card (for 10 / 20 round games)
             let max_r = save.length.limit().unwrap_or(round_num);
-            ctx.fill_rect(96.0, 184.0, 832.0, 460.0, 24.0, theme.bg);
-            ctx.stroke_rect(96.0, 184.0, 832.0, 460.0, 24.0, 4.0, theme.fg);
+            let sum_w = (sw - 192.0).clamp(480.0, 960.0);
+            let sum_x = cx - sum_w * 0.5;
+            ctx.fill_rect(sum_x, 184.0, sum_w, 460.0, 24.0, theme.bg);
+            ctx.stroke_rect(sum_x, 184.0, sum_w, 460.0, 24.0, 4.0, theme.fg);
 
             ctx.draw_text(
-                512.0,
+                cx,
                 256.0,
                 ctx.tr("Quiz Complete!", "Гру завершено!"),
                 42.0,
@@ -644,7 +648,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 max_r
             );
             ctx.draw_text(
-                512.0,
+                cx,
                 355.0,
                 &res_str,
                 52.0,
@@ -655,7 +659,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
 
             let best_str = format!("{}: {}", ctx.tr("Best Score", "Рекорд"), save.best_score);
             ctx.draw_text(
-                512.0,
+                cx,
                 435.0,
                 &best_str,
                 28.0,
@@ -664,9 +668,9 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 theme.fg2,
             );
 
-            ctx.fill_rect(262.0, 515.0, 500.0, 74.0, 16.0, theme.fg);
+            ctx.fill_rect(cx - 250.0, 515.0, 500.0, 74.0, 16.0, theme.fg);
             ctx.draw_text(
-                512.0,
+                cx,
                 552.0,
                 ctx.tr("[A] Play Again    [START] Menu", "[A] Ще раз    [START] Меню"),
                 26.0,
@@ -678,7 +682,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
             // Top HUD Card (Round + Live Mystery Equalizer + Score / Best)
             let hud_x = 32.0;
             let hud_y = CONTENT_TOP_Y;
-            let hud_w = (SCREEN_WIDTH - 64) as f32;
+            let hud_w = inner_w;
             let hud_h = 110.0;
             ctx.stroke_rect(hud_x, hud_y, hud_w, hud_h, 18.0, 3.0, theme.fg1);
 
@@ -731,7 +735,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
 
             // Center 12-bar live audio equalizer pill
             let eq_total_w = 12.0 * 10.0 + 11.0 * 6.0; // 186 px
-            let eq_x0 = (SCREEN_WIDTH as f32 - eq_total_w) * 0.5;
+            let eq_x0 = (sw - eq_total_w) * 0.5;
             let eq_base_y = hud_y + hud_h - 18.0;
             let eq_max_h = 74.0;
             for (i, &amp) in eq_bars.iter().enumerate() {
@@ -783,7 +787,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                     cyc
                 }
             };
-            ctx.draw_progress_bar(32.0, bar_y, 960.0, 22.0, progress);
+            ctx.draw_progress_bar(32.0, bar_y, inner_w, 22.0, progress);
 
             // 4 Choice Cards (`Artist - Track name`)
             let cards_top = bar_y + 36.0; // 296
@@ -833,9 +837,9 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                         }
                     };
 
-                ctx.fill_rect(32.0, cy, 960.0, card_h, 16.0, fill_rgb);
+                ctx.fill_rect(32.0, cy, inner_w, card_h, 16.0, fill_rgb);
                 if border_w > 0.0 {
-                    ctx.stroke_rect(32.0, cy, 960.0, card_h, 16.0, border_w, border_rgb);
+                    ctx.stroke_rect(32.0, cy, inner_w, card_h, 16.0, border_w, border_rgb);
                 }
 
                 // Numbered pill badge (`1`..`4`)
@@ -855,7 +859,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
 
                 let reserve_right = if right_tag.is_some() { 96.0 } else { 28.0 };
                 let text_x = bx + 68.0;
-                let max_text_w = 992.0 - text_x - reserve_right;
+                let max_text_w = (32.0 + inner_w) - text_x - reserve_right;
                 let fitted =
                     truncate_to_width(ctx, song_label, 30.0, FontWeight::SemiBold, max_text_w);
                 ctx.draw_text(
@@ -870,7 +874,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
 
                 if let Some(tag) = right_tag {
                     ctx.draw_text(
-                        964.0,
+                        32.0 + inner_w - 28.0,
                         cy + card_h * 0.5,
                         tag,
                         32.0,
@@ -881,7 +885,7 @@ fn run_music_quiz(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 }
             }
 
-            let _ = SCREEN_HEIGHT;
+            let _ = (SCREEN_WIDTH, SCREEN_HEIGHT);
         }
 
         ctx.present();

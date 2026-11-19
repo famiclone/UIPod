@@ -20,8 +20,9 @@ use crate::icons::{
     stroke_rounded_rect_inside,
 };
 use crate::layout::{
-    compute_header_layout, compute_list_layout, compute_now_playing_alt_layout,
-    compute_now_playing_layout, HeaderBoxes, LIST_VISIBLE_ROWS, SCREEN_H, SCREEN_W,
+    compute_header_layout, compute_header_layout_sized, compute_list_layout_sized,
+    compute_now_playing_alt_layout_sized, compute_now_playing_layout_sized, horizontal_margin,
+    HeaderBoxes, LogicalMetrics, SCREEN_H, SCREEN_W,
 };
 use crate::{
     FileIconKind, HeaderSourceIcon, HeaderState, KeyboardState, ListRow, ListScreenState,
@@ -189,7 +190,12 @@ pub struct UiEngine {
     canvas: Canvas<OpenGl>,
     gl: glow::Context,
     fbo_image: ImageId,
+    fbo_w: usize,
+    fbo_h: usize,
     prev_fbo_image: Option<ImageId>,
+    prev_fbo_w: usize,
+    prev_fbo_h: usize,
+    compat_fbo_image: Option<ImageId>,
     fonts_regular: Vec<FontId>,
     fonts_medium: Vec<FontId>,
     fonts_semibold: Vec<FontId>,
@@ -297,7 +303,12 @@ impl UiEngine {
             canvas,
             gl,
             fbo_image,
+            fbo_w: WIDTH,
+            fbo_h: HEIGHT,
             prev_fbo_image: None,
+            prev_fbo_w: 0,
+            prev_fbo_h: 0,
+            compat_fbo_image: None,
             fonts_regular: make_chain(f_reg),
             fonts_medium: make_chain(f_med),
             fonts_semibold: make_chain(f_semi),
@@ -403,18 +414,58 @@ impl UiEngine {
         center_y + font_size * 0.355
     }
 
-    fn begin_offscreen(&mut self, clear_rows: usize, bg: Color) {
+    pub fn ensure_fbo_size(&mut self, phys_w: u32, phys_h: u32) {
+        let pw = (phys_w as usize).clamp(320, 4096);
+        let ph = (phys_h as usize).clamp(240, 4096);
+        if pw == self.fbo_w && ph == self.fbo_h {
+            return;
+        }
+        if let Ok(new_fbo) = self.canvas.create_image_empty(
+            pw,
+            ph,
+            PixelFormat::Rgba8,
+            ImageFlags::FLIP_Y | ImageFlags::NEAREST,
+        ) {
+            self.canvas.delete_image(self.fbo_image);
+            self.fbo_image = new_fbo;
+            self.fbo_w = pw;
+            self.fbo_h = ph;
+            if let Some(prev) = self.prev_fbo_image.take() {
+                self.canvas.delete_image(prev);
+                self.prev_fbo_w = 0;
+                self.prev_fbo_h = 0;
+            }
+        }
+    }
+
+    fn begin_offscreen_sized(&mut self, m: LogicalMetrics, clear_logical_h: f32, bg: Color) {
+        self.ensure_fbo_size(m.phys_w, m.phys_h);
         self.canvas.reset();
         self.canvas.reset_scissor();
+        self.canvas.set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
         self.canvas
             .set_render_target(RenderTarget::Image(self.fbo_image));
-        let rows = clear_rows.min(HEIGHT);
-        self.canvas
-            .clear_rect(0, 0, WIDTH as u32, rows as u32, bg);
-        // Also draw an explicit opaque background quad inside the command stream.
-        let mut bg_rect = VgPath::new();
-        bg_rect.rect(0.0, 0.0, WIDTH as f32, rows as f32);
-        self.canvas.fill_path(&bg_rect, &Paint::color(bg));
+
+        if clear_logical_h >= m.screen_h - 0.5 {
+            self.canvas
+                .clear_rect(0, 0, self.fbo_w as u32, self.fbo_h as u32, bg);
+            self.canvas.scale(m.scale_x, m.scale_y);
+            let mut bg_rect = VgPath::new();
+            bg_rect.rect(0.0, 0.0, m.screen_w, m.screen_h);
+            self.canvas.fill_path(&bg_rect, &Paint::color(bg));
+        } else {
+            self.canvas.scale(m.scale_x, m.scale_y);
+            self.canvas
+                .scissor(0.0, 0.0, m.screen_w, clear_logical_h.max(1.0));
+            let mut bg_rect = VgPath::new();
+            bg_rect.rect(0.0, 0.0, m.screen_w, clear_logical_h.max(1.0));
+            self.canvas.fill_path(&bg_rect, &Paint::color(bg));
+        }
+    }
+
+    fn begin_offscreen(&mut self, clear_rows: usize, bg: Color) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.begin_offscreen_sized(m, clear_rows.min(HEIGHT) as f32, bg);
     }
 
     /// Reads the top `top_rows` scanlines (`y = 0..top_rows` in top-down screen space)
@@ -833,19 +884,18 @@ impl UiEngine {
         self.canvas.fill_path(&spindle, &Paint::color(pal.fg));
     }
 
-    fn draw_list_screen(&mut self, state: &ListScreenState) {
+    fn draw_list_screen_sized(&mut self, state: &ListScreenState, m: LogicalMetrics) {
         let pal = resolve_theme(state.theme);
-        self.begin_offscreen(HEIGHT, pal.bg);
+        self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
         let vis = if state.visible_items > 0 {
             state.visible_items
         } else {
-            LIST_VISIBLE_ROWS
+            m.visible_rows
         };
-        // Only display the right-hand Scrollbar when total_items exceeds visible capacity (> 8),
-        // letting MenuItem rows span the full 960px width on screens that fit on a single page.
         let show_scrollbar = state.total_items > vis;
-        let boxes = compute_list_layout(state.rows.len(), show_scrollbar);
+        let boxes =
+            compute_list_layout_sized(m.screen_w, m.screen_h, state.rows.len(), vis, show_scrollbar);
 
         self.draw_header_component(&boxes.header, &state.header, pal);
 
@@ -869,12 +919,17 @@ impl UiEngine {
         }
     }
 
-    fn draw_now_playing_screen(&mut self, state: &NowPlayingState) {
+    fn draw_list_screen(&mut self, state: &ListScreenState) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.draw_list_screen_sized(state, m);
+    }
+
+    fn draw_now_playing_screen_sized(&mut self, state: &NowPlayingState, m: LogicalMetrics) {
         let pal = resolve_theme(state.theme);
-        self.begin_offscreen(HEIGHT, pal.bg);
+        self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
         if state.alt_layout {
-            let alt = compute_now_playing_alt_layout();
+            let alt = compute_now_playing_alt_layout_sized(m.screen_w, m.screen_h);
             let semibold = self.fonts_semibold.clone();
 
             let art_drawn = if let Some(rgb24) = state.art_rgb24 {
@@ -974,7 +1029,7 @@ impl UiEngine {
             return;
         }
 
-        let np = compute_now_playing_layout();
+        let np = compute_now_playing_layout_sized(m.screen_w, m.screen_h);
         self.draw_header_component(&np.header, &state.header, pal);
 
         let regular = self.fonts_regular.clone();
@@ -1210,15 +1265,20 @@ impl UiEngine {
         }
     }
 
-    fn draw_keyboard_screen(&mut self, state: &KeyboardState) {
+    fn draw_now_playing_screen(&mut self, state: &NowPlayingState) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.draw_now_playing_screen_sized(state, m);
+    }
+
+    fn draw_keyboard_screen_sized(&mut self, state: &KeyboardState, m: LogicalMetrics) {
         let pal = resolve_theme(state.theme);
-        self.begin_offscreen(HEIGHT, pal.bg);
+        self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
         let semibold = self.fonts_semibold.clone();
-        let margin = 32.0_f32;
-        let inner_w = (WIDTH as f32) - margin * 2.0; // 960.0
+        let margin = horizontal_margin(m.screen_w);
+        let inner_w = (m.screen_w - margin * 2.0).max(320.0);
 
-        // 1. Input box (32, 32, 960, 96): r=8, 4px inside border in fg1, text in fg, caret in fg2
+        // 1. Input box: r=8, 4px inside border in fg1, text in fg, caret in fg2
         let fx = margin;
         let fy = 32.0_f32;
         let fw = inner_w;
@@ -1248,10 +1308,11 @@ impl UiEngine {
         let caret_x = (fx + text_pad + tw + 4.0).min(fx + fw - text_pad - 6.0);
         fill_rounded_rect(&mut self.canvas, caret_x, fy + 20.0, 6.0, fh - 40.0, 3.0, pal.fg2);
 
-        // 2. Staggered 5-row QWERTY key grid
+        // 2. Staggered 5-row QWERTY key grid adapting cleanly to `(m.screen_w, m.screen_h)`
         let gap = 12.0_f32;
         let grid_top = 156.0_f32;
-        let key_h = 106.0_f32;
+        let avail_grid_h = (m.screen_h - grid_top - 32.0).max(400.0);
+        let key_h = ((avail_grid_h - 4.0 * gap) / 5.0).clamp(80.0, 140.0);
         let row_step = key_h + gap;
         let char_key_w = (inner_w - 9.0 * gap) / 10.0;
 
@@ -1266,7 +1327,7 @@ impl UiEngine {
                 char_key_w
             };
             let row_w = (n as f32) * kw + ((n - 1) as f32) * gap;
-            let start_x = ((WIDTH as f32) - row_w) * 0.5;
+            let start_x = (m.screen_w - row_w) * 0.5;
             let y = grid_top + (r_idx as f32) * row_step;
 
             for (c_idx, key) in row.iter().enumerate() {
@@ -1309,6 +1370,11 @@ impl UiEngine {
                 }
             }
         }
+    }
+
+    fn draw_keyboard_screen(&mut self, state: &KeyboardState) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.draw_keyboard_screen_sized(state, m);
     }
 
     /// Renders only the top `Header` band (`1024x120`) into Rockbox's `{b, g, r}` framebuffer,
@@ -1377,26 +1443,37 @@ impl UiEngine {
 
     /* ---- Direct GPU Screen Presentation & Transitions (Zero Readback) --- */
 
-    /// Copies the currently rendered `fbo_image` into an offscreen snapshot FBO so
-    /// subsequent frames can animate UIPod screen transitions (`Slide`, `Cover`, `Fade`,
-    /// `Pixels`, `Blinds`) entirely on the GPU.
+    /// Copies the currently rendered `fbo_image` into an offscreen snapshot FBO at `(self.fbo_w, self.fbo_h)`
+    /// so subsequent frames can animate UIPod screen transitions (`Slide`, `Cover`, `Fade`,
+    /// `Pixels`, `Blinds`) entirely on the GPU at native screen resolution.
     pub fn snapshot_fbo_for_transition(&mut self) {
+        let fw = self.fbo_w.max(1);
+        let fh = self.fbo_h.max(1);
+        if self.prev_fbo_w != fw || self.prev_fbo_h != fh {
+            if let Some(old) = self.prev_fbo_image.take() {
+                self.canvas.delete_image(old);
+            }
+            self.prev_fbo_w = 0;
+            self.prev_fbo_h = 0;
+        }
         let prev = match self.prev_fbo_image {
             Some(id) => id,
             None => match self.canvas.create_image_empty(
-                WIDTH,
-                HEIGHT,
+                fw,
+                fh,
                 PixelFormat::Rgba8,
                 ImageFlags::FLIP_Y | ImageFlags::NEAREST,
             ) {
                 Ok(id) => {
                     self.prev_fbo_image = Some(id);
+                    self.prev_fbo_w = fw;
+                    self.prev_fbo_h = fh;
                     id
                 }
                 Err(_) => return,
             },
         };
-        self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        self.canvas.set_size(fw as u32, fh as u32, 1.0);
         self.canvas.set_render_target(RenderTarget::Image(prev));
         self.canvas.reset_transform();
         self.canvas.reset_scissor();
@@ -1404,13 +1481,13 @@ impl UiEngine {
             self.fbo_image,
             0.0,
             0.0,
-            WIDTH as f32,
-            HEIGHT as f32,
+            fw as f32,
+            fh as f32,
             0.0,
             1.0,
         );
         let mut quad = VgPath::new();
-        quad.rect(0.0, 0.0, WIDTH as f32, HEIGHT as f32);
+        quad.rect(0.0, 0.0, fw as f32, fh as f32);
         self.canvas.fill_path(&quad, &paint);
         self.canvas.flush();
         self.canvas.set_render_target(RenderTarget::Screen);
@@ -1418,35 +1495,93 @@ impl UiEngine {
         self.restore_gl_state();
     }
 
-    /// Renders a list/menu screen directly into `fbo_image` (call `present_fbo_to_screen` or
-    /// `present_fbo_transition` afterward to display without CPU readback).
+    /// Updates ONLY the top `Header` band inside `self.fbo_image` at native `(win_w, win_h)`
+    /// without disturbing the list/Now Playing content below `y = 120`.
+    pub fn render_header_to_fbo_sized(
+        &mut self,
+        theme: ThemeColors,
+        state: &HeaderState,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        let pal = resolve_theme(theme);
+        self.begin_offscreen_sized(m, HEADER_BAND_ROWS as f32, pal.bg);
+        let boxes = compute_header_layout_sized(m.screen_w, m.screen_h);
+        self.draw_header_component(&boxes, state, pal);
+        self.canvas.reset_scissor();
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders a responsive list/menu screen directly into `fbo_image` at `(win_w, win_h)`.
+    pub fn render_list_to_fbo_sized(&mut self, state: &ListScreenState, win_w: u32, win_h: u32) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        self.draw_list_screen_sized(state, m);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders a list/menu screen directly into `fbo_image` at canonical `1024x768`.
     pub fn render_list_to_fbo(&mut self, state: &ListScreenState) {
-        self.draw_list_screen(state);
-        self.canvas.flush();
+        self.render_list_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
     }
 
-    /// Renders the `Now Playing` screen directly into `fbo_image`.
+    /// Renders the responsive `Now Playing` screen directly into `fbo_image` at `(win_w, win_h)`.
+    pub fn render_now_playing_to_fbo_sized(
+        &mut self,
+        state: &NowPlayingState,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        self.draw_now_playing_screen_sized(state, m);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders the `Now Playing` screen directly into `fbo_image` at canonical `1024x768`.
     pub fn render_now_playing_to_fbo(&mut self, state: &NowPlayingState) {
-        self.draw_now_playing_screen(state);
-        self.canvas.flush();
+        self.render_now_playing_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
     }
 
-    /// Renders the QWERTY keyboard directly into `fbo_image`.
+    /// Renders the responsive QWERTY keyboard directly into `fbo_image` at `(win_w, win_h)`.
+    pub fn render_keyboard_to_fbo_sized(
+        &mut self,
+        state: &KeyboardState,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        self.draw_keyboard_screen_sized(state, m);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders the QWERTY keyboard directly into `fbo_image` at canonical `1024x768`.
     pub fn render_keyboard_to_fbo(&mut self, state: &KeyboardState) {
-        self.draw_keyboard_screen(state);
-        self.canvas.flush();
+        self.render_keyboard_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
     }
 
-    /// Presents `fbo_image` directly to the window/WebGL2 backbuffer, optionally blending
-    /// from the last `snapshot_fbo_for_transition()` using one of UIPod's 6 screen transitions:
-    /// `0=Off`, `1=Slide`, `2=Cover`, `3=Fade`, `4=Pixels`, `5=Blinds`.
-    pub fn present_fbo_transition(
+    /// Presents `fbo_image` directly to the window backbuffer, optionally blending from the
+    /// last `snapshot_fbo_for_transition()` (`0=Off`, `1=Slide`, `2=Cover`, `3=Fade`,
+    /// `4=Pixels`, `5=Blinds`) while optionally keeping the shared top `Header` pinned.
+    pub fn present_fbo_transition_ex(
         &mut self,
         win_w: u32,
         win_h: u32,
         kind: u8,
         progress: f32,
         dir: i8,
+        pin_header: bool,
     ) {
         let t = progress.clamp(0.0, 1.0);
         if kind == 0 || t >= 1.0 || self.prev_fbo_image.is_none() {
@@ -1456,16 +1591,25 @@ impl UiEngine {
         let prev = self.prev_fbo_image.unwrap();
         let sw = win_w.max(1) as f32;
         let sh = win_h.max(1) as f32;
-        if win_w != WIDTH as u32 || win_h != HEIGHT as u32 {
-            self.canvas.set_size(win_w.max(1), win_h.max(1), 1.0);
-        }
+        self.canvas.set_size(win_w.max(1), win_h.max(1), 1.0);
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.reset_transform();
         self.canvas.reset_scissor();
 
-        // Smooth cubic ease-out matching TrimUI Brick feel
         let ease = 1.0 - (1.0 - t).powi(3);
         let sign = if dir < 0 { -1.0f32 } else { 1.0f32 };
+
+        let header_phys_h = if pin_header {
+            let m = LogicalMetrics::from_physical(win_w, win_h);
+            ((HEADER_BAND_ROWS as f32) * m.scale_y).round().clamp(0.0, sh)
+        } else {
+            0.0
+        };
+
+        if header_phys_h > 0.0 {
+            self.canvas
+                .scissor(0.0, header_phys_h, sw, (sh - header_phys_h).max(1.0));
+        }
 
         match kind {
             1 => {
@@ -1553,14 +1697,32 @@ impl UiEngine {
             }
         }
 
-        self.canvas.flush();
-        if win_w != WIDTH as u32 || win_h != HEIGHT as u32 {
-            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        if header_phys_h > 0.0 {
+            self.canvas.reset_scissor();
+            let p_hdr = Paint::image(self.fbo_image, 0.0, 0.0, sw, sh, 0.0, 1.0);
+            let mut hq = VgPath::new();
+            hq.rect(0.0, 0.0, sw, header_phys_h);
+            self.canvas.fill_path(&hq, &p_hdr);
         }
+
+        self.canvas.flush();
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
         self.restore_gl_state();
     }
 
-    /* ---- Immediate-Mode Plugin GPU Canvas (`1024x768`) ------------------ */
+    pub fn present_fbo_transition(
+        &mut self,
+        win_w: u32,
+        win_h: u32,
+        kind: u8,
+        progress: f32,
+        dir: i8,
+    ) {
+        self.present_fbo_transition_ex(win_w, win_h, kind, progress, dir, false);
+    }
+
+    /* ---- Immediate-Mode Plugin GPU Canvas (Responsive + Fixed-Aspect) ---- */
 
     #[inline]
     fn font_chain_by_weight(&self, weight: u8) -> Vec<FontId> {
@@ -1572,18 +1734,60 @@ impl UiEngine {
         }
     }
 
+    pub fn plugin_begin_ex(
+        &mut self,
+        theme: ThemeColors,
+        bg_rgb: u32,
+        header: Option<&HeaderState>,
+        win_w: u32,
+        win_h: u32,
+        responsive: bool,
+    ) -> (f32, f32) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        let bg = rgb_u32_to_color(bg_rgb);
+        self.begin_offscreen_sized(m, m.screen_h, bg);
+        if let Some(hdr) = header {
+            let boxes = compute_header_layout_sized(m.screen_w, m.screen_h);
+            self.draw_header_component(&boxes, hdr, resolve_theme(theme));
+        }
+
+        if responsive {
+            if header.is_some() {
+                self.canvas.scissor(
+                    0.0,
+                    HEADER_BAND_ROWS as f32,
+                    m.screen_w,
+                    (m.screen_h - HEADER_BAND_ROWS as f32).max(1.0),
+                );
+            }
+            (m.screen_w, m.screen_h)
+        } else {
+            self.canvas.reset_transform();
+            self.canvas.reset_scissor();
+            let fit_scale = ((m.phys_w as f32) / SCREEN_W).min((m.phys_h as f32) / SCREEN_H);
+            let ox = ((m.phys_w as f32) - SCREEN_W * fit_scale) * 0.5;
+            let oy = ((m.phys_h as f32) - SCREEN_H * fit_scale) * 0.5;
+            self.canvas.translate(ox, oy);
+            self.canvas.scale(fit_scale, fit_scale);
+            if header.is_some() {
+                let top_clip = (((HEADER_BAND_ROWS as f32) * m.scale_y - oy) / fit_scale)
+                    .clamp(0.0, SCREEN_H);
+                self.canvas
+                    .scissor(0.0, top_clip, SCREEN_W, (SCREEN_H - top_clip).max(1.0));
+            } else {
+                self.canvas.scissor(0.0, 0.0, SCREEN_W, SCREEN_H);
+            }
+            (SCREEN_W, SCREEN_H)
+        }
+    }
+
     pub fn plugin_begin(
         &mut self,
         theme: ThemeColors,
         bg_rgb: u32,
         header: Option<&HeaderState>,
     ) {
-        let bg = rgb_u32_to_color(bg_rgb);
-        self.begin_offscreen(HEIGHT, bg);
-        if let Some(hdr) = header {
-            let boxes = compute_header_layout();
-            self.draw_header_component(&boxes, hdr, resolve_theme(theme));
-        }
+        let _ = self.plugin_begin_ex(theme, bg_rgb, header, WIDTH as u32, HEIGHT as u32, false);
     }
 
     pub fn plugin_fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, rgb: u32) {
@@ -1724,22 +1928,18 @@ impl UiEngine {
     }
 
     pub fn plugin_present_into_bgr(&mut self, fb_bgr: &mut [u8]) {
-        self.finish_and_read_top_rows(HEIGHT);
-        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+        self.plugin_sync_fbo_into_bgr(fb_bgr);
     }
 
-    /// Zero-copy 60 FPS GPU presentation: flushes the plugin's vector commands into
-    /// `self.fbo_image` and blits `self.fbo_image` straight to the window backbuffer
-    /// (`RenderTarget::Screen`) on the GPU — completely eliminating `glReadPixels`,
-    /// CPU RGB888 unpacking, and `glTexSubImage2D` re-uploads!
+    /// Zero-copy GPU presentation: flushes `self.fbo_image` and blits it straight to
+    /// `RenderTarget::Screen` at `(win_w, win_h)`.
     pub fn plugin_present_gpu_screen(&mut self, win_w: u32, win_h: u32) {
+        self.canvas.reset_scissor();
         self.canvas.flush();
 
         let sw = win_w.max(1);
         let sh = win_h.max(1);
-        if sw != WIDTH as u32 || sh != HEIGHT as u32 {
-            self.canvas.set_size(sw, sh, 1.0);
-        }
+        self.canvas.set_size(sw, sh, 1.0);
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.reset_transform();
         self.canvas.reset_scissor();
@@ -1750,29 +1950,104 @@ impl UiEngine {
         self.canvas.fill_path(&quad, &paint);
         self.canvas.flush();
 
-        if sw != WIDTH as u32 || sh != HEIGHT as u32 {
-            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
+        self.restore_gl_state();
+    }
+
+    /// Presents `self.fbo_image` faded toward `target_rgb` (`fade=1.0` normal, `0.0` solid `target_rgb`),
+    /// used when fading seamlessly from Now Playing into the 4-shade GPU visualizer!
+    pub fn present_fbo_fade_rgb(&mut self, win_w: u32, win_h: u32, fade: f32, target_rgb: u32) {
+        self.canvas.reset_scissor();
+        self.canvas.flush();
+
+        let sw = win_w.max(1);
+        let sh = win_h.max(1);
+        let f = fade.clamp(0.0, 1.0);
+        let bg = rgb_u32_to_color(target_rgb);
+
+        self.canvas.set_size(sw, sh, 1.0);
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+        self.canvas.clear_rect(0, 0, sw, sh, bg);
+
+        let mut bg_q = VgPath::new();
+        bg_q.rect(0.0, 0.0, sw as f32, sh as f32);
+        self.canvas.fill_path(&bg_q, &Paint::color(bg));
+
+        if f > 0.001 {
+            let paint = Paint::image(self.fbo_image, 0.0, 0.0, sw as f32, sh as f32, 0.0, f);
+            let mut quad = VgPath::new();
+            quad.rect(0.0, 0.0, sw as f32, sh as f32);
+            self.canvas.fill_path(&quad, &paint);
         }
+        self.canvas.flush();
+
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
         self.restore_gl_state();
     }
 
     /// Flushes `self.fbo_image` without presenting to the window (used when display panel is off).
     pub fn plugin_flush_fbo_only(&mut self) {
+        self.canvas.reset_scissor();
         self.canvas.flush();
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.flush();
         self.restore_gl_state();
     }
 
-    /// Synchronizes the most recently rendered `self.fbo_image` into Rockbox's CPU `{b, g, r}`
-    /// framebuffer on demand (called once before opening a system menu or screen transition).
+    /// Synchronizes the most recently rendered `self.fbo_image` into Rockbox's CPU `1024x768` `{b, g, r}`
+    /// framebuffer on demand (resampling cleanly via `compat_fbo_image` when `fbo_w/h != 1024x768`).
     pub fn plugin_sync_fbo_into_bgr(&mut self, fb_bgr: &mut [u8]) {
-        self.canvas.reset();
         self.canvas.reset_scissor();
-        self.canvas
-            .set_render_target(RenderTarget::Image(self.fbo_image));
+        self.canvas.flush();
+
+        if self.fbo_w == WIDTH && self.fbo_h == HEIGHT {
+            self.canvas.reset();
+            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+            self.canvas
+                .set_render_target(RenderTarget::Image(self.fbo_image));
+            self.finish_and_read_top_rows(HEIGHT);
+            self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+            return;
+        }
+
+        let compat = match self.compat_fbo_image {
+            Some(id) => id,
+            None => match self.canvas.create_image_empty(
+                WIDTH,
+                HEIGHT,
+                PixelFormat::Rgba8,
+                ImageFlags::FLIP_Y,
+            ) {
+                Ok(id) => {
+                    self.compat_fbo_image = Some(id);
+                    id
+                }
+                Err(_) => return,
+            },
+        };
+        self.canvas.reset();
+        self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
+        self.canvas.set_render_target(RenderTarget::Image(compat));
+        let paint = Paint::image(
+            self.fbo_image,
+            0.0,
+            0.0,
+            WIDTH as f32,
+            HEIGHT as f32,
+            0.0,
+            1.0,
+        );
+        let mut q = VgPath::new();
+        q.rect(0.0, 0.0, WIDTH as f32, HEIGHT as f32);
+        self.canvas.fill_path(&q, &paint);
         self.finish_and_read_top_rows(HEIGHT);
         self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
     }
 }
 

@@ -1,4 +1,6 @@
-//! Flexbox screen layouts powered by `taffy`, matching the Auto-Layout hierarchy of `ui.figcraft`.
+//! Responsive Flexbox screen layouts powered by `taffy`, preserving exact `ui.figcraft`
+//! coordinates at `1024x768` (`4:3`) while adapting cleanly to widescreen (`16:9`, `16:10`,
+//! `3:2`), square (`1:1`), and portrait displays at native HiDPI resolution.
 
 use taffy::prelude::*;
 
@@ -15,6 +17,80 @@ fn pct<T: FromPercent>(val: f32) -> T {
 pub const SCREEN_W: f32 = 1024.0;
 pub const SCREEN_H: f32 = 768.0;
 pub const LIST_VISIBLE_ROWS: usize = 8;
+
+/// Responsive logical canvas metrics derived from physical drawable pixels `(phys_w, phys_h)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogicalMetrics {
+    pub phys_w: u32,
+    pub phys_h: u32,
+    pub screen_w: f32,
+    pub screen_h: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub margin_x: f32,
+    pub visible_rows: usize,
+}
+
+impl LogicalMetrics {
+    /// Computes responsive logical dimensions and HiDPI scale factors for any screen size.
+    ///
+    /// - Landscape (`aspect >= 1.2`, covering `4:3`, `3:2`, `16:10`, `16:9`, `21:9`):
+    ///   locks `screen_h = 768.0` and expands `screen_w = round(768.0 * aspect)` (`1024.0` at `4:3`,
+    ///   `1365.0` at `16:9` `1920x1080` with `scale = 1.40625x`).
+    /// - Square & Portrait (`aspect < 1.2`, e.g. `1:1` `720x720` or `9:16` `1080x1920`):
+    ///   locks `screen_w = 920.0` (so header badges and metadata never crowd) and expands
+    ///   `screen_h = round(920.0 / aspect)`, dynamically increasing `visible_rows`.
+    pub fn from_physical(phys_w: u32, phys_h: u32) -> Self {
+        let pw = phys_w.max(1);
+        let ph = phys_h.max(1);
+        let aspect = (pw as f32) / (ph as f32);
+
+        let (screen_w, screen_h) = if (aspect - (4.0 / 3.0)).abs() < 0.01 {
+            (SCREEN_W, SCREEN_H)
+        } else if aspect >= 1.2 {
+            let w = (SCREEN_H * aspect).round().max(920.0);
+            (w, SCREEN_H)
+        } else {
+            let base_w = 920.0_f32;
+            let h = (base_w / aspect.max(0.35)).round().max(SCREEN_H);
+            (base_w, h)
+        };
+
+        let margin_x = horizontal_margin(screen_w);
+        let visible_rows = compute_visible_list_rows(screen_h);
+
+        Self {
+            phys_w: pw,
+            phys_h: ph,
+            screen_w,
+            screen_h,
+            scale_x: (pw as f32) / screen_w,
+            scale_y: (ph as f32) / screen_h,
+            margin_x,
+            visible_rows,
+        }
+    }
+}
+
+#[inline]
+pub fn horizontal_margin(screen_w: f32) -> f32 {
+    if screen_w <= 1040.0 {
+        32.0
+    } else {
+        (32.0 + (screen_w - 1024.0) * 0.045).clamp(32.0, 56.0).round()
+    }
+}
+
+#[inline]
+pub fn compute_visible_list_rows(screen_h: f32) -> usize {
+    if (screen_h - SCREEN_H).abs() < 1.0 {
+        return LIST_VISIBLE_ROWS;
+    }
+    // Header + top/bottom 32px margins + 32px content top pad leaves `screen_h - 176.0`
+    // for `N * 60 + (N - 1) * 16` (`76 * N - 16 <= avail_h`).
+    let avail_h = (screen_h - 176.0).max(300.0);
+    (((avail_h + 16.0) / 76.0).floor() as usize).clamp(5, 20)
+}
 
 /// Computed absolute screen-space rectangle `(x, y, width, height)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -118,7 +194,7 @@ fn build_header_nodes(tree: &mut TaffyTree) -> (NodeId, NodeId, NodeId, NodeId) 
         })
         .unwrap();
 
-    // Header [271]: width=fill (960), height=80, padding_bottom=16, spaceBetween, center
+    // Header [271]: width=fill, height=80, padding_bottom=16, spaceBetween, center
     let header = tree
         .new_with_children(
             Style {
@@ -167,8 +243,9 @@ fn extract_header_boxes(
     }
 }
 
-/// Computes standalone `Header` layout at `(32, 32, 960, 80)` inside `1024x768`.
-pub fn compute_header_layout() -> HeaderBoxes {
+/// Computes standalone `Header` layout at `(margin_x, 32, screen_w - 2*margin_x, 80)`.
+pub fn compute_header_layout_sized(screen_w: f32, screen_h: f32) -> HeaderBoxes {
+    let mx = horizontal_margin(screen_w);
     let mut tree = TaffyTree::new();
     let h_nodes = build_header_nodes(&mut tree);
     let root = tree
@@ -177,12 +254,12 @@ pub fn compute_header_layout() -> HeaderBoxes {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 size: Size {
-                    width: px(SCREEN_W),
-                    height: px(SCREEN_H),
+                    width: px(screen_w),
+                    height: px(screen_h),
                 },
                 padding: Rect {
-                    left: px(32.0),
-                    right: px(32.0),
+                    left: px(mx),
+                    right: px(mx),
                     top: px(32.0),
                     bottom: px(32.0),
                 },
@@ -195,8 +272,8 @@ pub fn compute_header_layout() -> HeaderBoxes {
     tree.compute_layout(
         root,
         Size {
-            width: AvailableSpace::Definite(SCREEN_W),
-            height: AvailableSpace::Definite(SCREEN_H),
+            width: AvailableSpace::Definite(screen_w),
+            height: AvailableSpace::Definite(screen_h),
         },
     )
     .unwrap();
@@ -204,12 +281,24 @@ pub fn compute_header_layout() -> HeaderBoxes {
     extract_header_boxes(&tree, h_nodes, 0.0, 0.0)
 }
 
-/// Computes the `Main` / `Source` list screen layout (`[215]` / `[646]`).
-pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreenBoxes {
+/// Computes standalone `Header` layout at `(32, 32, 960, 80)` inside `1024x768`.
+pub fn compute_header_layout() -> HeaderBoxes {
+    compute_header_layout_sized(SCREEN_W, SCREEN_H)
+}
+
+/// Computes responsive `Main` / `Source` list screen layout for `(screen_w, screen_h)`.
+pub fn compute_list_layout_sized(
+    screen_w: f32,
+    screen_h: f32,
+    row_count: usize,
+    max_visible_rows: usize,
+    show_scrollbar: bool,
+) -> ListScreenBoxes {
+    let mx = horizontal_margin(screen_w);
     let mut tree = TaffyTree::new();
     let h_nodes = build_header_nodes(&mut tree);
 
-    let capped_rows = row_count.min(LIST_VISIBLE_ROWS);
+    let capped_rows = row_count.min(max_visible_rows.max(1));
     let mut row_nodes = Vec::with_capacity(capped_rows);
     for _ in 0..capped_rows {
         let row = tree
@@ -245,7 +334,6 @@ pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreen
 
     let mut content_children = vec![list_col];
     let sb_node = if show_scrollbar {
-        // Scrollbar [312]: width = 16.0, stretch vertically inside Frame 3 (624 - 32 = 592)
         let sb = tree
             .new_leaf(Style {
                 size: Size {
@@ -263,7 +351,6 @@ pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreen
         None
     };
 
-    // Frame 3 [228]: width=fill (960), flex_grow=1 (624), padding_top=32, horizontal gap=16
     let content_frame = tree
         .new_with_children(
             Style {
@@ -301,12 +388,12 @@ pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreen
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 size: Size {
-                    width: px(SCREEN_W),
-                    height: px(SCREEN_H),
+                    width: px(screen_w),
+                    height: px(screen_h),
                 },
                 padding: Rect {
-                    left: px(32.0),
-                    right: px(32.0),
+                    left: px(mx),
+                    right: px(mx),
                     top: px(32.0),
                     bottom: px(32.0),
                 },
@@ -319,8 +406,8 @@ pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreen
     tree.compute_layout(
         root,
         Size {
-            width: AvailableSpace::Definite(SCREEN_W),
-            height: AvailableSpace::Definite(SCREEN_H),
+            width: AvailableSpace::Definite(screen_w),
+            height: AvailableSpace::Definite(screen_h),
         },
     )
     .unwrap();
@@ -343,12 +430,21 @@ pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreen
     }
 }
 
-/// Computes the `Now Playing` screen layout (`[233]`).
-pub fn compute_now_playing_layout() -> NowPlayingBoxes {
+/// Computes the canonical `1024x768` `Main` / `Source` list screen layout (`[215]` / `[646]`).
+pub fn compute_list_layout(row_count: usize, show_scrollbar: bool) -> ListScreenBoxes {
+    compute_list_layout_sized(SCREEN_W, SCREEN_H, row_count, LIST_VISIBLE_ROWS, show_scrollbar)
+}
+
+/// Computes responsive `Now Playing` screen layout for `(screen_w, screen_h)`.
+pub fn compute_now_playing_layout_sized(screen_w: f32, screen_h: f32) -> NowPlayingBoxes {
+    let mx = horizontal_margin(screen_w);
+    let is_exact_43 = (screen_w - SCREEN_W).abs() < 0.5 && (screen_h - SCREEN_H).abs() < 0.5;
+    let is_portrait = screen_h > screen_w * 1.12;
+
     let mut tree = TaffyTree::new();
     let h_nodes = build_header_nodes(&mut tree);
 
-    // 1. Sub-header row Frame 16 [247]: 960 x 40
+    // 1. Sub-header row Frame 16 [247]: height = 40
     let subheader = tree
         .new_leaf(Style {
             size: Size {
@@ -360,12 +456,22 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
         })
         .unwrap();
 
-    // 2. Art + Metadata row Frame 5 [251]: height = 256, gap = 32, align_items = Center
+    // 2. Art + Metadata block
+    let art_size = if is_exact_43 {
+        256.0
+    } else if is_portrait {
+        (screen_w * 0.54).clamp(240.0, 420.0).round()
+    } else {
+        (256.0 + (screen_w - SCREEN_W).max(0.0) * 0.095)
+            .clamp(256.0, 304.0)
+            .round()
+    };
+
     let art_node = tree
         .new_leaf(Style {
             size: Size {
-                width: px(256.0),
-                height: px(256.0),
+                width: px(art_size),
+                height: px(art_size),
             },
             flex_shrink: 0.0,
             ..Default::default()
@@ -415,10 +521,10 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 size: Size {
-                    width: auto(),
+                    width: if is_portrait { pct(1.0) } else { auto() },
                     height: px(202.0),
                 },
-                flex_grow: 1.0,
+                flex_grow: if is_portrait { 0.0 } else { 1.0 },
                 flex_shrink: 1.0,
                 ..Default::default()
             },
@@ -426,28 +532,55 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
         )
         .unwrap();
 
-    let art_meta_row = tree
-        .new_with_children(
+    let art_gap = if is_exact_43 {
+        32.0
+    } else {
+        (32.0 + (screen_w - SCREEN_W).max(0.0) * 0.04).clamp(32.0, 48.0).round()
+    };
+
+    let art_meta_row = if is_portrait {
+        tree.new_with_children(
             Style {
                 display: Display::Flex,
-                flex_direction: FlexDirection::Row,
+                flex_direction: FlexDirection::Column,
                 align_items: Some(AlignItems::Center),
                 gap: Size {
-                    width: px(32.0),
-                    height: px(0.0),
+                    width: px(0.0),
+                    height: px(36.0),
                 },
                 size: Size {
                     width: pct(1.0),
-                    height: px(256.0),
+                    height: auto(),
                 },
                 flex_shrink: 0.0,
                 ..Default::default()
             },
             &[art_node, meta_col],
         )
-        .unwrap();
+        .unwrap()
+    } else {
+        tree.new_with_children(
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: Some(AlignItems::Center),
+                gap: Size {
+                    width: px(art_gap),
+                    height: px(0.0),
+                },
+                size: Size {
+                    width: pct(1.0),
+                    height: px(art_size),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            },
+            &[art_node, meta_col],
+        )
+        .unwrap()
+    };
 
-    // 3. Seekbar [640]: 960 x 74, vertical gap = 10 -> track 960x24 + labels 960x40
+    // 3. Seekbar [640]: height = 74 -> track 24 + gap 10 + labels 40
     let seek_track = tree
         .new_leaf(Style {
             size: Size {
@@ -488,35 +621,58 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
         )
         .unwrap();
 
-    // Frame 3 [246]: padding_top = 32, vertical gap = 72
-    let content_frame = tree
-        .new_with_children(
-            Style {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                gap: Size {
-                    width: px(0.0),
-                    height: px(72.0),
-                },
-                padding: Rect {
-                    left: px(0.0),
-                    right: px(0.0),
-                    top: px(32.0),
-                    bottom: px(0.0),
-                },
-                size: Size {
-                    width: pct(1.0),
-                    height: auto(),
-                },
-                min_size: Size {
-                    width: auto(),
-                    height: px(0.0),
-                },
-                flex_grow: 1.0,
-                ..Default::default()
+    // At 1024x768, preserve exact 72px vertical gap; on dynamic sizes, distribute cleanly
+    let content_style = if is_exact_43 {
+        Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            gap: Size {
+                width: px(0.0),
+                height: px(72.0),
             },
-            &[subheader, art_meta_row, seekbar],
-        )
+            padding: Rect {
+                left: px(0.0),
+                right: px(0.0),
+                top: px(32.0),
+                bottom: px(0.0),
+            },
+            size: Size {
+                width: pct(1.0),
+                height: auto(),
+            },
+            min_size: Size {
+                width: auto(),
+                height: px(0.0),
+            },
+            flex_grow: 1.0,
+            ..Default::default()
+        }
+    } else {
+        Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            justify_content: Some(JustifyContent::SpaceBetween),
+            padding: Rect {
+                left: px(0.0),
+                right: px(0.0),
+                top: px(32.0),
+                bottom: px(24.0),
+            },
+            size: Size {
+                width: pct(1.0),
+                height: auto(),
+            },
+            min_size: Size {
+                width: auto(),
+                height: px(0.0),
+            },
+            flex_grow: 1.0,
+            ..Default::default()
+        }
+    };
+
+    let content_frame = tree
+        .new_with_children(content_style, &[subheader, art_meta_row, seekbar])
         .unwrap();
 
     let root = tree
@@ -525,12 +681,12 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 size: Size {
-                    width: px(SCREEN_W),
-                    height: px(SCREEN_H),
+                    width: px(screen_w),
+                    height: px(screen_h),
                 },
                 padding: Rect {
-                    left: px(32.0),
-                    right: px(32.0),
+                    left: px(mx),
+                    right: px(mx),
                     top: px(32.0),
                     bottom: px(32.0),
                 },
@@ -543,8 +699,8 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
     tree.compute_layout(
         root,
         Size {
-            width: AvailableSpace::Definite(SCREEN_W),
-            height: AvailableSpace::Definite(SCREEN_H),
+            width: AvailableSpace::Definite(screen_w),
+            height: AvailableSpace::Definite(screen_h),
         },
     )
     .unwrap();
@@ -579,6 +735,11 @@ pub fn compute_now_playing_layout() -> NowPlayingBoxes {
     }
 }
 
+/// Computes the canonical `1024x768` `Now Playing` screen layout (`[233]`).
+pub fn compute_now_playing_layout() -> NowPlayingBoxes {
+    compute_now_playing_layout_sized(SCREEN_W, SCREEN_H)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NowPlayingAltBoxes {
     pub art_box: LayoutBox,
@@ -586,28 +747,65 @@ pub struct NowPlayingAltBoxes {
     pub seekbar_labels: LayoutBox,
 }
 
-/// Computes `Now Playing (Alt)` layout (`[1805]`: `534x534` cover at `(245, 64)` + `Seekbar` at `(32, 670)`).
-pub fn compute_now_playing_alt_layout() -> NowPlayingAltBoxes {
+/// Computes responsive `Now Playing (Alt)` layout for `(screen_w, screen_h)`.
+pub fn compute_now_playing_alt_layout_sized(screen_w: f32, screen_h: f32) -> NowPlayingAltBoxes {
+    if (screen_w - SCREEN_W).abs() < 0.5 && (screen_h - SCREEN_H).abs() < 0.5 {
+        return NowPlayingAltBoxes {
+            art_box: LayoutBox {
+                x: 245.0,
+                y: 64.0,
+                w: 534.0,
+                h: 534.0,
+            },
+            seekbar_track: LayoutBox {
+                x: 32.0,
+                y: 670.0,
+                w: 960.0,
+                h: 24.0,
+            },
+            seekbar_labels: LayoutBox {
+                x: 32.0,
+                y: 704.0,
+                w: 960.0,
+                h: 40.0,
+            },
+        };
+    }
+
+    let mx = horizontal_margin(screen_w);
+    let inner_w = (screen_w - mx * 2.0).max(200.0);
+    let seek_track_y = (screen_h - 98.0).max(280.0);
+    let seek_labels_y = seek_track_y + 34.0;
+    let avail_art_h = (seek_track_y - 96.0).max(200.0);
+    let art_size = avail_art_h.min(inner_w).clamp(200.0, 680.0).round();
+    let art_x = ((screen_w - art_size) * 0.5).round();
+    let art_y = ((seek_track_y - art_size) * 0.5).max(32.0).round();
+
     NowPlayingAltBoxes {
         art_box: LayoutBox {
-            x: 245.0,
-            y: 64.0,
-            w: 534.0,
-            h: 534.0,
+            x: art_x,
+            y: art_y,
+            w: art_size,
+            h: art_size,
         },
         seekbar_track: LayoutBox {
-            x: 32.0,
-            y: 670.0,
-            w: 960.0,
+            x: mx,
+            y: seek_track_y,
+            w: inner_w,
             h: 24.0,
         },
         seekbar_labels: LayoutBox {
-            x: 32.0,
-            y: 704.0,
-            w: 960.0,
+            x: mx,
+            y: seek_labels_y,
+            w: inner_w,
             h: 40.0,
         },
     }
+}
+
+/// Computes `Now Playing (Alt)` layout (`[1805]`: `534x534` cover at `(245, 64)` + `Seekbar` at `(32, 670)`).
+pub fn compute_now_playing_alt_layout() -> NowPlayingAltBoxes {
+    compute_now_playing_alt_layout_sized(SCREEN_W, SCREEN_H)
 }
 
 #[cfg(test)]
@@ -627,11 +825,10 @@ mod tests {
             (l.rows[0].x, l.rows[0].y, l.rows[0].w, l.rows[0].h),
             (32.0, 144.0, 928.0, 60.0)
         );
-        assert_eq!(l.rows[7].y, 144.0 + 7.0 * 76.0); // 676.0 -> ends at 736.0
+        assert_eq!(l.rows[7].y, 144.0 + 7.0 * 76.0);
         let sb = l.scrollbar.unwrap();
         assert_eq!((sb.x, sb.y, sb.w, sb.h), (976.0, 144.0, 16.0, 592.0));
 
-        // Without scrollbar (total_items <= 8): MenuItems stretch to full 960px width
         let l_no_sb = compute_list_layout(8, false);
         assert!(l_no_sb.scrollbar.is_none());
         assert_eq!(l_no_sb.list_column.w, 960.0);
@@ -684,5 +881,30 @@ mod tests {
             ),
             (32.0, 584.0, 960.0, 24.0)
         );
+    }
+
+    #[test]
+    fn verify_responsive_metrics_across_screen_shapes() {
+        // 16:9 Retroid Pocket 6 (1920x1080)
+        let rp6 = LogicalMetrics::from_physical(1920, 1080);
+        assert_eq!(rp6.screen_h, 768.0);
+        assert_eq!(rp6.screen_w, 1365.0);
+        assert_eq!(rp6.visible_rows, 8);
+        let l169 = compute_list_layout_sized(rp6.screen_w, rp6.screen_h, 8, rp6.visible_rows, true);
+        assert!(l169.rows[0].w > 1200.0);
+
+        // 1:1 Square Handheld (720x720)
+        let sq = LogicalMetrics::from_physical(720, 720);
+        assert_eq!(sq.screen_w, 920.0);
+        assert_eq!(sq.screen_h, 920.0);
+        assert!(sq.visible_rows >= 9);
+
+        // 9:16 Portrait (1080x1920)
+        let port = LogicalMetrics::from_physical(1080, 1920);
+        assert_eq!(port.screen_w, 920.0);
+        assert!(port.screen_h > 1500.0);
+        assert!(port.visible_rows >= 16);
+        let np_port = compute_now_playing_layout_sized(port.screen_w, port.screen_h);
+        assert!(np_port.meta_col.y > np_port.art_box.y + np_port.art_box.h);
     }
 }

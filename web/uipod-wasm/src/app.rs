@@ -253,7 +253,7 @@ impl UIPodApp {
             tracks,
             current_track: 0,
             play_mode: PlayMode::Pause,
-            pos_ms: 42_000,
+            pos_ms: 0,
             dur_ms,
             theme: THEME_PRESETS[0].colors,
             theme_idx: Some(0),
@@ -2235,9 +2235,9 @@ impl UIPodApp {
 
             Screen::Playlists { sel } => {
                 let items = vec![
-                    ("Demo Mix".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{}", self.tracks.len()))),
-                    ("Late Night Analog".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value("3".into())),
-                    (self.tr("Favourites", "Обране").to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value("5".into())),
+                    ("Y2K System Mix".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{}", self.tracks.len()))),
+                    ("Liquid Millennium".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value("2".into())),
+                    (self.tr("Favourites", "Обране").to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{}", self.tracks.len()))),
                 ];
                 self.render_list(ui, self.tr("Playlists", "Плейлисти"), &items, sel);
             }

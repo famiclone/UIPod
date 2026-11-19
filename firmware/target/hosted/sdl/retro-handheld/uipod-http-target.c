@@ -176,6 +176,10 @@ static bool wlan0_carrier_up(void)
 
 static bool ensure_network_ready(char *err_buf, size_t err_cap)
 {
+#ifdef __ANDROID__
+    (void)err_buf; (void)err_cap;
+    return true;
+#endif
     if (proc_has_any_ipv4_route())
         return true;
 
@@ -451,6 +455,29 @@ static int resolve_host_ipv4(const char *host, struct in_addr *out_ips, int max_
 
     if (lookup_etc_hosts(host, out_ips, &count, max_ips))
         return count;
+
+#ifdef __ANDROID__
+    {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(host, NULL, &hints, &res) == 0 && res)
+        {
+            for (struct addrinfo *p = res; p && count < max_ips; p = p->ai_next)
+            {
+                if (p->ai_family == AF_INET && p->ai_addr)
+                {
+                    const struct sockaddr_in *sin = (const struct sockaddr_in *)p->ai_addr;
+                    add_unique_ip(out_ips, &count, max_ips, sin->sin_addr);
+                }
+            }
+            freeaddrinfo(res);
+            if (count > 0)
+                return count;
+        }
+    }
+#endif
 
     struct in_addr servers[NAV_MAX_DNS_SERVERS];
     int n_servers = 0;

@@ -7,6 +7,7 @@ use std::ffi::{c_char, c_void, CStr};
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::layout::LogicalMetrics;
 use crate::renderer::{HEADER_BAND_ROWS, HEIGHT, WIDTH};
 use crate::viz_gl::{VizEngine, VIZ_PRESETS};
 use crate::{
@@ -738,6 +739,395 @@ pub unsafe extern "C" fn uipod_rs_ui_plugin_sync_fb(fb_bgr: *mut u8) -> bool {
     };
     let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
     wrap.0.plugin_sync_fbo_into_bgr(fb_slice);
+    true
+}
+
+/* ---- Native-HiDPI Responsive GPU Screen & Transition Entry Points ------ */
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_visible_rows_for_window(win_w: u32, win_h: u32) -> usize {
+    LogicalMetrics::from_physical(win_w, win_h).visible_rows
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_header_gpu(
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    header: *const UIPodRsHeader,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if header.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let h = &*header;
+    let title = cstr_lossy(h.title);
+    let legend = cstr_lossy(h.legend);
+    let hs = HeaderState {
+        title: &title,
+        legend: &legend,
+        play_mode: decode_play_mode(h.play_mode),
+        battery_percent: h.battery_percent,
+        is_charging: h.is_charging,
+        is_hold: h.is_hold,
+        is_downloading: h.is_downloading,
+        download_done: h.download_done,
+        download_total: h.download_total,
+        source_icon: decode_source_icon(h.source_icon),
+    };
+
+    wrap.0.render_header_to_fbo_sized(
+        ThemeColors {
+            bg_rgb,
+            fg_rgb,
+            fg1_rgb,
+            fg2_rgb,
+        },
+        &hs,
+        win_w,
+        win_h,
+    );
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_list_gpu(
+    screen: *const UIPodRsListScreen,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if screen.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let sc = &*screen;
+    let title = cstr_lossy(sc.header.title);
+    let legend = cstr_lossy(sc.header.legend);
+
+    let raw_rows = if sc.rows.is_null() || sc.row_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(sc.rows, sc.row_count)
+    };
+
+    let labels: Vec<Cow<str>> = raw_rows.iter().map(|r| cstr_lossy(r.label)).collect();
+    let rvals: Vec<Cow<str>> = raw_rows.iter().map(|r| cstr_lossy(r.right_value)).collect();
+    let ftags: Vec<Cow<str>> = raw_rows.iter().map(|r| cstr_lossy(r.file_tag)).collect();
+
+    let mut rows = Vec::with_capacity(raw_rows.len());
+    for i in 0..raw_rows.len() {
+        let r = &raw_rows[i];
+        let right = match r.right_kind {
+            1 => RightAccessory::Chevron,
+            2 => RightAccessory::Toggle(false),
+            3 => RightAccessory::Toggle(true),
+            4 => RightAccessory::CycleValue(&rvals[i]),
+            5 => RightAccessory::Value(&rvals[i]),
+            _ => RightAccessory::None,
+        };
+        rows.push(ListRow {
+            label: &labels[i],
+            selected: r.selected,
+            file_icon: FileIconKind::from_tag(&ftags[i]),
+            right,
+        });
+    }
+
+    let state = ListScreenState {
+        theme: ThemeColors {
+            bg_rgb: sc.bg_rgb,
+            fg_rgb: sc.fg_rgb,
+            fg1_rgb: sc.fg1_rgb,
+            fg2_rgb: sc.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &title,
+            legend: &legend,
+            play_mode: decode_play_mode(sc.header.play_mode),
+            battery_percent: sc.header.battery_percent,
+            is_charging: sc.header.is_charging,
+            is_hold: sc.header.is_hold,
+            is_downloading: sc.header.is_downloading,
+            download_done: sc.header.download_done,
+            download_total: sc.header.download_total,
+            source_icon: decode_source_icon(sc.header.source_icon),
+        },
+        rows,
+        total_items: sc.total_items,
+        start_item: sc.start_item,
+        visible_items: sc.visible_items,
+    };
+
+    wrap.0.render_list_to_fbo_sized(&state, win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_now_playing_gpu(
+    np: *const UIPodRsNowPlaying,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if np.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let n = &*np;
+    let h_title = cstr_lossy(n.header.title);
+    let h_legend = cstr_lossy(n.header.legend);
+    let track_pos = cstr_lossy(n.track_pos_label);
+    let title = cstr_lossy(n.title);
+    let artist = cstr_lossy(n.artist);
+    let album = cstr_lossy(n.album);
+    let codec = cstr_lossy(n.codec_label);
+    let bitdepth = cstr_lossy(n.bitdepth_label);
+    let samplerate = cstr_lossy(n.samplerate_label);
+    let elapsed = cstr_lossy(n.elapsed_label);
+    let remaining = cstr_lossy(n.remaining_label);
+    let center_status = cstr_lossy(n.center_status_label);
+
+    let art_slice = if n.art_rgb24.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts(n.art_rgb24, 256 * 256 * 3))
+    };
+
+    let state = NowPlayingState {
+        theme: ThemeColors {
+            bg_rgb: n.bg_rgb,
+            fg_rgb: n.fg_rgb,
+            fg1_rgb: n.fg1_rgb,
+            fg2_rgb: n.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &h_title,
+            legend: &h_legend,
+            play_mode: decode_play_mode(n.header.play_mode),
+            battery_percent: n.header.battery_percent,
+            is_charging: n.header.is_charging,
+            is_hold: n.header.is_hold,
+            is_downloading: n.header.is_downloading,
+            download_done: n.header.download_done,
+            download_total: n.header.download_total,
+            source_icon: decode_source_icon(n.header.source_icon),
+        },
+        track_pos_label: &track_pos,
+        eq_enabled: n.eq_enabled,
+        title: &title,
+        artist: &artist,
+        album: &album,
+        codec_label: &codec,
+        bitdepth_label: &bitdepth,
+        samplerate_label: &samplerate,
+        progress: n.progress,
+        elapsed_label: &elapsed,
+        remaining_label: &remaining,
+        center_status_label: &center_status,
+        art_rgb24: art_slice,
+        mono_album_art: n.mono_album_art,
+        alt_layout: n.alt_layout,
+    };
+
+    wrap.0.render_now_playing_to_fbo_sized(&state, win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_keyboard_gpu(
+    kbd: *const UIPodRsKeyboard,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if kbd.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let k = &*kbd;
+    let text = cstr_lossy(k.text);
+    let total_keys: usize = k.row_counts.iter().sum();
+    let raw_keys = if k.keys.is_null() || total_keys == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(k.keys, total_keys)
+    };
+    let key_labels: Vec<Cow<str>> = raw_keys.iter().map(|rk| cstr_lossy(rk.label)).collect();
+
+    let mut rows: [Vec<KeyboardKey>; 5] = Default::default();
+    let mut offset = 0usize;
+    for r_idx in 0..5 {
+        let cnt = k.row_counts[r_idx];
+        let mut row_vec = Vec::with_capacity(cnt);
+        for i in 0..cnt {
+            if offset + i < raw_keys.len() {
+                let rk = &raw_keys[offset + i];
+                row_vec.push(KeyboardKey {
+                    label: &key_labels[offset + i],
+                    selected: rk.selected,
+                    is_modifier: rk.is_modifier,
+                    is_active_toggle: rk.is_active_toggle,
+                });
+            }
+        }
+        offset += cnt;
+        rows[r_idx] = row_vec;
+    }
+
+    let state = KeyboardState {
+        theme: ThemeColors {
+            bg_rgb: k.bg_rgb,
+            fg_rgb: k.fg_rgb,
+            fg1_rgb: k.fg1_rgb,
+            fg2_rgb: k.fg2_rgb,
+        },
+        text: &text,
+        rows,
+    };
+
+    wrap.0.render_keyboard_to_fbo_sized(&state, win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_snapshot_transition() -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0.snapshot_fbo_for_transition();
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_present_transition_gpu(
+    win_w: u32,
+    win_h: u32,
+    kind: u8,
+    progress: f32,
+    dir: i8,
+    pin_header: bool,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0
+        .present_fbo_transition_ex(win_w, win_h, kind, progress, dir, pin_header);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_present_fade_rgb_gpu(
+    win_w: u32,
+    win_h: u32,
+    fade: f32,
+    target_rgb: u32,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0.present_fbo_fade_rgb(win_w, win_h, fade, target_rgb);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_begin_ex(
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    clear_rgb: u32,
+    header: *const UIPodRsHeader,
+    win_w: u32,
+    win_h: u32,
+    responsive: bool,
+    out_logical_w: *mut f32,
+    out_logical_h: *mut f32,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let theme = ThemeColors {
+        bg_rgb,
+        fg_rgb,
+        fg1_rgb,
+        fg2_rgb,
+    };
+
+    let (lw, lh) = if header.is_null() {
+        wrap.0
+            .plugin_begin_ex(theme, clear_rgb, None, win_w, win_h, responsive)
+    } else {
+        let h = &*header;
+        let title = cstr_lossy(h.title);
+        let legend = cstr_lossy(h.legend);
+        let hs = HeaderState {
+            title: &title,
+            legend: &legend,
+            play_mode: decode_play_mode(h.play_mode),
+            battery_percent: h.battery_percent,
+            is_charging: h.is_charging,
+            is_hold: h.is_hold,
+            is_downloading: h.is_downloading,
+            download_done: h.download_done,
+            download_total: h.download_total,
+            source_icon: decode_source_icon(h.source_icon),
+        };
+        wrap.0
+            .plugin_begin_ex(theme, clear_rgb, Some(&hs), win_w, win_h, responsive)
+    };
+
+    if !out_logical_w.is_null() {
+        *out_logical_w = lw;
+    }
+    if !out_logical_h.is_null() {
+        *out_logical_h = lh;
+    }
     true
 }
 

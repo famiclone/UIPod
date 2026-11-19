@@ -32,6 +32,7 @@
 #include "scrollbar.h"
 #include "font.h"
 #include "misc.h" /* get_current_activity */
+#include "uipod_rs_ui.h"
 
 static long progress_next_tick;
 
@@ -256,6 +257,8 @@ static bool splash_internal(struct screen * screen, const char *fmt, va_list ap,
      * the text*/
 
     screen->scroll_stop();
+    if (screen->screen_type == SCREEN_MAIN)
+        uipod_gpu_prepare_cpu_fallback();
 
     width = maxw + 2*RECT_SPACING;
     height = maxh + 2*RECT_SPACING;

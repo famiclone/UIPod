@@ -58,6 +58,7 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_rs_ui.h"
+#include "window-sdl.h"
 
 extern char *realpath(const char *path, char *resolved);
 
@@ -1652,13 +1653,13 @@ void uipod_nowplaying_draw(void)
         np.mono_album_art      = global_settings.mono_album_art;
         np.alt_layout          = s_alt_layout;
 
-        struct viewport *prev_vp = lcd_set_viewport(NULL);
-        fb_data *fb_gpu = FBADDR(0, 0);
-        bool ok = uipod_rs_ui_render_now_playing(&np, (uint8_t *)fb_gpu);
-        lcd_set_viewport(prev_vp);
-
+        int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+        sdl_gl_get_drawable_size(&win_w, &win_h);
+        bool ok = uipod_rs_ui_render_now_playing_gpu(&np,
+                                                     (uint32_t)win_w,
+                                                     (uint32_t)win_h);
         if (ok)
-            lcd_update();
+            uipod_gpu_note_rendered_screen(!s_alt_layout);
     }
 }
 
