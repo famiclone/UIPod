@@ -528,6 +528,8 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
                 if (firstvolume) {
                     setvol();
                     firstvolume = false;
+                } else {
+                    uipod_gpu_notify_volume_changed();
                 }
             }
             return 0;
@@ -539,6 +541,7 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             if (global_status.volume != volume) {
                 global_status.volume = volume;
                 status_save(false);
+                uipod_gpu_notify_volume_changed();
             }
             return 0;
         }
@@ -729,6 +732,7 @@ void adjust_volume_ex(int steps, enum volume_adjust_mode mode)
     }
 
     setvol();
+    uipod_gpu_notify_volume_changed();
 }
 
 #ifdef HAVE_BACKLIGHT_BRIGHTNESS

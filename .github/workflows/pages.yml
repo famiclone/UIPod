@@ -4,6 +4,8 @@ on:
   push:
     branches: ['main']
     paths:
+      - 'VERSION'
+      - 'pak.json'
       - 'web/**'
       - 'crates/uipod-ui/**'
       - 'crates/uipod-plugin-sdk/**'
@@ -24,6 +26,7 @@ concurrency:
 
 jobs:
   build-pages:
+    name: Build Web Page & WASM Simulator
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,6 +40,11 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
 
+      - name: Cache Rust WASM build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'web/uipod-wasm -> target'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -46,11 +54,11 @@ jobs:
 
       - name: Build UIPod WASM & Vite site
         run: |
-          cd web/uipod-wasm
-          wasm-pack build --target web --no-opt --out-dir ../src/wasm-pkg
-          cd ..
-          npm ci
-          npm run build
+          export UIPOD_VERSION="$(tr -d '[:space:]' < VERSION)"
+          npm --prefix web ci
+          chmod +x ./web/build.sh
+          ./web/build.sh
+          touch web/dist/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -58,6 +66,7 @@ jobs:
           path: web/dist
 
   deploy:
+    name: Deploy to GitHub Pages
     needs: build-pages
     runs-on: ubuntu-latest
     environment:

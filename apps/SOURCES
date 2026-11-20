@@ -29,6 +29,7 @@ uipod_library.c
 uipod_library_browse.c
 uipod_navidrome.c
 uipod_jellyfin.c
+uipod_lastfm.c
 uipod_downloads.c
 uipod_plugins.c
 uipod_playlists.c

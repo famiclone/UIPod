@@ -49,6 +49,7 @@
 #include "uipod_library.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_lastfm.h"
 #include "uipod_downloads.h"
 #include "uipod_plugins.h"
 #include "uipod_page.h"
@@ -125,8 +126,24 @@ static int uipod_about_page(void)
 
 static int uipod_exit_app(void)
 {
+    uipod_lastfm_shutdown();
     uipod_downloads_shutdown();
     sys_poweroff();
+    return 0;
+}
+
+/* ---- Accounts (`Settings -> Accounts -> Last.fm`) --------------------- */
+
+MENUITEM_FUNCTION(tp_acc_lastfm, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_LASTFM), uipod_lastfm_menu_page,
+                  NULL, Icon_NOICON);
+MAKE_MENU(uipod_accounts_menu, ID2P(LANG_UIPOD_ACCOUNTS), NULL,
+          Icon_Submenu_Entered,
+          &tp_acc_lastfm);
+
+static int uipod_accounts_page(void)
+{
+    do_menu(&uipod_accounts_menu, NULL, NULL, false);
     return 0;
 }
 
@@ -176,6 +193,9 @@ MENUITEM_FUNCTION(tp_set_appearance, MENU_SHOW_CHEVRON,
 MENUITEM_FUNCTION(tp_set_sources, MENU_SHOW_CHEVRON,
                   ID2P(LANG_UIPOD_SOURCES), uipod_sources_page,
                   NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_set_accounts, MENU_SHOW_CHEVRON,
+                  ID2P(LANG_UIPOD_ACCOUNTS), uipod_accounts_page,
+                  NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_audio, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_LIBRARY),
                   uipod_audio_folders_page, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_set_viz, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_AUDIO_VISUALIZER),
@@ -188,7 +208,7 @@ MENUITEM_FUNCTION(tp_set_exit, 0, ID2P(LANG_UIPOD_EXIT),
                   uipod_exit_app, NULL, Icon_NOICON);
 MAKE_MENU(uipod_settings_menu, ID2P(LANG_SETTINGS), NULL, Icon_Submenu_Entered,
           &tp_set_appearance, &sound_settings, &tp_set_offline,
-          &tp_set_sources,
+          &tp_set_sources, &tp_set_accounts,
           &tp_set_audio, &tp_set_viz,
           &tp_set_power, &tp_set_about, &tp_set_exit);
 int uipod_settings_page(void)

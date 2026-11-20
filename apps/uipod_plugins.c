@@ -405,6 +405,7 @@ static void host_canvas_present(void)
                         int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
                         sdl_gl_make_current();
                         sdl_gl_get_drawable_size(&win_w, &win_h);
+                        uipod_rs_ui_set_volume_popup_clock((uint64_t)sdl_get_ms());
                         if (uipod_rs_ui_present_transition_gpu(
                                 (uint32_t)win_w,
                                 (uint32_t)win_h,
@@ -449,6 +450,7 @@ static void host_canvas_present(void)
 
     int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
     sdl_gl_get_drawable_size(&win_w, &win_h);
+    uipod_rs_ui_set_volume_popup_clock((uint64_t)sdl_get_ms());
     if (uipod_rs_ui_plugin_present_gpu((uint32_t)win_w, (uint32_t)win_h))
     {
         uipod_gpu_set_active(true);
@@ -771,6 +773,8 @@ static struct UIPodPluginInput host_poll_input(uint32_t timeout_ms)
     }
     else
     {
+        if (timeout_ms > 16u && uipod_gpu_is_volume_popup_active())
+            timeout_ms = 16u;
         long ticks = (long)((timeout_ms * (uint32_t)HZ + 999u) / 1000u);
         if (ticks < 1)
             ticks = 1;

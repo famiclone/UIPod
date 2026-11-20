@@ -14,7 +14,6 @@
 enum uipod_mainmenu_id
 {
     UIPOD_MM_BROWSE = 0,      /* Browse (first item) */
-    UIPOD_MM_MUSIC,           /* Files */
     UIPOD_MM_EXTRAS,          /* Extras */
     UIPOD_MM_ARTISTS,         /* Artists */
     UIPOD_MM_ALBUMS,          /* Albums */

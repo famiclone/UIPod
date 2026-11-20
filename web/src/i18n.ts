@@ -1,3 +1,8 @@
+declare const __UIPOD_VERSION__: string;
+
+const APP_VERSION = typeof __UIPOD_VERSION__ !== 'undefined' ? __UIPOD_VERSION__ : 'v0.5.0';
+const SAFE_VER = APP_VERSION.replace(/[^A-Za-z0-9._+-]/g, '-');
+
 export type Lang = 'en' | 'uk';
 
 export const STRINGS: Record<Lang, Record<string, string>> = {
@@ -63,12 +68,12 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     f_viz_title: '10 Bayer-Dithered Visualizers',
     f_viz_desc:
       'Two-pass ping-pong FBO feedback shaders driven by a 1024-pt FFT: Cassette Deck (spinning reels + 28-segment LED meter), centered Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate, Star Warp, and LCD Plasma.',
-    f_lib_title: 'Browse File Manager & Unified Library',
+    f_lib_title: 'Unified Library, Subtitles & Last.fm',
     f_lib_desc:
-      'Browse sits first on the Main Menu with last-folder memory and file management (Delete, Rename, Copy, Move, Info). Merges local SD/storage folders, Navidrome, and Jellyfin into one deduplicated SQLite library with offline downloads.',
-    f_dsp_title: 'AutoEQ, Texture Warp & Tape Mode',
+      'Browse file manager (Delete, Rename, Copy, Move, Info), deduplicated SQLite library across Local, Navidrome, and Jellyfin with offline downloads, video .srt subtitles + audio track switching, and Last.fm QR Sign-In with offline scrobble cache.',
+    f_dsp_title: 'Graphic EQ, Tape Mode & Stereo FX',
     f_dsp_desc:
-      'Built on Rockbox’s 32-bit DSP core with a 10-band parametric EQ, searchable offline AutoEQ database, Ableton Texture-style granular Speed stretching (1/16×–1.5×), and Walkman Tape Mode with Wow & Flutter, Tape Hiss, Crinkles, Saturation, HF Roll-Off, and motor FX.',
+      'Rockbox 32-bit DSP core with GPU 10-band Graphic EQ, offline AutoEQ database, granular Speed stretching (1/16×–1.5×), Walkman Tape Mode, and stereo Reverb, Ping-Pong Delay, Chorus, and Flanger.',
     f_plg_title: 'Native Rust Plugins (.uipod)',
     f_plg_desc:
       'Versioned C-ABI plugin runtime powering Music Quiz, Sound Racer (with .nsf / chiptune support & cached song maps), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.',
@@ -79,7 +84,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     inst_brick_2: 'Extract UIPod.pak to /mnt/SDCARD/Tools/tg5040/UIPod.pak.',
     inst_brick_3: 'Open Tools → UIPod. Plug in USB-C anytime for MTP file transfer without stopping playback.',
     inst_android_title: 'Android Handhelds (arm64-v8a)',
-    inst_android_1: 'Download UIPod-v0.5.0-android-arm64.apk from GitHub Releases (Android 8.0+ / API 26+).',
+    inst_android_1: `Download UIPod-${SAFE_VER}-android-arm64.apk from GitHub Releases (Android 8.0+ / API 26+).`,
     inst_android_2: 'Install the APK on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped device.',
     inst_android_3: 'Grant media storage access to scan local folders, or configure Navidrome / Jellyfin in Settings → Sources.',
     inst_btn_release: 'Download Release',
@@ -149,12 +154,12 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     f_viz_title: '10 Bayer-візуалізаторів на GLSL',
     f_viz_desc:
       'Двопрохідний ping-pong FBO рушій на 1024-точковому FFT: Касетна дека (бобіни + 28-сегментний LED-метр), Стерео VU-метр, Звуковий вихор, Осцилограф, Спектр-матриця, Кібер-горизонт, Рідкий метал, Хладні-резонанс, Зоряний стрибок та LCD Плазма.',
-    f_lib_title: 'Файловий менеджер і єдина бібліотека',
+    f_lib_title: 'Єдина бібліотека, субтитри й Last.fm',
     f_lib_desc:
-      'Огляд (Browse) — перший пункт Головного меню з пам’яттю останньої теки та операціями з файлами (Видалити, Перейменувати, Копіювати, Перемістити, Інфо). Об’єднує локальні теки, Navidrome і Jellyfin в єдиний SQLite-індекс з офлайн-завантаженням.',
-    f_dsp_title: 'AutoEQ, Texture Warp і Режим касети',
+      'Файловий менеджер (Видалити, Перейменувати, Копіювати, Перемістити, Інфо), єдиний SQLite-індекс для локальних тек, Navidrome і Jellyfin з офлайн-завантаженням, .srt субтитри й вибір аудіодоріжки у відео, та вхід у Last.fm за QR-кодом з офлайн-кешем скроблінгу.',
+    f_dsp_title: 'Графічний EQ, Касета й Стерео FX',
     f_dsp_desc:
-      'На базі 32-бітного DSP Rockbox: 10-смуговий параметричний EQ з офлайн-базою AutoEQ, гранулярне сповільнення Speed (від 1/16× до 1.5×) та емуляція касетної деки з детонацією, шумом стрічки, заломами, сатурацією, зрізом ВЧ і звуком мотора.',
+      'На базі 32-бітного DSP Rockbox: GPU 10-смуговий графічний EQ з офлайн-базою AutoEQ, гранулярне сповільнення Speed (1/16×–1.5×), емуляція касетної деки та стереоефекти Reverb, Ping-Pong Delay, Chorus і Flanger.',
     f_plg_title: 'Нативні Rust-плагіни (.uipod)',
     f_plg_desc:
       'Версіонований C-ABI рантайм для Music Quiz, Sound Racer (із підтримкою .nsf / чіптюну та кешем трас), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma та Text Viewer.',
@@ -165,7 +170,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     inst_brick_2: 'Розпакуйте UIPod.pak у /mnt/SDCARD/Tools/tg5040/UIPod.pak.',
     inst_brick_3: 'Запустіть Tools → UIPod. Підключення USB-C дає миттєвий MTP-доступ без зупинки музики.',
     inst_android_title: 'Android-консолі (arm64-v8a)',
-    inst_android_1: 'Завантажте UIPod-v0.5.0-android-arm64.apk із GitHub Releases (Android 8.0+ / API 26+).',
+    inst_android_1: `Завантажте UIPod-${SAFE_VER}-android-arm64.apk із GitHub Releases (Android 8.0+ / API 26+).`,
     inst_android_2: 'Встановіть APK на Retroid, Odin, Anbernic, Ayaneo або інший Android-пристрій із геймпадом.',
     inst_android_3: 'Надайте доступ до сховища для сканування локальної музики або налаштуйте Navidrome / Jellyfin у Налаштування → Джерела.',
     inst_btn_release: 'Завантажити реліз',

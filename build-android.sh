@@ -365,13 +365,21 @@ cp "$APK_WORK/dex/classes.dex" "$APK_WORK/classes.dex"
 
 "$BT/zipalign" -f -p 4 "$APK_WORK/unaligned.apk" "$APK_WORK/aligned.apk"
 
-KEYSTORE="$BUILD_DIR/uipod-debug.jks"
+KS_ALIAS="${UIPOD_KEY_ALIAS:-uipod}"
+KS_PASS="${UIPOD_KEYSTORE_PASS:-uipodandroid}"
+KEY_PASS="${UIPOD_KEY_PASS:-$KS_PASS}"
+if [ -n "${UIPOD_KEYSTORE_BASE64:-}" ]; then
+  KEYSTORE="$APK_WORK/release.jks"
+  printf '%s' "$UIPOD_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+else
+  KEYSTORE="${UIPOD_KEYSTORE_PATH:-$TC_DIR/uipod-debug.jks}"
+fi
 if [ ! -f "$KEYSTORE" ]; then
   keytool -genkeypair -v \
     -keystore "$KEYSTORE" \
-    -storepass uipodandroid \
-    -keypass uipodandroid \
-    -alias uipod \
+    -storepass "$KS_PASS" \
+    -keypass "$KEY_PASS" \
+    -alias "$KS_ALIAS" \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -dname 'CN=UIPod, OU=Handheld, O=famiclone, L=Kyiv, S=Kyiv, C=UA' >/dev/null 2>&1
 fi
@@ -379,9 +387,9 @@ fi
 OUT_APK="$ROOT/dist/UIPod-${SAFE_VER}-android-arm64.apk"
 "$BT/apksigner" sign \
   --ks "$KEYSTORE" \
-  --ks-key-alias uipod \
-  --ks-pass pass:uipodandroid \
-  --key-pass pass:uipodandroid \
+  --ks-key-alias "$KS_ALIAS" \
+  --ks-pass "pass:${KS_PASS}" \
+  --key-pass "pass:${KEY_PASS}" \
   --out "$OUT_APK" \
   "$APK_WORK/aligned.apk"
 

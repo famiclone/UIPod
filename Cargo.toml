@@ -4,6 +4,7 @@ members = [
     "crates/uipod-ui",
     "crates/uipod-navidrome",
     "crates/uipod-jellyfin",
+    "crates/uipod-lastfm",
     "crates/uipod-plugin-sdk",
     "crates/uipod-plugins",
     "crates/uipod-ffi",

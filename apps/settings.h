@@ -334,7 +334,7 @@ struct user_settings
 
     /* EQ */
     bool eq_enabled;            /* Enable equalizer */
-    unsigned int eq_precut;     /* dB */
+    int  eq_precut;             /* tenths of dB cut (+60 = -6.0 dB, -30 = +3.0 dB) */
     struct eq_band_setting eq_band_settings[EQ_NUM_BANDS]; /* for each band */
 
     /* Misc. swcodec */
@@ -532,6 +532,7 @@ struct user_settings
     bool mono_album_art;
     bool menu_click;
     int transition_style;
+    bool fx_enabled;
     int fx_speed;
     bool tape_mode;
     int tape_wow;
@@ -541,6 +542,27 @@ struct user_settings
     int tape_tone;
     bool tape_pause_fx;
     bool tape_ff_sound;
+    bool fx_reverb;
+    int fx_reverb_size;
+    int fx_reverb_damp;
+    int fx_reverb_predelay;
+    int fx_reverb_width;
+    int fx_reverb_mix;
+    bool fx_delay;
+    int fx_delay_time;
+    int fx_delay_feedback;
+    int fx_delay_tone;
+    bool fx_delay_pingpong;
+    int fx_delay_mix;
+    bool fx_chorus;
+    int fx_chorus_rate;
+    int fx_chorus_depth;
+    int fx_chorus_mix;
+    bool fx_flanger;
+    int fx_flanger_rate;
+    int fx_flanger_depth;
+    int fx_flanger_feedback;
+    int fx_flanger_mix;
 
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \
@@ -573,5 +595,7 @@ extern struct user_settings global_settings;
 extern struct system_status global_status;
 
 void uipod_tape_fx_apply(void);
+bool uipod_fx_is_active(void);
+void uipod_eq_apply(void);
 
 #endif /* __SETTINGS_H__ */

@@ -61,6 +61,7 @@
 #include "uipod_library.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_lastfm.h"
 #include "uipod_downloads.h"
 #include "uipod_plugins.h"
 #include "menus/exported_menus.h"
@@ -178,6 +179,7 @@ int main(void)
     uipod_navidrome_init();
     uipod_jellyfin_init();
     uipod_downloads_init();
+    uipod_lastfm_init();
     uipod_plugins_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */

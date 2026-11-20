@@ -40,7 +40,7 @@ struct UIPodRsHeader
     bool        is_charging;
     bool        is_hold;
     bool        is_downloading;
-    uint8_t     source_icon;     /* enum uipod_rs_source_icon */
+    uint8_t     source_icon;     /* bits 0..6: enum uipod_rs_source_icon; 0x80: is_fx */
     uint32_t    download_done;
     uint32_t    download_total;
 };
@@ -111,6 +111,20 @@ struct UIPodRsKeyboard
     const struct UIPodRsKeyboardKey *keys;
 };
 
+struct UIPodRsGraphicEq
+{
+    uint32_t             bg_rgb;
+    uint32_t             fg_rgb;
+    uint32_t             fg1_rgb;
+    uint32_t             fg2_rgb;
+    struct UIPodRsHeader header;
+    int16_t              preamp_tenths_db;
+    int16_t              band_gains_tenths_db[10];
+    size_t               selected_col;
+    bool                 adjusting;
+    bool                 bypassed;
+};
+
 /* Raw Rust staticlib (`libuipod_ffi.a`) entry points */
 bool uipod_rs_ui_init(uipod_rs_gl_get_proc_fn get_proc,
                       const char *cjk_font_path);
@@ -166,6 +180,11 @@ bool   uipod_rs_ui_render_now_playing_gpu(const struct UIPodRsNowPlaying *np,
 bool   uipod_rs_ui_render_keyboard_gpu(const struct UIPodRsKeyboard *kbd,
                                        uint32_t win_w,
                                        uint32_t win_h);
+bool   uipod_rs_ui_render_graphic_eq(const struct UIPodRsGraphicEq *eq,
+                                     uint8_t *fb_bgr);
+bool   uipod_rs_ui_render_graphic_eq_gpu(const struct UIPodRsGraphicEq *eq,
+                                         uint32_t win_w,
+                                         uint32_t win_h);
 bool   uipod_rs_ui_snapshot_transition(void);
 bool   uipod_rs_ui_present_transition_gpu(uint32_t win_w,
                                           uint32_t win_h,
@@ -177,6 +196,16 @@ bool   uipod_rs_ui_present_fade_rgb_gpu(uint32_t win_w,
                                         uint32_t win_h,
                                         float fade,
                                         uint32_t target_rgb);
+void   uipod_rs_ui_trigger_volume_popup(float level_norm, uint64_t now_ms);
+void   uipod_rs_ui_set_volume_popup_clock(uint64_t now_ms);
+bool   uipod_rs_ui_is_volume_popup_animating(uint64_t now_ms);
+bool   uipod_rs_ui_render_volume_popup_over_screen(uint32_t win_w,
+                                                   uint32_t win_h,
+                                                   uint32_t bg_rgb,
+                                                   uint32_t fg_rgb,
+                                                   uint32_t fg1_rgb,
+                                                   uint32_t fg2_rgb,
+                                                   uint64_t now_ms);
 void  uipod_rs_ui_plugin_fill_rect(float x, float y, float w, float h,
                                    float radius, uint32_t rgb);
 void  uipod_rs_ui_plugin_stroke_rect(float x, float y, float w, float h,
@@ -255,6 +284,15 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list);
 bool uipod_gpu_render_keyboard(const char *text,
                                const size_t row_counts[5],
                                const struct UIPodRsKeyboardKey *keys);
+bool uipod_gpu_render_graphic_eq(const char *header_title,
+                                 int16_t preamp_tenths_db,
+                                 const int16_t band_gains_tenths_db[10],
+                                 size_t selected_col,
+                                 bool adjusting,
+                                 bool bypassed);
+void uipod_gpu_notify_volume_changed(void);
+bool uipod_gpu_is_volume_popup_active(void);
+bool uipod_gpu_tick_volume_popup(void);
 
 #ifdef __cplusplus
 }

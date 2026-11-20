@@ -1573,62 +1573,47 @@ void uipod_nowplaying_draw(void)
             }
         }
 
-        bool show_vol = global_status.last_volume_change &&
-                        TIME_BEFORE(current_tick,
-                                    global_status.last_volume_change + HZ * 6 / 5);
-
         float bar_ratio = 0.0f;
-        char el_str[24]     = "";
-        char rem_str[24]    = "";
-        char vol_str[32]    = "";
+        char el_str[24]  = "";
+        char rem_str[24] = "";
 
-        if (show_vol)
+        long pos_ms = 0, len_ms = 0;
+        if (id3 && id3->length > 0)
         {
-            int steps = get_normalized_volume_steps();
-            int notch = get_normalized_volume();
-            bar_ratio = (steps > 0) ? ((float)notch / (float)steps) : 0.0f;
-            snprintf(vol_str, sizeof(vol_str), "Volume %d/%d", notch, steps);
-        }
-        else
-        {
-            long pos_ms = 0, len_ms = 0;
-            if (id3 && id3->length > 0)
+            pos_ms = (long)id3->elapsed + (state ? state->ff_rewind_count : 0);
+            len_ms = (long)id3->length;
+
+            if (id3->cuesheet && id3->cuesheet->track_count > 1)
             {
-                pos_ms = (long)id3->elapsed + (state ? state->ff_rewind_count : 0);
-                len_ms = (long)id3->length;
-
-                if (id3->cuesheet && id3->cuesheet->track_count > 1)
+                struct cuesheet *cue = id3->cuesheet;
+                int idx = cue_find_current_track(cue,
+                              pos_ms > 0 ? (unsigned long)pos_ms : 0);
+                if (idx >= 0 && idx < cue->track_count)
                 {
-                    struct cuesheet *cue = id3->cuesheet;
-                    int idx = cue_find_current_track(cue,
-                                  pos_ms > 0 ? (unsigned long)pos_ms : 0);
-                    if (idx >= 0 && idx < cue->track_count)
+                    long ch_start = (long)cue->tracks[idx].offset;
+                    long ch_end = (idx + 1 < cue->track_count)
+                                ? (long)cue->tracks[idx + 1].offset
+                                : len_ms;
+                    if (ch_end > ch_start)
                     {
-                        long ch_start = (long)cue->tracks[idx].offset;
-                        long ch_end = (idx + 1 < cue->track_count)
-                                    ? (long)cue->tracks[idx + 1].offset
-                                    : len_ms;
-                        if (ch_end > ch_start)
-                        {
-                            pos_ms -= ch_start;
-                            len_ms = ch_end - ch_start;
-                        }
+                        pos_ms -= ch_start;
+                        len_ms = ch_end - ch_start;
                     }
                 }
-
-                if (pos_ms < 0) pos_ms = 0;
-                if (pos_ms > len_ms) pos_ms = len_ms;
             }
 
-            bar_ratio = (len_ms > 0) ? ((float)pos_ms / (float)len_ms) : 0.0f;
-            long el_sec  = pos_ms / 1000;
-            long tot_sec = len_ms / 1000;
-            long rem_sec = tot_sec - el_sec;
-            if (rem_sec < 0) rem_sec = 0;
-
-            format_mmss(el_sec, false, el_str, sizeof(el_str));
-            format_mmss(rem_sec, true, rem_str, sizeof(rem_str));
+            if (pos_ms < 0) pos_ms = 0;
+            if (pos_ms > len_ms) pos_ms = len_ms;
         }
+
+        bar_ratio = (len_ms > 0) ? ((float)pos_ms / (float)len_ms) : 0.0f;
+        long el_sec  = pos_ms / 1000;
+        long tot_sec = len_ms / 1000;
+        long rem_sec = tot_sec - el_sec;
+        if (rem_sec < 0) rem_sec = 0;
+
+        format_mmss(el_sec, false, el_str, sizeof(el_str));
+        format_mmss(rem_sec, true, rem_str, sizeof(rem_str));
 
         struct UIPodRsNowPlaying np;
         memset(&np, 0, sizeof(np));
@@ -1648,7 +1633,7 @@ void uipod_nowplaying_draw(void)
         np.progress            = bar_ratio;
         np.elapsed_label       = el_str;
         np.remaining_label     = rem_str;
-        np.center_status_label = vol_str;
+        np.center_status_label = "";
         np.art_rgb24           = s_has_art ? s_art_rgb : NULL;
         np.mono_album_art      = global_settings.mono_album_art;
         np.alt_layout          = s_alt_layout;

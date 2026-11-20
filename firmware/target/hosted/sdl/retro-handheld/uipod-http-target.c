@@ -673,12 +673,28 @@ static int conn_open(struct nav_conn *c, bool is_https, const char *host, uint16
     else
     {
         bool have_ca = false;
+        const char *home_env = getenv("HOME");
+        if (home_env && home_env[0])
+        {
+            char home_ca[512];
+            snprintf(home_ca, sizeof(home_ca),
+                     "%s/.config/rockbox.org/autoeq/ca-bundle.crt", home_env);
+            if (SSL_CTX_load_verify_locations(c->ssl_ctx, home_ca, NULL) == 1)
+                have_ca = true;
+            if (!have_ca)
+            {
+                snprintf(home_ca, sizeof(home_ca),
+                         "%s/uipod/autoeq/ca-bundle.crt", home_env);
+                if (SSL_CTX_load_verify_locations(c->ssl_ctx, home_ca, NULL) == 1)
+                    have_ca = true;
+            }
+        }
         static const char *const ca_paths[] = {
             ROCKBOX_DIR "/autoeq/ca-bundle.crt",
             "/etc/ssl/certs/ca-certificates.crt",
             "/etc/ssl/cert.pem",
         };
-        for (size_t i = 0; i < sizeof(ca_paths) / sizeof(ca_paths[0]); i++)
+        for (size_t i = 0; !have_ca && i < sizeof(ca_paths) / sizeof(ca_paths[0]); i++)
         {
             if (SSL_CTX_load_verify_locations(c->ssl_ctx, ca_paths[i], NULL) == 1)
             {

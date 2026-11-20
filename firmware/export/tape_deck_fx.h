@@ -22,6 +22,9 @@
 
 struct tape_deck_params
 {
+    bool master_enabled; /* Global Effects master switch (context menu & Settings) */
+
+    /* Analog Cassette Tape Mode */
     bool enabled;
     int  wow_pct;      /* 0..100: Wow & Flutter ("Плавання швидкості") */
     int  hiss_pct;     /* 0..100: Analog Tape Hiss ("Шум стрічки") */
@@ -30,10 +33,48 @@ struct tape_deck_params
     int  tone_pct;     /* 0..100: HF Roll-Off ("Зріз ВЧ") */
     bool pause_fx;     /* Capstan spin-down on Pause & spin-up on Resume */
     bool ff_sound;     /* Electro-mechanical motor & spool whir on FF/Rewind */
+
+    /* Stereo Chorus */
+    bool chorus_on;
+    int  chorus_rate_pct;  /* 0..100 */
+    int  chorus_depth_pct; /* 0..100 */
+    int  chorus_mix_pct;   /* 0..100 */
+
+    /* Stereo Flanger */
+    bool flanger_on;
+    int  flanger_rate_pct;     /* 0..100 */
+    int  flanger_depth_pct;    /* 0..100 */
+    int  flanger_feedback_pct; /* -90..+90 */
+    int  flanger_mix_pct;      /* 0..100 */
+
+    /* Stereo / Ping-Pong Delay */
+    bool delay_on;
+    int  delay_time_ms;      /* 40..1000 ms */
+    int  delay_feedback_pct; /* 0..90 */
+    int  delay_tone_pct;     /* 0..100 */
+    bool delay_pingpong;
+    int  delay_mix_pct;      /* 0..100 */
+
+    /* True-Stereo Studio Reverb */
+    bool reverb_on;
+    int  reverb_size_pct;    /* 0..100 */
+    int  reverb_damp_pct;    /* 0..100 */
+    int  reverb_predelay_ms; /* 0..120 ms */
+    int  reverb_width_pct;   /* 0..100 */
+    int  reverb_mix_pct;     /* 0..100 */
 };
+
+#define TAPE_EQ_BANDS 10
 
 void tape_deck_fx_init(void);
 void tape_deck_fx_set_params(const struct tape_deck_params *p);
+void tape_deck_fx_set_eq(bool enabled,
+                         int precut_tenths,
+                         const int cutoff_hz[TAPE_EQ_BANDS],
+                         const int q_tenths[TAPE_EQ_BANDS],
+                         const int gain_tenths[TAPE_EQ_BANDS]);
+void tape_deck_fx_set_eq_bypass(bool bypass);
+int  tape_deck_fx_eval_eq_curve_tenths_db(double freq_hz);
 bool tape_deck_fx_is_enabled(void);
 bool tape_deck_fx_pause_fx_enabled(void);
 float tape_deck_fx_visual_speed(void);

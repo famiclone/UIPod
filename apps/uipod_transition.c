@@ -426,6 +426,7 @@ void uipod_transition_animate(enum uipod_transition_dir dir,
             int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
             sdl_gl_make_current();
             sdl_gl_get_drawable_size(&win_w, &win_h);
+            uipod_rs_ui_set_volume_popup_clock((uint64_t)sdl_get_ms());
             if (uipod_rs_ui_present_transition_gpu((uint32_t)win_w,
                                                    (uint32_t)win_h,
                                                    gpu_kind,

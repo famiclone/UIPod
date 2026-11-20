@@ -597,7 +597,23 @@ static void np_large_art_cycle(void *ctx, int dir)
 static const struct menu_value_cb np_large_art_value =
     { np_large_art_get, np_large_art_cycle, NULL };
 
+static const char *np_effects_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return uipod_toggle_str(global_settings.fx_enabled);
+}
+static void np_effects_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    global_settings.fx_enabled = !global_settings.fx_enabled;
+    uipod_tape_fx_apply();
+    settings_save();
+}
+static const struct menu_value_cb np_effects_value =
+    { np_effects_get, np_effects_cycle, NULL };
+
 MENUITEM_VALUE(np_pause, "", &np_pause_value, Icon_NOICON);
+MENUITEM_VALUE(np_effects, ID2P(LANG_UIPOD_EFFECTS), &np_effects_value, Icon_NOICON);
 MENUITEM_VALUE(np_sleeptimer, ID2P(LANG_SLEEP_TIMER), &np_sleep_value, Icon_NOICON);
 MENUITEM_VALUE(np_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
 MENUITEM_VALUE(np_large_art, ID2P(LANG_UIPOD_LARGE_ART), &np_large_art_value, Icon_NOICON);
@@ -611,7 +627,8 @@ MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_UIPOD_START_VISUALIZER), NP_START_VIZ, NU
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
-          &np_pause, &np_shuffle, &np_repeat, &np_sleeptimer, &np_mono_art, &np_large_art, &np_addpl, &np_viz);
+          &np_pause, &np_effects, &np_shuffle, &np_repeat, &np_sleeptimer,
+          &np_mono_art, &np_large_art, &np_addpl, &np_viz);
 
 static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                                                    int button)

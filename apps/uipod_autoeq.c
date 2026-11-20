@@ -249,9 +249,7 @@ bool uipod_autoeq_parse_parametric_eq(
             if (ok)
             {
                 have_preamp = true;
-                *out_precut = (preamp_tenths < 0)
-                            ? clamp_int(-preamp_tenths, 0, 240)
-                            : 0;
+                *out_precut = clamp_int(-preamp_tenths, -120, 240);
             }
             continue;
         }
@@ -362,6 +360,19 @@ bool uipod_autoeq_parse_parametric_eq(
 
     if (parsed_filters == 0 && !have_preamp)
         return false;
+
+    /* AutoEq FixedBandEQ.txt: 10 octave PK filters (31, 62, 125..16000 Hz) */
+    if (!have_ls && !have_hs && npk == EQ_NUM_BANDS)
+    {
+        qsort(pks, (size_t)npk, sizeof(pks[0]), cmp_pk_cutoff_asc);
+        for (int i = 0; i < EQ_NUM_BANDS; i++)
+        {
+            out_bands[i].cutoff = eq_defaults[i].cutoff;
+            out_bands[i].q      = (i == 0 || i == EQ_NUM_BANDS - 1) ? 7 : pks[i].q;
+            out_bands[i].gain   = pks[i].gain;
+        }
+        return true;
+    }
 
     if (have_ls)
     {
@@ -844,27 +855,38 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
     size_t peq_len = 0;
     bool fetched = false;
 
-    for (int step = 0; step < AUTOEQ_MIRROR_COUNT; step++)
-    {
-        int m = (s_preferred_mirror + step) % AUTOEQ_MIRROR_COUNT;
-        char uri[1024];
-        int n = snprintf(uri, sizeof(uri), "%s%s/%s%%20ParametricEQ.txt",
-                         s_mirrors[m].results_prefix, rel_enc, seg_enc);
-        if (n <= 0 || (size_t)n >= sizeof(uri))
-            continue;
+    /* Prefer AutoEq's 10-band ISO `FixedBandEQ.txt` (31..16000 Hz) so the
+     * Graphic Equalizer sliders match 1-to-1, falling back to `ParametricEQ.txt`. */
+    static const char *const eq_variants[2] = {
+        "FixedBandEQ.txt",
+        "ParametricEQ.txt",
+    };
 
-        bool allow_curl = (step == AUTOEQ_MIRROR_COUNT - 1);
-        peq_len = 0;
-        if (retrohh_https_get_ex(s_mirrors[m].host, uri, AUTOEQ_CA_PATH,
-                                 allow_curl, peq_txt, AUTOEQ_PEQ_MAX_BYTES,
-                                 &peq_len) && peq_len > 0)
+    for (int v = 0; v < 2 && !fetched; v++)
+    {
+        for (int step = 0; step < AUTOEQ_MIRROR_COUNT; step++)
         {
-            s_preferred_mirror = m;
-            fetched = true;
-            break;
+            int m = (s_preferred_mirror + step) % AUTOEQ_MIRROR_COUNT;
+            char uri[1024];
+            int n = snprintf(uri, sizeof(uri), "%s%s/%s%%20%s",
+                             s_mirrors[m].results_prefix, rel_enc, seg_enc,
+                             eq_variants[v]);
+            if (n <= 0 || (size_t)n >= sizeof(uri))
+                continue;
+
+            bool allow_curl = (step == AUTOEQ_MIRROR_COUNT - 1);
+            peq_len = 0;
+            if (retrohh_https_get_ex(s_mirrors[m].host, uri, AUTOEQ_CA_PATH,
+                                     allow_curl, peq_txt, AUTOEQ_PEQ_MAX_BYTES,
+                                     &peq_len) && peq_len > 0)
+            {
+                s_preferred_mirror = m;
+                fetched = true;
+                break;
+            }
+            if (retrohh_https_network_down())
+                break;
         }
-        if (retrohh_https_network_down())
-            break;
     }
 
     if (!fetched || peq_len == 0)

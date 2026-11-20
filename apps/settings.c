@@ -883,12 +883,8 @@ void settings_apply(bool read_disk)
                                    global_settings.crossfeed_hf_attenuation,
                                    global_settings.crossfeed_hf_cutoff);
 
-    /* Configure software equalizer, hardware eq is handled in audio_init() */
-    dsp_eq_enable(global_settings.eq_enabled);
-    dsp_set_eq_precut(global_settings.eq_precut);
-    for(int i = 0; i < EQ_NUM_BANDS; i++) {
-        dsp_set_eq_coefs(i, &global_settings.eq_band_settings[i]);
-    }
+    /* Configure zero-lag hardware-sink 10-band equalizer */
+    uipod_eq_apply();
 
     dsp_dither_enable(global_settings.dithering_enabled);
     dsp_surround_set_balance(global_settings.surround_balance);
@@ -898,7 +894,6 @@ void settings_apply(bool read_disk)
     dsp_afr_enable(global_settings.afr_enabled);
     dsp_pbe_precut(global_settings.pbe_precut);
     dsp_pbe_enable(global_settings.pbe);
-    dsp_set_texture_warp_speed(global_settings.fx_speed);
     uipod_tape_fx_apply();
     dsp_set_compressor(&global_settings.compressor_settings);
 

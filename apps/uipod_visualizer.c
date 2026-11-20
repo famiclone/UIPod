@@ -58,6 +58,7 @@
 #include "misc.h"
 #include "icon.h"
 #include "status.h"
+#include "system.h"
 #include "metadata.h"
 #include "tape_deck_fx.h"
 #include "root_menu.h"
@@ -376,6 +377,15 @@ static int viz_render_thread(void *param)
                                   fade,
                                   track_prog,
                                   transport_speed);
+
+        (void)uipod_rs_ui_render_volume_popup_over_screen(
+            (uint32_t)(win_w > 0 ? win_w : LCD_WIDTH),
+            (uint32_t)(win_h > 0 ? win_h : LCD_HEIGHT),
+            (uint32_t)(global_settings.bg_color  & 0xFFFFFF),
+            (uint32_t)(global_settings.fg_color  & 0xFFFFFF),
+            (uint32_t)(global_settings.fg1_color & 0xFFFFFF),
+            (uint32_t)(global_settings.fg2_color & 0xFFFFFF),
+            (uint64_t)sdl_get_ms());
 
         SDL_GL_SwapWindow(sdlWindow);
     }

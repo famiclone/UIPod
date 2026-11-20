@@ -28,6 +28,7 @@
 #include "settings.h"
 #include "status.h"
 #include "string-extra.h"
+#include "system.h"
 #include "uipod_downloads.h"
 #include "uipod_jellyfin.h"
 #include "uipod_navidrome.h"
@@ -43,6 +44,7 @@ static bool    s_capturing_transition = false;
 static bool    s_captured_transition_frame = false;
 static bool    s_prev_had_header = false;
 static bool    s_curr_had_header = false;
+static volatile bool s_vol_popup_was_animating = false;
 
 void uipod_gpu_set_header_source(uint8_t src_icon)
 {
@@ -106,8 +108,55 @@ void uipod_gpu_present_current_fbo(void)
     int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
     sdl_gl_make_current();
     sdl_gl_get_drawable_size(&win_w, &win_h);
+    uipod_rs_ui_set_volume_popup_clock((uint64_t)sdl_get_ms());
     if (uipod_rs_ui_plugin_present_gpu((uint32_t)win_w, (uint32_t)win_h))
         sdl_gl_swap_window();
+}
+
+void uipod_gpu_notify_volume_changed(void)
+{
+    int steps = get_normalized_volume_steps();
+    int notch = get_normalized_volume();
+    float norm = (steps > 0) ? ((float)notch / (float)steps) : 0.0f;
+    if (norm < 0.0f)
+        norm = 0.0f;
+    else if (norm > 1.0f)
+        norm = 1.0f;
+
+    uint64_t now_ms = (uint64_t)sdl_get_ms();
+    uipod_rs_ui_trigger_volume_popup(norm, now_ms);
+    s_vol_popup_was_animating = true;
+
+    if (!uipod_viz_active && sdl_gl_is_gpu_active() &&
+        !lcd_panel_is_dark() && !s_capturing_transition)
+    {
+        uipod_gpu_present_current_fbo();
+    }
+}
+
+bool uipod_gpu_is_volume_popup_active(void)
+{
+    if (!s_vol_popup_was_animating)
+        return false;
+    return uipod_rs_ui_is_volume_popup_animating((uint64_t)sdl_get_ms());
+}
+
+bool uipod_gpu_tick_volume_popup(void)
+{
+    if (!s_vol_popup_was_animating)
+        return false;
+
+    uint64_t now_ms = (uint64_t)sdl_get_ms();
+    bool anim = uipod_rs_ui_is_volume_popup_animating(now_ms);
+
+    if (!uipod_viz_active && sdl_gl_is_gpu_active() &&
+        !lcd_panel_is_dark() && !s_capturing_transition)
+    {
+        uipod_gpu_present_current_fbo();
+    }
+
+    s_vol_popup_was_animating = anim;
+    return anim;
 }
 
 static int s_last_rendered_w = 0;
@@ -289,6 +338,8 @@ void uipod_gpu_fill_header(struct UIPodRsHeader *out,
         else
             src_icon = UIPOD_SRC_ICON_MICROSD;
     }
+    if (uipod_fx_is_active())
+        src_icon |= 0x80;
     out->source_icon = src_icon;
 }
 
@@ -495,5 +546,42 @@ bool uipod_gpu_render_keyboard(const char *text,
     bool ok = uipod_rs_ui_render_keyboard_gpu(&kbd, (uint32_t)win_w, (uint32_t)win_h);
     if (ok)
         uipod_gpu_note_rendered_screen(false);
+    return ok;
+}
+
+bool uipod_gpu_render_graphic_eq(const char *header_title,
+                                 int16_t preamp_tenths_db,
+                                 const int16_t band_gains_tenths_db[10],
+                                 size_t selected_col,
+                                 bool adjusting,
+                                 bool bypassed)
+{
+    if (!band_gains_tenths_db)
+        return false;
+
+    if (!uipod_gpu_ui_ensure_ready())
+        return false;
+
+    screens[SCREEN_MAIN].scroll_stop();
+
+    struct UIPodRsGraphicEq geq;
+    memset(&geq, 0, sizeof(geq));
+    geq.bg_rgb  = (uint32_t)global_settings.bg_color;
+    geq.fg_rgb  = (uint32_t)global_settings.fg_color;
+    geq.fg1_rgb = (uint32_t)global_settings.fg1_color;
+    geq.fg2_rgb = (uint32_t)global_settings.fg2_color;
+    uipod_gpu_fill_header(&geq.header, header_title);
+    geq.preamp_tenths_db = preamp_tenths_db;
+    for (int i = 0; i < 10; i++)
+        geq.band_gains_tenths_db[i] = band_gains_tenths_db[i];
+    geq.selected_col = selected_col;
+    geq.adjusting    = adjusting;
+    geq.bypassed     = bypassed;
+
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    bool ok = uipod_rs_ui_render_graphic_eq_gpu(&geq, (uint32_t)win_w, (uint32_t)win_h);
+    if (ok)
+        uipod_gpu_note_rendered_screen(true);
     return ok;
 }

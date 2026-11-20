@@ -21,6 +21,7 @@
 #include "config.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include "eq_menu.h"
 #include "system.h"
@@ -29,6 +30,8 @@
 #include "list.h"
 #include "menu.h"
 #include "action.h"
+#include "button.h"
+#include "audio.h"
 #include "settings.h"
 #include "rbpaths.h"
 #include "screens.h"
@@ -38,54 +41,40 @@
 #include "misc.h"
 #include "sound.h"
 #include "dsp_proc_settings.h"
-#include "tree.h"
 #include "screen_access.h"
-#include "gui/scrollbar.h"
 #include "menu_common.h"
 #include "viewport.h"
 #include "exported_menus.h"
-#include "pcmbuf.h"
-#include "option_select.h"
 #include "string-extra.h"
+#include "tape_deck_fx.h"
 #include "uipod_autoeq.h"
+#include "uipod_page.h"
+#include "uipod_rs_ui.h"
+#include "uipod_ui.h"
 
-static void eq_apply(void);
+extern struct eq_band_setting eq_defaults[EQ_NUM_BANDS];
 
-/*
- * Utility functions
- */
-
-const char* eq_q_format(char* buffer, size_t buffer_size, int value, const char* unit)
+const char *eq_q_format(char *buffer, size_t buffer_size, int value, const char *unit)
 {
     snprintf(buffer, buffer_size, "%d.%d %s", value / EQ_USER_DIVISOR,
-         value % EQ_USER_DIVISOR, unit);
+             value % EQ_USER_DIVISOR, unit);
     return buffer;
 }
 
-const char* eq_precut_format(char* buffer, size_t buffer_size, int value, const char* unit)
+const char *eq_precut_format(char *buffer, size_t buffer_size, int value, const char *unit)
 {
-    snprintf(buffer, buffer_size, "%s%d.%d %s", value == 0 ? " " : "-",
-        value / EQ_USER_DIVISOR, value % EQ_USER_DIVISOR, unit);
+    int preamp = -value;
+    int av = abs(preamp);
+    const char *sign = (preamp > 0) ? "+" : ((preamp < 0) ? "-" : "");
+    snprintf(buffer, buffer_size, "%s%d.%d %s", sign,
+             av / EQ_USER_DIVISOR, av % EQ_USER_DIVISOR, unit);
     return buffer;
 }
 
 void eq_enabled_option_callback(bool enabled)
 {
     (void)enabled;
-    eq_apply();
-}
-
-/*
- * Settings functions
- */
-static void eq_apply(void)
-{
-    dsp_eq_enable(global_settings.eq_enabled);
-    dsp_set_eq_precut(global_settings.eq_precut);
-    /* Update all bands */
-    for(int i = 0; i < EQ_NUM_BANDS; i++) {
-        dsp_set_eq_coefs(i, &global_settings.eq_band_settings[i]);
-    }
+    uipod_eq_apply();
 }
 
 static int eq_setting_callback(int action,
@@ -99,282 +88,457 @@ static int eq_setting_callback(int action,
             action = lowlatency_callback(action, this_item, NULL);
             break;
         case ACTION_EXIT_MENUITEM:
-            eq_apply();
+            uipod_eq_apply();
             action = lowlatency_callback(action, this_item, NULL);
             break;
     }
-
     return action;
 }
 MENUITEM_SETTING(eq_enable, &global_settings.eq_enabled, eq_setting_callback);
-MENUITEM_SETTING(eq_precut, &global_settings.eq_precut, eq_setting_callback);
 
-static char* gainitem_get_name(int selected_item, void *data, char *buffer, size_t len)
-{
-    (void)data;
-    snprintf(buffer, len, str(LANG_EQUALIZER_GAIN_ITEM),
-            global_settings.eq_band_settings[selected_item].cutoff);
+/* ---- Graphic Equalizer Page (`ui.figcraft` #3215) ---------------------- */
 
-    return buffer;
-}
+#define GEQ_COLS            11
+#define GEQ_MIN_TENTHS    (-120)
+#define GEQ_MAX_TENTHS      120
+#define GEQ_STEP_TENTHS       5
+#define GEQ_HOLD_HOME_MS   650UL
 
-static const char* db_format(char* buffer, size_t buffer_size, int value,
-                      const char* unit)
-{
-    int v = abs(value);
-
-    snprintf(buffer, buffer_size, "%s%d.%d %s", value < 0 ? "-" : "",
-             v / 10, v % 10, unit);
-    return buffer;
-}
-
-static const struct int_setting gain_int_setting = {
-    .option_callback = NULL,
-    .unit = UNIT_DB,
-    .step = EQ_GAIN_STEP,
-    .min = EQ_GAIN_MIN,
-    .max = EQ_GAIN_MAX,
-    .formatter = db_format,
+static const int k_iso_band_hz[EQ_NUM_BANDS] = {
+    31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
 };
 
-static const struct int_setting q_int_setting = {
-    .option_callback = NULL,
-    .unit = UNIT_INT,
-    .step = EQ_Q_STEP,
-    .min = EQ_Q_MIN,
-    .max = EQ_Q_MAX,
-    .formatter = eq_q_format,
-};
+static int s_last_selected_col = 1; /* default to first frequency band (31Hz) */
 
-static const struct int_setting cutoff_int_setting = {
-    .option_callback = NULL,
-    .unit = UNIT_HERTZ,
-    .step = EQ_CUTOFF_STEP,
-    .min = EQ_CUTOFF_MIN,
-    .max = EQ_CUTOFF_MAX,
-    .formatter = NULL,
-};
-
-static int simplelist_action_callback(int action, struct gui_synclist *lists)
+static int clamp_tenths(int v)
 {
-    (void)lists;
-    if (action == ACTION_STD_OK)
-        return ACTION_STD_CANCEL;
-    return action;
+    if (v < GEQ_MIN_TENTHS)
+        return GEQ_MIN_TENTHS;
+    if (v > GEQ_MAX_TENTHS)
+        return GEQ_MAX_TENTHS;
+    return v;
 }
 
-static int eq_do_simple_menu(void * param)
+static int step_half_db(int cur, int dir)
 {
-    (void)param;
-    struct simplelist_info info;
-    struct settings_list setting;
-    char title[MAX_PATH];
-
-    simplelist_info_init(&info, str(LANG_EQUALIZER_GAIN), EQ_NUM_BANDS, NULL);
-    info.get_name = (list_get_name*)gainitem_get_name;
-    info.action_callback = simplelist_action_callback;
-    info.selection = -1;
-    info.title_icon = Icon_Submenu;
-    setting.flags = F_BANFROMQS|F_INT_SETTING|F_T_INT|F_NO_WRAP;
-    setting.lang_id = LANG_GAIN;
-    setting.default_val.int_ = 0;
-    setting.int_setting = &gain_int_setting;
-
-    while (true)
+    int next;
+    if (dir > 0)
     {
-        simplelist_show_list(&info);
-        if (info.selection < 0)
-            break;
-        pcmbuf_set_low_latency(true);
-        setting.setting = &global_settings.eq_band_settings[info.selection].gain;
-        option_screen(&setting, NULL, false,
-                gainitem_get_name(info.selection, NULL, title, MAX_PATH));
-        eq_apply();
-        pcmbuf_set_low_latency(false);
-    }
-    return 0;
-}
-MENUITEM_FUNCTION(gain_menu, 0, ID2P(LANG_EQUALIZER_GAIN),
-	              eq_do_simple_menu, NULL, Icon_Submenu);
-
-static void selection_to_banditem(int selection, int expanded_band, int *band, int *item)
-{
-    int diff = selection - expanded_band;
-
-    if (expanded_band < 0 || diff < 0)
-    {
-        *item = 0;
-        *band = selection;
-    }
-    else if (diff < 4)
-    {
-        *item = selection - expanded_band;
-        *band = expanded_band;
+        int rem = ((cur % GEQ_STEP_TENTHS) + GEQ_STEP_TENTHS) % GEQ_STEP_TENTHS;
+        next = (rem == 0) ? (cur + GEQ_STEP_TENTHS) : (cur + (GEQ_STEP_TENTHS - rem));
     }
     else
     {
-        *item = 0;
-        *band = expanded_band + diff - 3;
+        int rem = ((cur % GEQ_STEP_TENTHS) + GEQ_STEP_TENTHS) % GEQ_STEP_TENTHS;
+        next = (rem == 0) ? (cur - GEQ_STEP_TENTHS) : (cur - rem);
     }
+    return clamp_tenths(next);
 }
 
-static char *advancedmenu_item_get_name(int selected_item, void *data, char *buffer, size_t len)
+static bool bands_are_iso_graphic(void)
 {
-    int band;
-    int item;
-    int lang = -1;
-
-    selection_to_banditem(selected_item, *(intptr_t*)data, &band, &item);
-
-    switch (item)
+    for (int i = 0; i < EQ_NUM_BANDS; i++)
     {
-    case 0: /* Band title */
-        if (band == 0)
-            return str(LANG_EQUALIZER_BAND_LOW_SHELF);
-        else if (band == EQ_NUM_BANDS - 1)
-            return str(LANG_EQUALIZER_BAND_HIGH_SHELF);
-        else
+        int fc = global_settings.eq_band_settings[i].cutoff;
+        int ref = k_iso_band_hz[i];
+        int lo = (ref * 72) / 100;
+        int hi = (ref * 138) / 100;
+        if (fc < lo || fc > hi)
+            return false;
+    }
+    return true;
+}
+
+struct graphic_eq_page
+{
+    struct uipod_page base;
+    int16_t           preamp_tenths;
+    int16_t           band_gains[EQ_NUM_BANDS];
+    int               selected_col;
+    bool              adjusting;
+    bool              bypassed;
+    bool              was_parametric;
+    bool              dirty;
+
+    /* Chord-aware repeat state for LEFT/RIGHT and A+UP/DOWN */
+    long              prev_held;
+    unsigned long     lr_next_ms;
+    unsigned long     ud_next_ms;
+    unsigned long     b_down_ms;
+    bool              b_was_down;
+    bool              b_home_fired;
+};
+
+static void geq_load_from_settings(struct graphic_eq_page *p)
+{
+    uipod_eq_apply();
+    p->preamp_tenths = (int16_t)clamp_tenths(-global_settings.eq_precut);
+    if (bands_are_iso_graphic())
+    {
+        p->was_parametric = false;
+        for (int i = 0; i < EQ_NUM_BANDS; i++)
+            p->band_gains[i] = (int16_t)clamp_tenths(global_settings.eq_band_settings[i].gain);
+    }
+    else
+    {
+        p->was_parametric = true;
+        for (int i = 0; i < EQ_NUM_BANDS; i++)
         {
-            snprintf(buffer, len, str(LANG_EQUALIZER_BAND_PEAK), band);
-            return buffer;
+            int sampled = tape_deck_fx_eval_eq_curve_tenths_db((double)k_iso_band_hz[i]);
+            p->band_gains[i] = (int16_t)clamp_tenths(sampled);
         }
-        break;
-    case 1: /* cutoff */
-        if (band == 0)
-            lang = LANG_EQUALIZER_BAND_CUTOFF;
-        else if (band == EQ_NUM_BANDS - 1)
-            lang = LANG_EQUALIZER_BAND_CUTOFF;
-        else
-            lang = LANG_EQUALIZER_BAND_CENTER;
-        break;
-    case 2: /* Q */
-        lang = LANG_EQUALIZER_BAND_Q;
-        break;
-    case 3: /* Gain */
-        lang = LANG_GAIN;
-        break;
     }
-
-    if(lang < 0)
-        buffer[0] = 0;
-    else {
-        buffer[0] = '\t';
-        strmemccpy(&buffer[1], str(lang), len - 1);
-    }
-
-    return buffer;
 }
 
-extern struct eq_band_setting eq_defaults[EQ_NUM_BANDS];
-
-static int eq_do_advanced_menu(void * param)
+static void geq_commit_change(struct graphic_eq_page *p)
 {
-    (void)param;
-    struct simplelist_info info;
-    struct settings_list setting;
-    char title[MAX_PATH];
-    int band, item;
-    intptr_t selected_band = -1;
-
-    simplelist_info_init(&info, str(LANG_EQUALIZER_ADVANCED),
-            EQ_NUM_BANDS, &selected_band);
-    info.get_name = (list_get_name*)advancedmenu_item_get_name;
-    info.action_callback = simplelist_action_callback;
-    info.selection = -1;
-    info.title_icon = Icon_EQ;
-    setting.flags = F_BANFROMQS|F_INT_SETTING|F_T_INT|F_NO_WRAP;
-
-    while (true)
+    if (p->was_parametric)
     {
-        simplelist_show_list(&info);
-        if (info.selection < 0)
-            break;
-        selection_to_banditem(info.selection, selected_band, &band, &item);
-        switch (item)
+        for (int i = 0; i < EQ_NUM_BANDS; i++)
         {
-            case 0: /* title, do nothing */
+            global_settings.eq_band_settings[i].cutoff = eq_defaults[i].cutoff;
+            global_settings.eq_band_settings[i].q      = eq_defaults[i].q;
+            global_settings.eq_band_settings[i].gain   = p->band_gains[i];
+        }
+        p->was_parametric = false;
+    }
+    else
+    {
+        for (int i = 0; i < EQ_NUM_BANDS; i++)
+            global_settings.eq_band_settings[i].gain = p->band_gains[i];
+    }
+    global_settings.eq_precut  = -(int)p->preamp_tenths;
+    global_settings.eq_enabled = true;
+    p->dirty = true;
+    uipod_eq_apply();
+}
+
+static void geq_draw_sw_fallback(const struct graphic_eq_page *p)
+{
+    static const char *const col_names[GEQ_COLS] = {
+        "Pre", "31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"
+    };
+    struct screen *s = &screens[SCREEN_MAIN];
+    struct viewport vp = {0};
+    viewport_set_defaults(&vp, SCREEN_MAIN);
+    s->set_viewport(&vp);
+    s->set_background(global_settings.bg_color);
+    s->clear_viewport();
+
+    const int margin = 32;
+    const int col_w = (vp.width - 2 * margin) / GEQ_COLS;
+    const int top_y = 24;
+    const int track_h = vp.height - 96;
+
+    for (int c = 0; c < GEQ_COLS; c++)
+    {
+        int cx = margin + c * col_w + col_w / 2;
+        int tx = cx - 12;
+        bool sel = (c == p->selected_col);
+        int tenths = (c == 0) ? p->preamp_tenths : p->band_gains[c - 1];
+        int fill_h = ((tenths + 120) * (track_h - 8)) / 240;
+        if (fill_h < 0) fill_h = 0;
+        if (fill_h > track_h - 8) fill_h = track_h - 8;
+
+        s->set_foreground(sel ? global_settings.fg2_color : global_settings.fg1_color);
+        s->drawrect(tx, top_y, 24, track_h);
+        if (fill_h > 0)
+        {
+            s->set_foreground(p->bypassed ? global_settings.fg1_color
+                                          : (sel ? global_settings.fg_color : global_settings.fg2_color));
+            s->fillrect(tx + 4, top_y + track_h - 4 - fill_h, 16, fill_h);
+        }
+        int lw = 0, lh = 0;
+        s->getstringsize((const unsigned char *)col_names[c], &lw, &lh);
+        s->set_foreground(sel ? global_settings.fg_color : global_settings.fg2_color);
+        s->putsxy(cx - lw / 2, top_y + track_h + 12, (const unsigned char *)col_names[c]);
+    }
+    s->update_viewport();
+    s->set_viewport(NULL);
+}
+
+static void geq_page_draw(struct uipod_page *self)
+{
+    struct graphic_eq_page *p = (struct graphic_eq_page *)self;
+    const char *title = p->bypassed ? str(LANG_UIPOD_BYPASS)
+                                    : str(LANG_UIPOD_GRAPHIC_EQ);
+    if (uipod_gpu_render_graphic_eq(title,
+                                    p->preamp_tenths,
+                                    p->band_gains,
+                                    (size_t)p->selected_col,
+                                    p->adjusting,
+                                    p->bypassed))
+    {
+        return;
+    }
+    geq_draw_sw_fallback(p);
+}
+
+static int geq_page_poll(struct uipod_page *self, int timeout)
+{
+    (void)timeout;
+    struct graphic_eq_page *p = (struct graphic_eq_page *)self;
+
+    int wait_ticks = (p->adjusting || p->bypassed || uipod_gpu_is_volume_popup_active())
+                         ? 1
+                         : (HZ / 25);
+    long ev = button_get_w_tmo(wait_ticks);
+    (void)uipod_gpu_tick_volume_popup();
+
+    if (ev != BUTTON_NONE && (ev & SYS_EVENT) != 0)
+        return (int)ev;
+
+    long held = button_status();
+    unsigned long now_ms = sdl_get_ms();
+    bool need_redraw = uipod_gpu_check_window_resized();
+
+#if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
+    if (ev != BUTTON_NONE && !(ev & BUTTON_REL))
+    {
+        long base_ev = ev & ~(BUTTON_REPEAT | BUTTON_REL);
+        if ((base_ev & (BUTTON_VOL_UP | BUTTON_VOL_DOWN)) != 0)
+        {
+#if defined(BUTTON_SELECT) && defined(HAVE_BACKLIGHT_BRIGHTNESS)
+            if ((held & BUTTON_SELECT) != 0)
+                adjust_brightness((base_ev & BUTTON_VOL_UP) ? 1 : -1);
+            else
+#endif
+                adjust_volume((base_ev & BUTTON_VOL_UP) ? 1 : -1);
+        }
+    }
+#endif
+
+#ifdef BUTTON_START
+    if (ev == BUTTON_START)
+    {
+        int st = audio_status();
+        if (st & AUDIO_STATUS_PLAY)
+        {
+            if (st & AUDIO_STATUS_PAUSE)
+                audio_resume();
+            else
+                audio_pause();
+            need_redraw = true;
+        }
+    }
+#endif
+
+#ifdef BUTTON_MENU
+    if (ev != BUTTON_NONE && !(ev & (BUTTON_REPEAT | BUTTON_REL)) &&
+        (ev & ~(BUTTON_REPEAT | BUTTON_REL)) == BUTTON_MENU)
+    {
+        uipod_menu_click();
+        return ACTION_STD_CANCEL;
+    }
+#endif
+
+    /* B tap -> back; Hold-B >= 650 ms -> Home */
+    bool b_down = (held & BUTTON_B) != 0;
+    if (b_down && !p->b_was_down)
+    {
+        p->b_was_down   = true;
+        p->b_down_ms    = now_ms;
+        p->b_home_fired = false;
+    }
+    else if (b_down && p->b_was_down && !p->b_home_fired)
+    {
+        if (now_ms - p->b_down_ms >= GEQ_HOLD_HOME_MS)
+        {
+            p->b_home_fired = true;
+            uipod_menu_click();
+            return ACTION_TP_HOME;
+        }
+    }
+    else if (!b_down && p->b_was_down)
+    {
+        bool was_home = p->b_home_fired;
+        p->b_was_down   = false;
+        p->b_home_fired = false;
+        if (!was_home)
+        {
+            uipod_menu_click();
+            return ACTION_STD_CANCEL;
+        }
+    }
+
+    /* Hold-X: instantaneous momentary EQ bypass */
+    bool want_bypass = (held & BUTTON_X) != 0;
+    if (want_bypass != p->bypassed)
+    {
+        p->bypassed = want_bypass;
+        tape_deck_fx_set_eq_bypass(want_bypass);
+        need_redraw = true;
+    }
+
+    /* Hold-A: live gain adjustment mode ("63Hz: +4.5" in Header) */
+    bool want_adj = (held & BUTTON_A) != 0;
+    if (want_adj != p->adjusting)
+    {
+        p->adjusting = want_adj;
+        p->ud_next_ms = 0;
+        need_redraw = true;
+    }
+
+    /* LEFT / RIGHT: select slider column 0..10 */
+    int lr_dir = ((held & BUTTON_RIGHT) != 0) ? 1 : (((held & BUTTON_LEFT) != 0) ? -1 : 0);
+    int prev_lr = ((p->prev_held & BUTTON_RIGHT) != 0) ? 1 : (((p->prev_held & BUTTON_LEFT) != 0) ? -1 : 0);
+    if (lr_dir != 0)
+    {
+        if (lr_dir != prev_lr)
+        {
+            p->selected_col = (p->selected_col + lr_dir + GEQ_COLS) % GEQ_COLS;
+            s_last_selected_col = p->selected_col;
+            p->lr_next_ms = now_ms + 280UL;
+            uipod_menu_click();
+            need_redraw = true;
+        }
+        else if (now_ms >= p->lr_next_ms)
+        {
+            p->selected_col = (p->selected_col + lr_dir + GEQ_COLS) % GEQ_COLS;
+            s_last_selected_col = p->selected_col;
+            p->lr_next_ms = now_ms + 105UL;
+            uipod_menu_click();
+            need_redraw = true;
+        }
+    }
+
+    /* While A is held, UP / DOWN adjust the selected slider in 0.5 dB steps */
+    if (p->adjusting)
+    {
+        int ud_dir = ((held & BUTTON_UP) != 0) ? 1 : (((held & BUTTON_DOWN) != 0) ? -1 : 0);
+        int prev_ud = ((p->prev_held & BUTTON_UP) != 0) ? 1 : (((p->prev_held & BUTTON_DOWN) != 0) ? -1 : 0);
+        bool step_now = false;
+        if (ud_dir != 0)
+        {
+            if (ud_dir != prev_ud)
             {
-                int extra;
-                if (selected_band == band)
-                {
-                    extra = 0;
-                    selected_band = -1;
-                }
-                else
-                {
-                    extra = 3;
-                    selected_band = band;
-                }
-                info.selection = band;
-                info.count = EQ_NUM_BANDS + extra;
-                continue;
+                step_now = true;
+                p->ud_next_ms = now_ms + 260UL;
             }
-            case 1: /* cutoff */
-                if (band == 0 || band == EQ_NUM_BANDS - 1)
-                    setting.lang_id = LANG_EQUALIZER_BAND_CUTOFF;
-                else
-                    setting.lang_id = LANG_EQUALIZER_BAND_CENTER;
-                setting.default_val.int_ = eq_defaults[band].cutoff;
-                setting.int_setting = &cutoff_int_setting;
-                setting.setting = &global_settings.eq_band_settings[band].cutoff;
-                break;
-            case 2: /* Q */
-                setting.lang_id = LANG_EQUALIZER_BAND_Q;
-                setting.default_val.int_ = eq_defaults[band].q;
-                setting.int_setting = &q_int_setting;
-                setting.setting = &global_settings.eq_band_settings[band].q;
-                break;
-            case 3: /* Gain */
-                setting.lang_id = LANG_GAIN;
-                setting.default_val.int_ = eq_defaults[band].gain;
-                setting.int_setting = &gain_int_setting;
-                setting.setting = &global_settings.eq_band_settings[band].gain;
-                break;
+            else if (now_ms >= p->ud_next_ms)
+            {
+                step_now = true;
+                p->ud_next_ms = now_ms + 75UL;
+            }
         }
-        pcmbuf_set_low_latency(true);
-        advancedmenu_item_get_name(info.selection, &selected_band, title, MAX_PATH);
-
-        option_screen(&setting, NULL, false, title[0] == '\t' ? &title[1] : title);
-        eq_apply();
-        pcmbuf_set_low_latency(false);
+        if (step_now)
+        {
+            if (p->selected_col == 0)
+            {
+                int cur = p->preamp_tenths;
+                int next = step_half_db(cur, ud_dir);
+                if (next != cur)
+                {
+                    p->preamp_tenths = (int16_t)next;
+                    geq_commit_change(p);
+                }
+            }
+            else
+            {
+                int b = p->selected_col - 1;
+                int cur = p->band_gains[b];
+                int next = step_half_db(cur, ud_dir);
+                if (next != cur)
+                {
+                    p->band_gains[b] = (int16_t)next;
+                    geq_commit_change(p);
+                }
+            }
+            uipod_menu_click();
+            need_redraw = true;
+        }
     }
-    return 0;
+
+    p->prev_held = held;
+
+    if (need_redraw)
+        geq_page_draw(self);
+
+    return ACTION_NONE;
 }
-MENUITEM_FUNCTION(advanced_menu, 0, ID2P(LANG_EQUALIZER_ADVANCED),
-                  eq_do_advanced_menu, NULL, Icon_EQ);
+
+static enum uipod_page_result geq_page_on_action(struct uipod_page *self, int action)
+{
+    (void)self;
+    if (action == ACTION_STD_CANCEL)
+        return UIPOD_PAGE_DONE;
+    return UIPOD_PAGE_STAY;
+}
+
+static const struct uipod_page_vtable geq_vtable = {
+    .legend    = NULL,
+    .draw      = geq_page_draw,
+    .poll      = geq_page_poll,
+    .on_action = geq_page_on_action,
+};
+
+static const int geq_allowed[] = { ACTION_STD_CANCEL, -1 };
+
+static int uipod_graphic_eq_page(void)
+{
+    struct graphic_eq_page p;
+    memset(&p, 0, sizeof(p));
+    p.base.vt                = &geq_vtable;
+    p.base.context           = CONTEXT_KEYBOARD;
+    p.base.allowed           = geq_allowed;
+    p.base.title             = str(LANG_UIPOD_GRAPHIC_EQ);
+    p.base.no_theme          = true;
+    p.base.no_header_refresh = true;
+    p.selected_col           = (s_last_selected_col >= 0 && s_last_selected_col < GEQ_COLS)
+                                   ? s_last_selected_col
+                                   : 1;
+
+    geq_load_from_settings(&p);
+    tape_deck_fx_set_eq_bypass(false);
+
+    uipod_page_run(&p.base);
+
+    tape_deck_fx_set_eq_bypass(false);
+    if (p.dirty)
+        settings_save();
+
+    return p.base.home ? GO_TO_ROOT : 0;
+}
 
 static int eq_save_preset(void)
 {
-    /* make sure that the eq is enabled for setting saving */
     bool enabled = global_settings.eq_enabled;
     global_settings.eq_enabled = true;
 
     bool result = settings_save_config(SETTINGS_SAVE_EQPRESET);
 
     global_settings.eq_enabled = enabled;
-
-    return (result) ? 1 : 0;
+    return result ? 1 : 0;
 }
 
 static void eq_reset_defaults(void)
 {
-    for (int i = 0; i < EQ_NUM_BANDS; i++) {
+    global_settings.eq_precut = 0;
+    for (int i = 0; i < EQ_NUM_BANDS; i++)
+    {
         global_settings.eq_band_settings[i].cutoff = eq_defaults[i].cutoff;
-        global_settings.eq_band_settings[i].q = eq_defaults[i].q;
-        global_settings.eq_band_settings[i].gain = eq_defaults[i].gain;
+        global_settings.eq_band_settings[i].q      = eq_defaults[i].q;
+        global_settings.eq_band_settings[i].gain   = eq_defaults[i].gain;
     }
-    eq_apply();
+    uipod_eq_apply();
+    settings_save();
 }
 
+MENUITEM_FUNCTION(eq_graphic, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_GRAPHIC_EQ),
+                  uipod_graphic_eq_page, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(eq_autoeq, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_AUTOEQ),
                   uipod_autoeq_page, lowlatency_callback, Icon_NOICON);
+MENUITEM_FUNCTION(eq_browse, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_BROWSE),
+                  uipod_eq_presets_page, lowlatency_callback, Icon_NOICON);
 MENUITEM_FUNCTION(eq_save, 0, ID2P(LANG_EQUALIZER_SAVE),
                   eq_save_preset, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(eq_reset, 0, ID2P(LANG_RESET_EQUALIZER),
                   eq_reset_defaults, NULL, Icon_NOICON);
-MENUITEM_FUNCTION(eq_browse, MENU_SHOW_CHEVRON, ID2P(LANG_EQUALIZER_BROWSE),
-                  uipod_eq_presets_page, lowlatency_callback, Icon_NOICON);
 
 MAKE_MENU(equalizer_menu, ID2P(LANG_EQUALIZER), NULL, Icon_EQ,
-        &eq_enable, &eq_autoeq, &eq_browse, &eq_precut,
-        &gain_menu, &advanced_menu, &eq_save, &eq_reset);
+          &eq_enable,
+          &eq_graphic,
+          &eq_autoeq,
+          &eq_browse,
+          &eq_save,
+          &eq_reset);

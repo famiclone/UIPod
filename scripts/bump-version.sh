@@ -114,12 +114,44 @@ if ver not in changelog or not str(changelog[ver]).strip() or str(changelog[ver]
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
     f.write("\n")
+
+import os
+web_pkg = os.path.join(root, "web", "package.json")
+if os.path.isfile(web_pkg):
+    with open(web_pkg, "r", encoding="utf-8") as wf:
+        wdata = json.load(wf)
+    wdata["version"] = ver.lstrip("v")
+    with open(web_pkg, "w", encoding="utf-8") as wf:
+        json.dump(wdata, wf, indent=2, ensure_ascii=False)
+        wf.write("\n")
+
+about_txt = os.path.join(root, "pak", "uipod", "about.txt")
+if os.path.isfile(about_txt):
+    with open(about_txt, "r", encoding="utf-8") as af:
+        atxt = af.read()
+    atxt_new = re.sub(r"(?m)^Version:\s*v?\S+", f"Version: {ver}", atxt, count=1)
+    if atxt_new != atxt:
+        with open(about_txt, "w", encoding="utf-8") as af:
+            af.write(atxt_new)
+
+readme_md = os.path.join(root, "README.md")
+if os.path.isfile(readme_md):
+    with open(readme_md, "r", encoding="utf-8") as rf:
+        rtxt = rf.read()
+    rtxt_new = re.sub(
+        r"UIPod-v\d+\.\d+\.\d+([A-Za-z0-9._+-]*)-(brick\.zip|android-arm64\.apk|web\.zip)",
+        rf"UIPod-{ver}-\2",
+        rtxt,
+    )
+    if rtxt_new != rtxt:
+        with open(readme_md, "w", encoding="utf-8") as rf:
+            rf.write(rtxt_new)
 PY
 
-echo ">> Updated VERSION and pak.json: $CUR -> $NEW_VER"
+echo ">> Updated VERSION, pak.json, web/package.json, pak/uipod/about.txt and README.md: $CUR -> $NEW_VER"
 
 if [ "$DO_TAG" -eq 1 ]; then
-  git -C "$ROOT" add VERSION pak.json
+  git -C "$ROOT" add VERSION pak.json web/package.json pak/uipod/about.txt README.md
   git -C "$ROOT" commit -m "chore(release): $NEW_VER"
   git -C "$ROOT" tag -a "$NEW_VER" -m "UIPod $NEW_VER"
   echo ">> Created commit and tag $NEW_VER (push with: git push origin main --follow-tags)"

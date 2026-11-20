@@ -370,6 +370,7 @@ name = "uipod-ffi"
 version = "0.1.0"
 dependencies = [
  "uipod-jellyfin",
+ "uipod-lastfm",
  "uipod-navidrome",
  "uipod-plugins",
  "uipod-ui",
@@ -377,6 +378,10 @@ dependencies = [
 
 [[package]]
 name = "uipod-jellyfin"
+version = "0.1.0"
+
+[[package]]
+name = "uipod-lastfm"
 version = "0.1.0"
 
 [[package]]

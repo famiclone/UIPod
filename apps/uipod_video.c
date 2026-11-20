@@ -36,9 +36,12 @@
 #include "splash.h"
 #include "viewport.h"
 #include "gui/scrollbar.h"
+#include "gui/list.h"
+#include "icon.h"
 #include "recorder/bmp.h"
 #include "video-target.h"
 #include "uipod_page.h"      /* uipod_home_pending */
+#include "uipod_transition.h"
 #include "uipod_rs_ui.h"
 #include "uipod_video.h"
 
@@ -90,6 +93,24 @@ extern void retrohh_cpu_release_dynamic(void);
 
 enum overlay_panel { PANEL_NONE, PANEL_PROGRESS, PANEL_VOLUME };
 
+#define SUB_STRIP_ROWS 112
+#define SUB_STRIP_TOP  (LCD_HEIGHT - SUB_STRIP_ROWS)
+#define MAX_SRT_CUES   2048
+
+struct srt_cue
+{
+    int  start_ms;
+    int  end_ms;
+    char line1[96];
+    char line2[96];
+};
+
+static struct srt_cue *s_srt_cues;
+static int s_srt_cue_count;
+static int s_active_audio_idx;
+static int s_active_sub_idx; /* -1 = Off, 0..sub_count-1 = active subtitle track */
+static char s_active_play_path[MAX_PATH];
+
 static struct retrohh_video_info info;
 static enum retrohh_video_aspect aspect;   /* kept between videos */
 static const struct uipod_video_stream_opts *s_stream_opts;
@@ -111,6 +132,7 @@ static struct
     int  last_volume;
     enum overlay_panel shown;
     int  shown_seconds, shown_volume;
+    int  shown_cue_idx;
     bool shown_aspect_label;
     enum retrohh_video_aspect shown_aspect;
     bool drawn_once;
@@ -334,12 +356,166 @@ static void draw_volume(struct screen *display)
     display->putsxy((BAR_W - w) / 2, 0, label);
 }
 
+static void srt_free(void)
+{
+    free(s_srt_cues);
+    s_srt_cues = NULL;
+    s_srt_cue_count = 0;
+}
+
+static int parse_srt_timestamp_ms(const char *s)
+{
+    int hh = 0, mm = 0, ss = 0, ms = 0;
+    if (sscanf(s, "%d:%d:%d%*[,.:]%d", &hh, &mm, &ss, &ms) != 4)
+        return -1;
+    return ((hh * 3600 + mm * 60 + ss) * 1000) + ms;
+}
+
+static void strip_srt_tags(char *s)
+{
+    char *dst = s;
+    bool in_tag = false;
+    for (const char *p = s; *p; p++)
+    {
+        if (*p == '<' || *p == '{')
+        {
+            in_tag = true;
+            continue;
+        }
+        if (*p == '>' || *p == '}')
+        {
+            in_tag = false;
+            continue;
+        }
+        if (!in_tag && *p != '\r')
+            *dst++ = *p;
+    }
+    *dst = '\0';
+}
+
+static bool srt_load_file(const char *srt_path)
+{
+    srt_free();
+    if (!srt_path || !srt_path[0])
+        return false;
+
+    int fd = open(srt_path, O_RDONLY);
+    if (fd < 0)
+        return false;
+
+    struct srt_cue *arr = calloc(MAX_SRT_CUES, sizeof(*arr));
+    if (!arr)
+    {
+        close(fd);
+        return false;
+    }
+
+    char line[256];
+    int count = 0;
+    while (count < MAX_SRT_CUES && read_line(fd, line, sizeof(line)) >= 0)
+    {
+        char *arrow = strstr(line, "-->");
+        if (!arrow)
+        {
+            if (line[0] == '\0')
+            {
+                /* Check EOF */
+                char ch;
+                if (read(fd, &ch, 1) <= 0)
+                    break;
+                lseek(fd, -1, SEEK_CUR);
+            }
+            continue;
+        }
+        int st = parse_srt_timestamp_ms(line);
+        int en = parse_srt_timestamp_ms(arrow + 3);
+        if (st < 0 || en <= st)
+            continue;
+
+        struct srt_cue *c = &arr[count];
+        c->start_ms = st;
+        c->end_ms = en;
+        c->line1[0] = '\0';
+        c->line2[0] = '\0';
+
+        int lno = 0;
+        while (read_line(fd, line, sizeof(line)) > 0)
+        {
+            strip_srt_tags(line);
+            if (!line[0])
+                continue;
+            if (lno == 0)
+                strlcpy(c->line1, line, sizeof(c->line1));
+            else if (lno == 1)
+                strlcpy(c->line2, line, sizeof(c->line2));
+            lno++;
+        }
+        if (c->line1[0])
+            count++;
+    }
+    close(fd);
+
+    if (count == 0)
+    {
+        free(arr);
+        return false;
+    }
+    s_srt_cues = arr;
+    s_srt_cue_count = count;
+    return true;
+}
+
+static int srt_find_cue(int pos_ms)
+{
+    if (!s_srt_cues || s_srt_cue_count <= 0)
+        return -1;
+    int lo = 0, hi = s_srt_cue_count - 1;
+    while (lo <= hi)
+    {
+        int mid = (lo + hi) / 2;
+        if (pos_ms < s_srt_cues[mid].start_ms)
+            hi = mid - 1;
+        else if (pos_ms > s_srt_cues[mid].end_ms)
+            lo = mid + 1;
+        else
+            return mid;
+    }
+    return -1;
+}
+
+static void draw_subtitle_cue(struct screen *display, const struct srt_cue *c)
+{
+    int w1 = 0, h1 = 0, w2 = 0, h2 = 0;
+    panel_viewport(display, 0, SUB_STRIP_TOP, LCD_WIDTH, SUB_STRIP_ROWS);
+    display->clear_viewport();
+
+    display->getstringsize((const unsigned char *)c->line1, &w1, &h1);
+    if (c->line2[0])
+    {
+        display->getstringsize((const unsigned char *)c->line2, &w2, &h2);
+        int tot = h1 + 6 + h2;
+        int y0 = (SUB_STRIP_ROWS - tot) / 2;
+        if (y0 < 4) y0 = 4;
+        display->putsxy((LCD_WIDTH - w1) / 2, y0, (const unsigned char *)c->line1);
+        display->putsxy((LCD_WIDTH - w2) / 2, y0 + h1 + 6, (const unsigned char *)c->line2);
+    }
+    else
+    {
+        int y0 = (SUB_STRIP_ROWS - h1) / 2;
+        if (y0 < 4) y0 = 4;
+        display->putsxy((LCD_WIDTH - w1) / 2, y0, (const unsigned char *)c->line1);
+    }
+    display->set_viewport(NULL);
+}
+
 /* Redraws only on a visible change: every present costs power. */
 static void overlay_update(void)
 {
     enum overlay_panel panel = PANEL_NONE;
-    int seconds = display_position() / 1000;
+    int pos_ms = display_position();
+    int seconds = pos_ms / 1000;
     bool aspect_label_on = TIME_BEFORE(current_tick, v.aspect_label_until);
+    int cue_idx = (s_active_sub_idx >= 0) ? srt_find_cue(pos_ms) : -1;
 
     if (TIME_BEFORE(current_tick, v.volume_until))
         panel = PANEL_VOLUME;
@@ -347,6 +523,7 @@ static void overlay_update(void)
         panel = PANEL_PROGRESS;
 
     if (v.drawn_once && panel == v.shown &&
+        (panel != PANEL_NONE || cue_idx == v.shown_cue_idx) &&
         (panel != PANEL_PROGRESS || (seconds == v.shown_seconds &&
                                      aspect == v.shown_aspect &&
                                      aspect_label_on == v.shown_aspect_label)) &&
@@ -358,9 +535,12 @@ static void overlay_update(void)
     v.shown_aspect = aspect;
     v.shown_aspect_label = aspect_label_on;
     v.shown_volume = global_status.volume;
+    v.shown_cue_idx = cue_idx;
     v.drawn_once = true;
 
-    retrohh_video_set_overlay(true, panel == PANEL_NONE ? 0 : STRIP_ROWS);
+    int rows = (panel != PANEL_NONE) ? STRIP_ROWS
+             : (cue_idx >= 0 ? SUB_STRIP_ROWS : 0);
+    retrohh_video_set_overlay(true, rows);
     if (panel != PANEL_NONE)
     {
         struct screen *display = &screens[SCREEN_MAIN];
@@ -372,6 +552,10 @@ static void overlay_update(void)
         else
             draw_progress(display);
         display->set_viewport(NULL);
+    }
+    else if (cue_idx >= 0)
+    {
+        draw_subtitle_cue(&screens[SCREEN_MAIN], &s_srt_cues[cue_idx]);
     }
     screens[SCREEN_MAIN].update();
 }
@@ -559,6 +743,210 @@ static bool poll_player(void)
     return true;
 }
 
+/* ---- Video Settings (`Context Menu - Video Player` #11301) ------------ */
+
+enum
+{
+    VCTX_ROW_ASPECT = 0,
+    VCTX_ROW_AUDIO  = 1,
+    VCTX_ROW_SUBS   = 2,
+    VCTX_ROW_COUNT  = 3,
+};
+
+struct video_ctx_page
+{
+    struct uipod_page   base;
+    struct gui_synclist lists;
+    int                 audio_idx;
+    int                 sub_idx; /* -1 = Off, 0..sub_count-1 */
+    char                indic_buf[3][64];
+};
+
+static const char *vctx_get_name(int sel, void *data, char *buf, size_t buf_len)
+{
+    (void)data; (void)buf; (void)buf_len;
+    switch (sel)
+    {
+        case VCTX_ROW_ASPECT: return str(LANG_UIPOD_ASPECT_MODE);
+        case VCTX_ROW_AUDIO:  return str(LANG_UIPOD_AUDIO_TRACK);
+        case VCTX_ROW_SUBS:   return str(LANG_UIPOD_SUBTITLES);
+        default:              return "";
+    }
+}
+
+static const char *vctx_get_indic(int sel, void *data)
+{
+    struct video_ctx_page *p = (struct video_ctx_page *)data;
+    if (!p || sel < 0 || sel >= VCTX_ROW_COUNT)
+        return NULL;
+
+    if (sel == VCTX_ROW_ASPECT)
+    {
+        snprintf(p->indic_buf[0], sizeof(p->indic_buf[0]), "%s", aspect_label());
+        return p->indic_buf[0];
+    }
+    if (sel == VCTX_ROW_AUDIO)
+    {
+        if (info.audio_count > 0 && p->audio_idx >= 0 && p->audio_idx < info.audio_count)
+            snprintf(p->indic_buf[1], sizeof(p->indic_buf[1]), "%s",
+                     info.audio_tracks[p->audio_idx].label);
+        else
+            snprintf(p->indic_buf[1], sizeof(p->indic_buf[1]), "Track 1");
+        return p->indic_buf[1];
+    }
+    if (p->sub_idx < 0 || p->sub_idx >= info.sub_count)
+        snprintf(p->indic_buf[2], sizeof(p->indic_buf[2]), "%s", str(LANG_OFF));
+    else
+        snprintf(p->indic_buf[2], sizeof(p->indic_buf[2]), "%s",
+                 info.sub_tracks[p->sub_idx].label);
+    return p->indic_buf[2];
+}
+
+static void vctx_cycle_row(struct video_ctx_page *p, int sel, int dir)
+{
+    if (sel == VCTX_ROW_ASPECT)
+    {
+        int n = (int)RETROHH_VIDEO_ASPECT_COUNT;
+        aspect = (enum retrohh_video_aspect)(((int)aspect + dir + n) % n);
+    }
+    else if (sel == VCTX_ROW_AUDIO && info.audio_count > 1)
+    {
+        int n = info.audio_count;
+        p->audio_idx = (p->audio_idx + dir + n) % n;
+    }
+    else if (sel == VCTX_ROW_SUBS && info.sub_count > 0)
+    {
+        /* Cycle through -1 (Off), 0, 1, ..., sub_count - 1 */
+        int total = info.sub_count + 1;
+        int cur   = p->sub_idx + 1;
+        cur = (cur + dir + total) % total;
+        p->sub_idx = cur - 1;
+    }
+}
+
+static void vctx_draw(struct uipod_page *self)
+{
+    gui_synclist_draw(&((struct video_ctx_page *)self)->lists);
+}
+
+static int vctx_poll(struct uipod_page *self, int timeout)
+{
+    int action = get_action(self->context, timeout);
+    if (list_do_action_timeout(&((struct video_ctx_page *)self)->lists, action))
+        return ACTION_NONE;
+    return action;
+}
+
+static enum uipod_page_result vctx_on_action(struct uipod_page *self, int action)
+{
+    struct video_ctx_page *p = (struct video_ctx_page *)self;
+    int sel = gui_synclist_get_sel_pos(&p->lists);
+
+    if (action == ACTION_STD_CANCEL || action == ACTION_STD_CONTEXT)
+    {
+        uipod_transition_arm_back();
+        return UIPOD_PAGE_DONE;
+    }
+    if (action == ACTION_SETTINGS_INC || action == ACTION_STD_OK)
+    {
+        vctx_cycle_row(p, sel, +1);
+        return UIPOD_PAGE_STAY;
+    }
+    if (action == ACTION_SETTINGS_DEC)
+    {
+        vctx_cycle_row(p, sel, -1);
+        return UIPOD_PAGE_STAY;
+    }
+    return UIPOD_PAGE_STAY;
+}
+
+static const struct uipod_page_vtable vctx_vtable =
+{
+    .legend    = NULL,
+    .draw      = vctx_draw,
+    .poll      = vctx_poll,
+    .on_action = vctx_on_action,
+};
+
+static const int vctx_allowed[] =
+{
+    ACTION_STD_OK, ACTION_STD_CANCEL, ACTION_STD_CONTEXT,
+    ACTION_SETTINGS_INC, ACTION_SETTINGS_DEC, -1
+};
+
+static void open_video_settings_menu(void)
+{
+    bool was_paused = v.paused;
+    if (!was_paused)
+        retrohh_video_pause(true);
+
+    hide_video();
+    FOR_NB_SCREENS(i)
+        viewportmanager_theme_undo(i, true);
+
+    struct video_ctx_page p;
+    memset(&p, 0, sizeof(p));
+    p.base.vt      = &vctx_vtable;
+    p.base.context = CONTEXT_SETTINGS_RECTRIGGER;
+    p.base.allowed = vctx_allowed;
+    p.base.title   = str(LANG_UIPOD_VIDEO_SETTINGS);
+    p.audio_idx    = s_active_audio_idx;
+    p.sub_idx      = s_active_sub_idx;
+
+    gui_synclist_init(&p.lists, vctx_get_name, &p, false, 1, NULL);
+    gui_synclist_set_title(&p.lists, (char *)str(LANG_UIPOD_VIDEO_SETTINGS), Icon_NOICON);
+    gui_synclist_set_indicator_callback(&p.lists, vctx_get_indic);
+    gui_synclist_set_nb_items(&p.lists, VCTX_ROW_COUNT);
+    gui_synclist_select_item(&p.lists, 0);
+
+    uipod_page_run(&p.base);
+
+    /* Apply updated video aspect, audio stream, and subtitles */
+    retrohh_video_set_aspect(&info, aspect);
+
+    if (p.audio_idx != s_active_audio_idx)
+    {
+        s_active_audio_idx = p.audio_idx;
+        retrohh_video_set_audio_track(s_active_audio_idx);
+    }
+
+    if (p.sub_idx != s_active_sub_idx)
+    {
+        s_active_sub_idx = p.sub_idx;
+        if (s_active_sub_idx < 0 || s_active_sub_idx >= info.sub_count)
+        {
+            srt_free();
+            s_active_sub_idx = -1;
+        }
+        else
+        {
+            char srt_path[MAX_PATH];
+            if (!retrohh_video_extract_subtitle_srt(s_active_play_path,
+                                                    &info.sub_tracks[s_active_sub_idx],
+                                                    srt_path, sizeof(srt_path)) ||
+                !srt_load_file(srt_path))
+            {
+                srt_free();
+                s_active_sub_idx = -1;
+            }
+        }
+    }
+
+    FOR_NB_SCREENS(i)
+        viewportmanager_theme_enable(i, false, NULL);
+
+    hide_video();
+    v.drawn_once = false;
+    v.shown = PANEL_NONE;
+    v.shown_cue_idx = -1;
+
+    if (!p.base.home && !was_paused)
+        retrohh_video_pause(false);
+
+    if (p.base.home)
+        uipod_home_pending = true;
+}
+
 static void run_session(void)
 {
     long next_poll = current_tick;
@@ -624,6 +1012,12 @@ static void run_session(void)
                 if (TIME_BEFORE(v.progress_until, v.aspect_label_until))
                     v.progress_until = v.aspect_label_until;
                 break;
+            case ACTION_STD_CONTEXT:
+                open_video_settings_menu();
+                if (uipod_home_pending)
+                    return;
+                show_progress();
+                break;
             default:
                 break;
         }
@@ -671,11 +1065,17 @@ static void run_video_common(const char *play_target)
 
     memset(&v, 0, sizeof v);
     v.last_volume = global_status.volume;
+    v.shown_cue_idx = -1;
+    s_active_audio_idx = 0;
+    s_active_sub_idx = -1;
+    strlcpy(s_active_play_path, play_target ? play_target : "", sizeof(s_active_play_path));
+    srt_free();
     if (start_player(play_target, resume_start_ms))
     {
         button_clear_queue();
         run_session();
     }
+    srt_free();
 
     int final_pos = display_position();
     int final_dur = v.duration_ms;

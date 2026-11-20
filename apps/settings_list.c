@@ -318,19 +318,74 @@ static const char* fx_speed_formatter(char *buffer, size_t buffer_size,
     }
 }
 
+bool uipod_fx_is_active(void)
+{
+    if (!global_settings.fx_enabled)
+        return false;
+    return (global_settings.fx_speed != 1000) ||
+           global_settings.tape_mode ||
+           global_settings.fx_reverb ||
+           global_settings.fx_delay ||
+           global_settings.fx_chorus ||
+           global_settings.fx_flanger;
+}
+
 void uipod_tape_fx_apply(void)
 {
+    dsp_set_texture_warp_speed(global_settings.fx_enabled ? global_settings.fx_speed : 1000);
     struct tape_deck_params p = {
-        .enabled     = global_settings.tape_mode,
-        .wow_pct     = global_settings.tape_wow,
-        .hiss_pct    = global_settings.tape_hiss,
-        .crinkle_pct = global_settings.tape_crinkle,
-        .sat_pct     = global_settings.tape_sat,
-        .tone_pct    = global_settings.tape_tone,
-        .pause_fx    = global_settings.tape_pause_fx,
-        .ff_sound    = global_settings.tape_ff_sound,
+        .master_enabled       = global_settings.fx_enabled,
+        .enabled              = global_settings.tape_mode,
+        .wow_pct              = global_settings.tape_wow,
+        .hiss_pct             = global_settings.tape_hiss,
+        .crinkle_pct          = global_settings.tape_crinkle,
+        .sat_pct              = global_settings.tape_sat,
+        .tone_pct             = global_settings.tape_tone,
+        .pause_fx             = global_settings.tape_pause_fx,
+        .ff_sound             = global_settings.tape_ff_sound,
+        .chorus_on            = global_settings.fx_chorus,
+        .chorus_rate_pct      = global_settings.fx_chorus_rate,
+        .chorus_depth_pct     = global_settings.fx_chorus_depth,
+        .chorus_mix_pct       = global_settings.fx_chorus_mix,
+        .flanger_on           = global_settings.fx_flanger,
+        .flanger_rate_pct     = global_settings.fx_flanger_rate,
+        .flanger_depth_pct    = global_settings.fx_flanger_depth,
+        .flanger_feedback_pct = global_settings.fx_flanger_feedback,
+        .flanger_mix_pct      = global_settings.fx_flanger_mix,
+        .delay_on             = global_settings.fx_delay,
+        .delay_time_ms        = global_settings.fx_delay_time,
+        .delay_feedback_pct   = global_settings.fx_delay_feedback,
+        .delay_tone_pct       = global_settings.fx_delay_tone,
+        .delay_pingpong       = global_settings.fx_delay_pingpong,
+        .delay_mix_pct        = global_settings.fx_delay_mix,
+        .reverb_on            = global_settings.fx_reverb,
+        .reverb_size_pct      = global_settings.fx_reverb_size,
+        .reverb_damp_pct      = global_settings.fx_reverb_damp,
+        .reverb_predelay_ms   = global_settings.fx_reverb_predelay,
+        .reverb_width_pct     = global_settings.fx_reverb_width,
+        .reverb_mix_pct       = global_settings.fx_reverb_mix,
     };
     tape_deck_fx_set_params(&p);
+}
+
+static void fx_master_bool_cb(bool val)
+{
+    (void)val;
+    uipod_tape_fx_apply();
+}
+
+static void fx_sub_enable_bool_cb(bool val)
+{
+    if (val)
+        global_settings.fx_enabled = true;
+    uipod_tape_fx_apply();
+}
+
+static void fx_speed_cb(int val)
+{
+    if (val != 1000)
+        global_settings.fx_enabled = true;
+    uipod_tape_fx_apply();
 }
 
 static void tape_bool_cb(bool val)
@@ -410,16 +465,44 @@ static const char* db_format(char* buffer, size_t buffer_size, int value,
 }
 
 
+void uipod_eq_apply(void)
+{
+    int cutoff[EQ_NUM_BANDS];
+    int q[EQ_NUM_BANDS];
+    int gain[EQ_NUM_BANDS];
+    for (int i = 0; i < EQ_NUM_BANDS; i++)
+    {
+        cutoff[i] = global_settings.eq_band_settings[i].cutoff;
+        q[i]      = global_settings.eq_band_settings[i].q;
+        gain[i]   = global_settings.eq_band_settings[i].gain;
+    }
+    /* Run 10-band EQ + Preamp at the zero-lag hardware audio sink (~12ms latency)
+     * and keep legacy multi-second pcmbuf software EQ bypassed to avoid double-EQ. */
+    dsp_eq_enable(false);
+    dsp_set_eq_precut(0);
+    tape_deck_fx_set_eq(global_settings.eq_enabled,
+                        global_settings.eq_precut,
+                        cutoff,
+                        q,
+                        gain);
+}
+
+static void eq_precut_cb(int val)
+{
+    (void)val;
+    uipod_eq_apply();
+}
+
 struct eq_band_setting eq_defaults[EQ_NUM_BANDS] = {
-    { 32, 7, 0 },
-    { 64, 10, 0 },
-    { 125, 10, 0 },
-    { 250, 10, 0 },
-    { 500, 10, 0 },
-    { 1000, 10, 0 },
-    { 2000, 10, 0 },
-    { 4000, 10, 0 },
-    { 8000, 10, 0 },
+    { 31, 7, 0 },
+    { 63, 14, 0 },
+    { 125, 14, 0 },
+    { 250, 14, 0 },
+    { 500, 14, 0 },
+    { 1000, 14, 0 },
+    { 2000, 14, 0 },
+    { 4000, 14, 0 },
+    { 8000, 14, 0 },
     { 16000, 7, 0 },
 };
 
@@ -900,8 +983,8 @@ const struct settings_list settings[] = {
                   "eq enabled", eq_enabled_option_callback),
 
     INT_SETTING_NOWRAP(F_EQSETTING, eq_precut, LANG_EQUALIZER_PRECUT, 0,
-                       "eq precut", UNIT_DB, 0, 240, 1, eq_precut_format,
-                       dsp_set_eq_precut),
+                       "eq precut", UNIT_DB, -120, 240, 5, eq_precut_format,
+                       eq_precut_cb),
 
 #define EQ_BAND(id, string)  CUSTOM_SETTING(F_EQSETTING, eq_band_settings[id], -1,    &eq_defaults[id], string,                      eq_load_from_cfg, eq_write_to_cfg,             eq_is_changed, eq_set_default)
     EQ_BAND(0, "eq low shelf filter"),
@@ -1107,12 +1190,14 @@ const struct settings_list settings[] = {
                    ID2P(LANG_UIPOD_TRANS_PIXELS),
                    ID2P(LANG_UIPOD_TRANS_BLINDS),
                    ID2P(LANG_OFF)),
+    OFFON_SETTING(F_SOUNDSETTING, fx_enabled, LANG_UIPOD_FX_ENABLE, true,
+                  "fx enabled", fx_master_bool_cb),
     TABLE_SETTING_LIST(F_SOUNDSETTING | F_NO_WRAP | F_ALLOW_ARBITRARY_VALS,
                        fx_speed, LANG_UIPOD_FX_SPEED, 1000, "fx speed",
                        NULL, UNIT_INT, fx_speed_formatter,
-                       dsp_set_texture_warp_speed, 14, fx_speed_values),
+                       fx_speed_cb, 14, fx_speed_values),
     OFFON_SETTING(F_SOUNDSETTING, tape_mode, LANG_UIPOD_TAPE_ENABLE, false,
-                  "tape mode", tape_bool_cb),
+                  "tape mode", fx_sub_enable_bool_cb),
     INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_wow, LANG_UIPOD_TAPE_WOW, 55,
                        "tape wow", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
     INT_SETTING_NOWRAP(F_SOUNDSETTING, tape_hiss, LANG_UIPOD_TAPE_HISS, 45,
@@ -1127,6 +1212,48 @@ const struct settings_list settings[] = {
                   "tape pause fx", tape_bool_cb),
     OFFON_SETTING(F_SOUNDSETTING, tape_ff_sound, LANG_UIPOD_TAPE_FF_SOUND, true,
                   "tape ff sound", tape_bool_cb),
+    OFFON_SETTING(F_SOUNDSETTING, fx_reverb, LANG_UIPOD_REVERB, false,
+                  "fx reverb", fx_sub_enable_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_reverb_size, LANG_UIPOD_REVERB_SIZE, 65,
+                       "fx reverb size", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_reverb_damp, LANG_UIPOD_REVERB_DAMP, 45,
+                       "fx reverb damp", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_reverb_predelay, LANG_UIPOD_REVERB_PREDELAY, 20,
+                       "fx reverb predelay", UNIT_MS, 0, 120, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_reverb_width, LANG_UIPOD_REVERB_WIDTH, 100,
+                       "fx reverb width", UNIT_PERCENT, 0, 100, 10, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_reverb_mix, LANG_UIPOD_FX_MIX, 30,
+                       "fx reverb mix", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    OFFON_SETTING(F_SOUNDSETTING, fx_delay, LANG_UIPOD_DELAY, false,
+                  "fx delay", fx_sub_enable_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_delay_time, LANG_UIPOD_DELAY_TIME, 360,
+                       "fx delay time", UNIT_MS, 40, 1000, 20, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_delay_feedback, LANG_UIPOD_FX_FEEDBACK, 45,
+                       "fx delay feedback", UNIT_PERCENT, 0, 90, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_delay_tone, LANG_UIPOD_DELAY_TONE, 60,
+                       "fx delay tone", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    OFFON_SETTING(F_SOUNDSETTING, fx_delay_pingpong, LANG_UIPOD_DELAY_PINGPONG, false,
+                  "fx delay pingpong", tape_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_delay_mix, LANG_UIPOD_FX_MIX, 35,
+                       "fx delay mix", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    OFFON_SETTING(F_SOUNDSETTING, fx_chorus, LANG_UIPOD_CHORUS, false,
+                  "fx chorus", fx_sub_enable_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_chorus_rate, LANG_UIPOD_FX_RATE, 35,
+                       "fx chorus rate", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_chorus_depth, LANG_UIPOD_FX_DEPTH, 50,
+                       "fx chorus depth", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_chorus_mix, LANG_UIPOD_FX_MIX, 40,
+                       "fx chorus mix", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    OFFON_SETTING(F_SOUNDSETTING, fx_flanger, LANG_UIPOD_FLANGER, false,
+                  "fx flanger", fx_sub_enable_bool_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_flanger_rate, LANG_UIPOD_FX_RATE, 25,
+                       "fx flanger rate", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_flanger_depth, LANG_UIPOD_FX_DEPTH, 60,
+                       "fx flanger depth", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_flanger_feedback, LANG_UIPOD_FX_FEEDBACK, 60,
+                       "fx flanger feedback", UNIT_PERCENT, -90, 90, 5, NULL, tape_int_cb),
+    INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_flanger_mix, LANG_UIPOD_FX_MIX, 45,
+                       "fx flanger mix", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
 
 };
 

@@ -19772,3 +19772,605 @@
     *: "Invalid destination"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_FX_ENABLE
+  desc: UIPod Sound -> Effects master toggle
+  user: core
+  <source>
+    *: "Enable Effects"
+  </source>
+  <dest>
+    *: "Enable Effects"
+  </dest>
+  <voice>
+    *: "Enable Effects"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB
+  desc: UIPod Sound -> Effects -> Reverb
+  user: core
+  <source>
+    *: "Reverb"
+  </source>
+  <dest>
+    *: "Reverb"
+  </dest>
+  <voice>
+    *: "Reverb"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_SIZE
+  desc: UIPod Reverb room size
+  user: core
+  <source>
+    *: "Room Size"
+  </source>
+  <dest>
+    *: "Room Size"
+  </dest>
+  <voice>
+    *: "Room Size"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_DAMP
+  desc: UIPod Reverb HF damping
+  user: core
+  <source>
+    *: "Damping"
+  </source>
+  <dest>
+    *: "Damping"
+  </dest>
+  <voice>
+    *: "Damping"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_PREDELAY
+  desc: UIPod Reverb pre-delay
+  user: core
+  <source>
+    *: "Pre-Delay"
+  </source>
+  <dest>
+    *: "Pre-Delay"
+  </dest>
+  <voice>
+    *: "Pre-Delay"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_WIDTH
+  desc: UIPod Reverb stereo width
+  user: core
+  <source>
+    *: "Stereo Width"
+  </source>
+  <dest>
+    *: "Stereo Width"
+  </dest>
+  <voice>
+    *: "Stereo Width"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_MIX
+  desc: UIPod Effect dry/wet mix
+  user: core
+  <source>
+    *: "Mix"
+  </source>
+  <dest>
+    *: "Mix"
+  </dest>
+  <voice>
+    *: "Mix"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY
+  desc: UIPod Sound -> Effects -> Delay
+  user: core
+  <source>
+    *: "Delay"
+  </source>
+  <dest>
+    *: "Delay"
+  </dest>
+  <voice>
+    *: "Delay"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_TIME
+  desc: UIPod Delay time in ms
+  user: core
+  <source>
+    *: "Delay Time"
+  </source>
+  <dest>
+    *: "Delay Time"
+  </dest>
+  <voice>
+    *: "Delay Time"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_FEEDBACK
+  desc: UIPod Delay / Flanger feedback
+  user: core
+  <source>
+    *: "Feedback"
+  </source>
+  <dest>
+    *: "Feedback"
+  </dest>
+  <voice>
+    *: "Feedback"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_TONE
+  desc: UIPod Delay feedback tone filter
+  user: core
+  <source>
+    *: "Tone"
+  </source>
+  <dest>
+    *: "Tone"
+  </dest>
+  <voice>
+    *: "Tone"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_PINGPONG
+  desc: UIPod Delay stereo ping-pong toggle
+  user: core
+  <source>
+    *: "Ping-Pong"
+  </source>
+  <dest>
+    *: "Ping-Pong"
+  </dest>
+  <voice>
+    *: "Ping-Pong"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CHORUS
+  desc: UIPod Sound -> Effects -> Chorus
+  user: core
+  <source>
+    *: "Chorus"
+  </source>
+  <dest>
+    *: "Chorus"
+  </dest>
+  <voice>
+    *: "Chorus"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_RATE
+  desc: UIPod Chorus / Flanger LFO rate
+  user: core
+  <source>
+    *: "Rate"
+  </source>
+  <dest>
+    *: "Rate"
+  </dest>
+  <voice>
+    *: "Rate"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_DEPTH
+  desc: UIPod Chorus / Flanger modulation depth
+  user: core
+  <source>
+    *: "Depth"
+  </source>
+  <dest>
+    *: "Depth"
+  </dest>
+  <voice>
+    *: "Depth"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FLANGER
+  desc: UIPod Sound -> Effects -> Flanger
+  user: core
+  <source>
+    *: "Flanger"
+  </source>
+  <dest>
+    *: "Flanger"
+  </dest>
+  <voice>
+    *: "Flanger"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_GRAPHIC_EQ
+  desc: UIPod Sound -> Equalizer -> Graphic Equalizer
+  user: core
+  <source>
+    *: "Graphic Equalizer"
+  </source>
+  <dest>
+    *: "Graphic Equalizer"
+  </dest>
+  <voice>
+    *: "Graphic Equalizer"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_BYPASS
+  desc: UIPod Graphic Equalizer momentary bypass header label
+  user: core
+  <source>
+    *: "Bypass"
+  </source>
+  <dest>
+    *: "Bypass"
+  </dest>
+  <voice>
+    *: "Bypass"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ACCOUNTS
+  desc: UIPod Settings -> Accounts submenu
+  user: core
+  <source>
+    *: "Accounts"
+  </source>
+  <dest>
+    *: "Accounts"
+  </dest>
+  <voice>
+    *: "Accounts"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LASTFM
+  desc: UIPod Settings -> Accounts -> Last.fm
+  user: core
+  <source>
+    *: "Last.fm"
+  </source>
+  <dest>
+    *: "Last.fm"
+  </dest>
+  <voice>
+    *: "Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SCROBBLING
+  desc: UIPod Last.fm master scrobbling toggle
+  user: core
+  <source>
+    *: "Scrobbling"
+  </source>
+  <dest>
+    *: "Scrobbling"
+  </dest>
+  <voice>
+    *: "Scrobbling"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_ACCOUNT
+  desc: UIPod Last.fm account status row
+  user: core
+  <source>
+    *: "Account"
+  </source>
+  <dest>
+    *: "Account"
+  </dest>
+  <voice>
+    *: "Account"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_NOT_SIGNED_IN
+  desc: UIPod Last.fm signed out status
+  user: core
+  <source>
+    *: "Not signed in"
+  </source>
+  <dest>
+    *: "Not signed in"
+  </dest>
+  <voice>
+    *: "Not signed in"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_IN_QR
+  desc: UIPod Last.fm sign in via QR code / web browser
+  user: core
+  <source>
+    *: "Sign In via QR / Browser"
+  </source>
+  <dest>
+    *: "Sign In via QR / Browser"
+  </dest>
+  <voice>
+    *: "Sign In via QR or Browser"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_IN_PASS
+  desc: UIPod Last.fm sign in with username and password
+  user: core
+  <source>
+    *: "Sign In with Password"
+  </source>
+  <dest>
+    *: "Sign In with Password"
+  </dest>
+  <voice>
+    *: "Sign In with Password"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_OUT_Q
+  desc: UIPod Last.fm sign out confirmation prompt
+  user: core
+  <source>
+    *: "Sign out of Last.fm?"
+  </source>
+  <dest>
+    *: "Sign out of Last.fm?"
+  </dest>
+  <voice>
+    *: "Sign out of Last.fm?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGNED_IN
+  desc: UIPod Last.fm sign in success splash
+  user: core
+  <source>
+    *: "Signed in"
+  </source>
+  <dest>
+    *: "Signed in"
+  </dest>
+  <voice>
+    *: "Signed in"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SCROBBLE_STREAMING
+  desc: UIPod Last.fm toggle to scrobble Navidrome / Jellyfin tracks
+  user: core
+  <source>
+    *: "Scrobble Streaming"
+  </source>
+  <dest>
+    *: "Scrobble Streaming"
+  </dest>
+  <voice>
+    *: "Scrobble Streaming"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_CACHE
+  desc: UIPod Last.fm flush offline cached scrobbles now
+  user: core
+  <source>
+    *: "Sync Cached Scrobbles"
+  </source>
+  <dest>
+    *: "Sync Cached Scrobbles"
+  </dest>
+  <voice>
+    *: "Sync Cached Scrobbles"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_CLEAR_CACHE
+  desc: UIPod Last.fm clear offline cached scrobbles
+  user: core
+  <source>
+    *: "Clear Cached Scrobbles"
+  </source>
+  <dest>
+    *: "Clear Cached Scrobbles"
+  </dest>
+  <voice>
+    *: "Clear Cached Scrobbles"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_CLEAR_CACHE_Q
+  desc: UIPod Last.fm clear cached scrobbles confirmation
+  user: core
+  <source>
+    *: "Clear cached scrobbles?"
+  </source>
+  <dest>
+    *: "Clear cached scrobbles?"
+  </dest>
+  <voice>
+    *: "Clear cached scrobbles?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNCING
+  desc: UIPod Last.fm foreground sync status
+  user: core
+  <source>
+    *: "Syncing Last.fm..."
+  </source>
+  <dest>
+    *: "Syncing Last.fm..."
+  </dest>
+  <voice>
+    *: "Syncing Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_EMPTY
+  desc: UIPod Last.fm empty cache message
+  user: core
+  <source>
+    *: "No cached scrobbles"
+  </source>
+  <dest>
+    *: "No cached scrobbles"
+  </dest>
+  <voice>
+    *: "No cached scrobbles"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_DONE
+  desc: UIPod Last.fm flushed scrobbles count format string
+  user: core
+  <source>
+    *: "Scrobbled %d tracks"
+  </source>
+  <dest>
+    *: "Scrobbled %d tracks"
+  </dest>
+  <voice>
+    *: "Scrobbled tracks"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_API_KEY
+  desc: UIPod Last.fm API Key field
+  user: core
+  <source>
+    *: "API Key"
+  </source>
+  <dest>
+    *: "API Key"
+  </dest>
+  <voice>
+    *: "API Key"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_API_SECRET
+  desc: UIPod Last.fm API Shared Secret field
+  user: core
+  <source>
+    *: "API Secret"
+  </source>
+  <dest>
+    *: "API Secret"
+  </dest>
+  <voice>
+    *: "API Secret"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SET_KEYS_FIRST
+  desc: UIPod Last.fm missing API credentials warning
+  user: core
+  <source>
+    *: "Set API Key & Secret first"
+  </source>
+  <dest>
+    *: "Set API Key & Secret first"
+  </dest>
+  <voice>
+    *: "Set API Key and Secret first"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_QR_SCAN
+  desc: UIPod Last.fm QR authorization screen instruction
+  user: core
+  <source>
+    *: "Scan QR code to authorize Last.fm"
+  </source>
+  <dest>
+    *: "Scan QR code to authorize Last.fm"
+  </dest>
+  <voice>
+    *: "Scan QR code to authorize Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_QR_WAIT
+  desc: UIPod Last.fm QR authorization waiting hint
+  user: core
+  <source>
+    *: "Waiting for browser approval... (B Cancel)"
+  </source>
+  <dest>
+    *: "Waiting for browser approval... (B Cancel)"
+  </dest>
+  <voice>
+    *: "Waiting for browser approval"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_VIDEO_SETTINGS
+  desc: UIPod Video Player context menu title
+  user: core
+  <source>
+    *: "Video Settings"
+  </source>
+  <dest>
+    *: "Video Settings"
+  </dest>
+  <voice>
+    *: "Video Settings"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ASPECT_MODE
+  desc: UIPod Video Player aspect ratio setting label
+  user: core
+  <source>
+    *: "Aspect Fit"
+  </source>
+  <dest>
+    *: "Aspect Fit"
+  </dest>
+  <voice>
+    *: "Aspect Fit"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_AUDIO_TRACK
+  desc: UIPod Video Player audio track selector label
+  user: core
+  <source>
+    *: "Audio Track"
+  </source>
+  <dest>
+    *: "Audio Track"
+  </dest>
+  <voice>
+    *: "Audio Track"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SUBTITLES
+  desc: UIPod Video Player subtitle track selector label
+  user: core
+  <source>
+    *: "Subtitles"
+  </source>
+  <dest>
+    *: "Subtitles"
+  </dest>
+  <voice>
+    *: "Subtitles"
+  </voice>
+</phrase>

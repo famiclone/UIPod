@@ -40,6 +40,7 @@
 #include "audio.h"
 #include "gui/wps.h"
 #include "uipod_plugins.h"
+#include "uipod_rs_ui.h"
 
 
 #include "backlight.h"
@@ -1161,7 +1162,7 @@ static int global_context_action(int context, int button, int action)
     int base = TP_CTX_BASE(context);
     if ((context & CONTEXT_PLUGIN) != 0
         || (base != CONTEXT_LIST && base != CONTEXT_TREE && base != CONTEXT_MAINMENU
-            && base != CONTEXT_WPS))
+            && base != CONTEXT_WPS && base != CONTEXT_TP_VIDEO))
         return action;                           /* only screens with a context menu */
     return tp_hold(button, action, BUTTON_A, ACTION_STD_CONTEXT, &ctx_tick,
                    &ctx_fired);
@@ -1190,15 +1191,7 @@ static int apply_global_actions(const action_cur_t *current, int action)
 
 int get_action(int context, int timeout)
 {
-    action_cur_t current;
-    init_act_cur(&current, context, timeout, NULL);
-
-    int action = get_action_worker(&action_last, &current);
-
-    action = do_backlight(&action_last, &current, action);
-    action = apply_global_actions(&current, action);
-
-    return action;
+    return get_custom_action(context, timeout, NULL);
 }
 
 int action_set_keymap(struct button_mapping* core_keymap, int count)
@@ -1287,9 +1280,48 @@ int action_set_keymap_handle(int handle, int count)
 #endif
 }
 
-int get_custom_action(int context,int timeout,
+int get_custom_action(int context, int timeout,
                       const struct button_mapping* (*get_context_map)(int))
 {
+    if (timeout != TIMEOUT_NOBLOCK && uipod_gpu_is_volume_popup_active())
+    {
+        long deadline = (timeout > 0) ? (current_tick + timeout) : 0;
+        while (uipod_gpu_is_volume_popup_active())
+        {
+            int step_tmo = 1;
+            if (timeout > 0)
+            {
+                long rem = deadline - current_tick;
+                if (rem <= 0)
+                {
+                    (void)uipod_gpu_tick_volume_popup();
+                    return ACTION_NONE;
+                }
+                if (rem < step_tmo)
+                    step_tmo = (int)rem;
+            }
+
+            action_cur_t current;
+            init_act_cur(&current, context, step_tmo, get_context_map);
+            int action = get_action_worker(&action_last, &current);
+            action = do_backlight(&action_last, &current, action);
+            action = apply_global_actions(&current, action);
+            (void)uipod_gpu_tick_volume_popup();
+
+            if (action != ACTION_NONE)
+                return action;
+        }
+
+        (void)uipod_gpu_tick_volume_popup();
+        if (timeout > 0)
+        {
+            long rem = deadline - current_tick;
+            if (rem <= 0)
+                return ACTION_NONE;
+            timeout = (int)rem;
+        }
+    }
+
     action_cur_t current;
     init_act_cur(&current, context, timeout, get_context_map);
 
@@ -1297,6 +1329,7 @@ int get_custom_action(int context,int timeout,
 
     action = do_backlight(&action_last, &current, action);
     action = apply_global_actions(&current, action);
+    (void)uipod_gpu_tick_volume_popup();
 
     return action;
 }

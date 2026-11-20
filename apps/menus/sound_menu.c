@@ -41,9 +41,15 @@ MENUITEM_SETTING(crossfeed, &global_settings.crossfeed, lowlatency_callback);
 MENUITEM_SETTING(menu_click, &global_settings.menu_click, NULL);
 
 /* Effects submenu:
- *   1. Speed (Ableton Texture Warp)
- *   2. Tape Mode submenu (all analog cassette parameters + motor transport FX) */
-MENUITEM_SETTING(fx_speed, &global_settings.fx_speed, NULL);
+ *   1. Enable Effects (master switch synced with Now Playing context menu & FX badge)
+ *   2. Speed (Ableton Texture Warp)
+ *   3. Tape Mode submenu
+ *   4. Reverb submenu
+ *   5. Delay submenu
+ *   6. Chorus submenu
+ *   7. Flanger submenu */
+MENUITEM_SETTING(fx_enabled, &global_settings.fx_enabled, NULL);
+MENUITEM_SETTING(fx_speed,   &global_settings.fx_speed,   NULL);
 
 MENUITEM_SETTING(tape_mode,     &global_settings.tape_mode,     NULL);
 MENUITEM_SETTING(tape_wow,      &global_settings.tape_wow,      NULL);
@@ -64,8 +70,69 @@ MAKE_MENU(tape_mode_menu, ID2P(LANG_UIPOD_TAPE_MODE), NULL, Icon_NOICON,
           &tape_pause_fx,
           &tape_ff_sound);
 
+MENUITEM_SETTING(fx_reverb,          &global_settings.fx_reverb,          NULL);
+MENUITEM_SETTING(fx_reverb_size,     &global_settings.fx_reverb_size,     NULL);
+MENUITEM_SETTING(fx_reverb_damp,     &global_settings.fx_reverb_damp,     NULL);
+MENUITEM_SETTING(fx_reverb_predelay, &global_settings.fx_reverb_predelay, NULL);
+MENUITEM_SETTING(fx_reverb_width,    &global_settings.fx_reverb_width,    NULL);
+MENUITEM_SETTING(fx_reverb_mix,      &global_settings.fx_reverb_mix,      NULL);
+
+MAKE_MENU(reverb_menu, ID2P(LANG_UIPOD_REVERB), NULL, Icon_NOICON,
+          &fx_reverb,
+          &fx_reverb_size,
+          &fx_reverb_damp,
+          &fx_reverb_predelay,
+          &fx_reverb_width,
+          &fx_reverb_mix);
+
+MENUITEM_SETTING(fx_delay,          &global_settings.fx_delay,          NULL);
+MENUITEM_SETTING(fx_delay_time,     &global_settings.fx_delay_time,     NULL);
+MENUITEM_SETTING(fx_delay_feedback, &global_settings.fx_delay_feedback, NULL);
+MENUITEM_SETTING(fx_delay_tone,     &global_settings.fx_delay_tone,     NULL);
+MENUITEM_SETTING(fx_delay_pingpong, &global_settings.fx_delay_pingpong, NULL);
+MENUITEM_SETTING(fx_delay_mix,      &global_settings.fx_delay_mix,      NULL);
+
+MAKE_MENU(delay_menu, ID2P(LANG_UIPOD_DELAY), NULL, Icon_NOICON,
+          &fx_delay,
+          &fx_delay_time,
+          &fx_delay_feedback,
+          &fx_delay_tone,
+          &fx_delay_pingpong,
+          &fx_delay_mix);
+
+MENUITEM_SETTING(fx_chorus,       &global_settings.fx_chorus,       NULL);
+MENUITEM_SETTING(fx_chorus_rate,  &global_settings.fx_chorus_rate,  NULL);
+MENUITEM_SETTING(fx_chorus_depth, &global_settings.fx_chorus_depth, NULL);
+MENUITEM_SETTING(fx_chorus_mix,   &global_settings.fx_chorus_mix,   NULL);
+
+MAKE_MENU(chorus_menu, ID2P(LANG_UIPOD_CHORUS), NULL, Icon_NOICON,
+          &fx_chorus,
+          &fx_chorus_rate,
+          &fx_chorus_depth,
+          &fx_chorus_mix);
+
+MENUITEM_SETTING(fx_flanger,          &global_settings.fx_flanger,          NULL);
+MENUITEM_SETTING(fx_flanger_rate,     &global_settings.fx_flanger_rate,     NULL);
+MENUITEM_SETTING(fx_flanger_depth,    &global_settings.fx_flanger_depth,    NULL);
+MENUITEM_SETTING(fx_flanger_feedback, &global_settings.fx_flanger_feedback, NULL);
+MENUITEM_SETTING(fx_flanger_mix,      &global_settings.fx_flanger_mix,      NULL);
+
+MAKE_MENU(flanger_menu, ID2P(LANG_UIPOD_FLANGER), NULL, Icon_NOICON,
+          &fx_flanger,
+          &fx_flanger_rate,
+          &fx_flanger_depth,
+          &fx_flanger_feedback,
+          &fx_flanger_mix);
+
 MAKE_MENU(sound_effects_menu, ID2P(LANG_UIPOD_EFFECTS), lowlatency_callback,
-          Icon_NOICON, &fx_speed, &tape_mode_menu);
+          Icon_NOICON,
+          &fx_enabled,
+          &fx_speed,
+          &tape_mode_menu,
+          &reverb_menu,
+          &delay_menu,
+          &chorus_menu,
+          &flanger_menu);
 
 /* ReplayGain submenu */
 static int replaygain_callback(int action,

@@ -1,0 +1,11 @@
+[package]
+name = "uipod-lastfm"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust Last.fm Scrobbling 2.0 client, persistent offline scrobble cache, QR auth generator, and C ABI for UIPod"
+
+[lib]
+name = "uipod_lastfm"
+crate-type = ["rlib"]
+
+[dependencies]

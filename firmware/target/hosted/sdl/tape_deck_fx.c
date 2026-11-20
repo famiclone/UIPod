@@ -37,6 +37,29 @@
 #define TAPE_SEED_FRAMES 2U
 #define LFO_SUBBLOCK     32U
 
+/* Studio FX ring & delay line capacities (supports up to 192 kHz stereo) */
+#define CHORUS_RING_FRAMES   8192U
+#define CHORUS_RING_MASK     (CHORUS_RING_FRAMES - 1U)
+#define FLANGER_RING_FRAMES  4096U
+#define FLANGER_RING_MASK    (FLANGER_RING_FRAMES - 1U)
+#define DELAY_RING_FRAMES    262144U
+#define DELAY_RING_MASK      (DELAY_RING_FRAMES - 1U)
+#define PREDELAY_RING_FRAMES 32768U
+#define PREDELAY_RING_MASK   (PREDELAY_RING_FRAMES - 1U)
+
+#define REV_NUM_COMBS        8U
+#define REV_NUM_ALLPASS      4U
+#define REV_COMB_CAP         8192U
+#define REV_ALLPASS_CAP      4096U
+
+static const uint16_t k_rev_comb_base[REV_NUM_COMBS] = {
+    1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617
+};
+static const uint16_t k_rev_allpass_base[REV_NUM_ALLPASS] = {
+    556, 441, 341, 225
+};
+#define REV_STEREO_SPREAD_44K 23.0f
+
 enum tape_motor_mode
 {
     TAPE_MOTOR_RUN = 0,
@@ -46,14 +69,36 @@ enum tape_motor_mode
 };
 
 static struct tape_deck_params s_cfg = {
-    .enabled     = false,
-    .wow_pct     = 55,
-    .hiss_pct    = 45,
-    .crinkle_pct = 50,
-    .sat_pct     = 50,
-    .tone_pct    = 45,
-    .pause_fx    = true,
-    .ff_sound    = true,
+    .master_enabled       = true,
+    .enabled              = false,
+    .wow_pct              = 55,
+    .hiss_pct             = 45,
+    .crinkle_pct          = 50,
+    .sat_pct              = 50,
+    .tone_pct             = 45,
+    .pause_fx             = true,
+    .ff_sound             = true,
+    .chorus_on            = false,
+    .chorus_rate_pct      = 35,
+    .chorus_depth_pct     = 50,
+    .chorus_mix_pct       = 40,
+    .flanger_on           = false,
+    .flanger_rate_pct     = 25,
+    .flanger_depth_pct    = 60,
+    .flanger_feedback_pct = 60,
+    .flanger_mix_pct      = 45,
+    .delay_on             = false,
+    .delay_time_ms        = 360,
+    .delay_feedback_pct   = 45,
+    .delay_tone_pct       = 60,
+    .delay_pingpong       = false,
+    .delay_mix_pct        = 35,
+    .reverb_on            = false,
+    .reverb_size_pct      = 65,
+    .reverb_damp_pct      = 45,
+    .reverb_predelay_ms   = 20,
+    .reverb_width_pct     = 100,
+    .reverb_mix_pct       = 30,
 };
 
 static struct
@@ -154,7 +199,142 @@ static struct
     float    ff_tape_bp;
     float    ff_tape_lp;
     uint32_t ff_rng;
+
+    /* Studio FX: Stereo Chorus */
+    uint32_t chorus_wp;
+    float    chorus_ph1;
+    float    chorus_ph2;
+    float    chorus_inc1;
+    float    chorus_inc2;
+    float    chorus_center_samp;
+    float    chorus_depth_samp;
+    float    chorus_lp_alpha;
+    float    chorus_lp_l;
+    float    chorus_lp_r;
+    float    chorus_dry_g;
+    float    chorus_wet_g;
+
+    /* Studio FX: Stereo Flanger */
+    uint32_t flanger_wp;
+    float    flanger_ph;
+    float    flanger_inc;
+    float    flanger_min_samp;
+    float    flanger_span_samp;
+    float    flanger_fb;
+    float    flanger_dc_in_l;
+    float    flanger_dc_out_l;
+    float    flanger_dc_in_r;
+    float    flanger_dc_out_r;
+    float    flanger_dry_g;
+    float    flanger_wet_g;
+
+    /* Studio FX: Stereo / Ping-Pong Delay */
+    uint32_t delay_wp;
+    float    delay_cur_samp;
+    float    delay_tgt_samp;
+    float    delay_slew_alpha;
+    float    delay_fb;
+    float    delay_hp_alpha;
+    float    delay_lp_alpha;
+    float    delay_hp_l;
+    float    delay_hp_r;
+    float    delay_lp_l;
+    float    delay_lp_r;
+    float    delay_wet_g;
+
+    /* Studio FX: True-Stereo Reverb */
+    uint32_t rev_predly_wp;
+    uint32_t rev_predly_samp;
+    float    rev_in_hp_alpha;
+    float    rev_in_hp_state;
+    float    rev_feedback;
+    float    rev_damp_alpha;
+    float    rev_wet1;
+    float    rev_wet2;
+    float    rev_dry_g;
+    uint32_t rev_comb_len_l[REV_NUM_COMBS];
+    uint32_t rev_comb_len_r[REV_NUM_COMBS];
+    uint32_t rev_comb_idx_l[REV_NUM_COMBS];
+    uint32_t rev_comb_idx_r[REV_NUM_COMBS];
+    float    rev_comb_lp_l[REV_NUM_COMBS];
+    float    rev_comb_lp_r[REV_NUM_COMBS];
+    uint32_t rev_ap_len_l[REV_NUM_ALLPASS];
+    uint32_t rev_ap_len_r[REV_NUM_ALLPASS];
+    uint32_t rev_ap_idx_l[REV_NUM_ALLPASS];
+    uint32_t rev_ap_idx_r[REV_NUM_ALLPASS];
+
+    /* Zero-lag 10-band Hardware-Sink Biquad EQ state */
+    float    eq_z1_l[TAPE_EQ_BANDS];
+    float    eq_z2_l[TAPE_EQ_BANDS];
+    float    eq_z1_r[TAPE_EQ_BANDS];
+    float    eq_z2_r[TAPE_EQ_BANDS];
 } st;
+
+struct sink_eq_cfg
+{
+    bool enabled;
+    int  precut_tenths;
+    int  cutoff_hz[TAPE_EQ_BANDS];
+    int  q_tenths[TAPE_EQ_BANDS];
+    int  gain_tenths[TAPE_EQ_BANDS];
+};
+
+struct sink_eq_bank
+{
+    float    preamp_lin;
+    uint32_t active_mask;
+    float    b0[TAPE_EQ_BANDS];
+    float    b1[TAPE_EQ_BANDS];
+    float    b2[TAPE_EQ_BANDS];
+    float    a1[TAPE_EQ_BANDS];
+    float    a2[TAPE_EQ_BANDS];
+};
+
+static struct sink_eq_cfg s_eq_cfg = {
+    .enabled       = false,
+    .precut_tenths = 0,
+    .cutoff_hz     = { 31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 },
+    .q_tenths      = { 7, 14, 14, 14, 14, 14, 14, 14, 14, 7 },
+    .gain_tenths   = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+};
+static struct sink_eq_bank s_eq_banks[2];
+static volatile int        s_eq_bank_idx = 0;
+static volatile bool       s_eq_bypass   = false;
+
+/* Separate BSS arrays for studio FX delay lines so hot scalar state stays compact in L1 cache */
+static struct
+{
+    float chorus_l[CHORUS_RING_FRAMES];
+    float chorus_r[CHORUS_RING_FRAMES];
+    float flanger_l[FLANGER_RING_FRAMES];
+    float flanger_r[FLANGER_RING_FRAMES];
+    float delay_l[DELAY_RING_FRAMES];
+    float delay_r[DELAY_RING_FRAMES];
+    float predly_m[PREDELAY_RING_FRAMES];
+    float rev_comb_l[REV_NUM_COMBS][REV_COMB_CAP];
+    float rev_comb_r[REV_NUM_COMBS][REV_COMB_CAP];
+    float rev_ap_l[REV_NUM_ALLPASS][REV_ALLPASS_CAP];
+    float rev_ap_r[REV_NUM_ALLPASS][REV_ALLPASS_CAP];
+} fx_buf;
+
+static inline bool tape_mode_active(void)
+{
+    return s_cfg.master_enabled && s_cfg.enabled;
+}
+
+static inline bool studio_fx_active(void)
+{
+    return s_cfg.master_enabled &&
+           (s_cfg.chorus_on || s_cfg.flanger_on || s_cfg.delay_on || s_cfg.reverb_on);
+}
+
+static inline bool sink_eq_active(void)
+{
+    if (!s_eq_cfg.enabled || s_eq_bypass)
+        return false;
+    const struct sink_eq_bank *bk = &s_eq_banks[s_eq_bank_idx];
+    return (bk->active_mask != 0U) || (s_eq_cfg.precut_tenths != 0);
+}
 
 static inline uint32_t xorshift32(uint32_t *s)
 {
@@ -220,6 +400,191 @@ static inline float sample_ring_linear(const float *ring, uint32_t wp, float age
     return ring[i0] + (ring[i1] - ring[i0]) * frac;
 }
 
+static inline float sample_pow2_ring_linear(const float *ring,
+                                            uint32_t mask,
+                                            uint32_t wp,
+                                            float age)
+{
+    float max_age = (float)(mask - 3U);
+    if (age < 0.0f)
+        age = 0.0f;
+    else if (age > max_age)
+        age = max_age;
+
+    uint32_t ia = (uint32_t)age;
+    float frac = age - (float)ia;
+    uint32_t i0 = (wp - 1U - ia) & mask;
+    uint32_t i1 = (i0 - 1U) & mask;
+    return ring[i0] + (ring[i1] - ring[i0]) * frac;
+}
+
+static inline float clamp01f(int pct)
+{
+    if (pct <= 0)
+        return 0.0f;
+    if (pct >= 100)
+        return 1.0f;
+    return (float)pct * 0.01f;
+}
+
+static void clear_chorus_state(void)
+{
+    memset(fx_buf.chorus_l, 0, sizeof(fx_buf.chorus_l));
+    memset(fx_buf.chorus_r, 0, sizeof(fx_buf.chorus_r));
+    st.chorus_wp = 0;
+    st.chorus_lp_l = 0.0f;
+    st.chorus_lp_r = 0.0f;
+}
+
+static void clear_flanger_state(void)
+{
+    memset(fx_buf.flanger_l, 0, sizeof(fx_buf.flanger_l));
+    memset(fx_buf.flanger_r, 0, sizeof(fx_buf.flanger_r));
+    st.flanger_wp = 0;
+    st.flanger_dc_in_l = st.flanger_dc_out_l = 0.0f;
+    st.flanger_dc_in_r = st.flanger_dc_out_r = 0.0f;
+}
+
+static void clear_delay_state(void)
+{
+    memset(fx_buf.delay_l, 0, sizeof(fx_buf.delay_l));
+    memset(fx_buf.delay_r, 0, sizeof(fx_buf.delay_r));
+    st.delay_wp = 0;
+    st.delay_hp_l = st.delay_hp_r = 0.0f;
+    st.delay_lp_l = st.delay_lp_r = 0.0f;
+    st.delay_cur_samp = st.delay_tgt_samp;
+}
+
+static void clear_reverb_state(void)
+{
+    memset(fx_buf.predly_m, 0, sizeof(fx_buf.predly_m));
+    memset(fx_buf.rev_comb_l, 0, sizeof(fx_buf.rev_comb_l));
+    memset(fx_buf.rev_comb_r, 0, sizeof(fx_buf.rev_comb_r));
+    memset(fx_buf.rev_ap_l, 0, sizeof(fx_buf.rev_ap_l));
+    memset(fx_buf.rev_ap_r, 0, sizeof(fx_buf.rev_ap_r));
+    memset(st.rev_comb_idx_l, 0, sizeof(st.rev_comb_idx_l));
+    memset(st.rev_comb_idx_r, 0, sizeof(st.rev_comb_idx_r));
+    memset(st.rev_comb_lp_l, 0, sizeof(st.rev_comb_lp_l));
+    memset(st.rev_comb_lp_r, 0, sizeof(st.rev_comb_lp_r));
+    memset(st.rev_ap_idx_l, 0, sizeof(st.rev_ap_idx_l));
+    memset(st.rev_ap_idx_r, 0, sizeof(st.rev_ap_idx_r));
+    st.rev_predly_wp = 0;
+    st.rev_in_hp_state = 0.0f;
+}
+
+static void clear_eq_state(void)
+{
+    memset(st.eq_z1_l, 0, sizeof(st.eq_z1_l));
+    memset(st.eq_z2_l, 0, sizeof(st.eq_z2_l));
+    memset(st.eq_z1_r, 0, sizeof(st.eq_z1_r));
+    memset(st.eq_z2_r, 0, sizeof(st.eq_z2_r));
+}
+
+static void compute_single_eq_biquad(int band,
+                                     double fs,
+                                     int cutoff_hz,
+                                     int q_tenths,
+                                     int gain_tenths,
+                                     double *out_b0,
+                                     double *out_b1,
+                                     double *out_b2,
+                                     double *out_a1,
+                                     double *out_a2)
+{
+    double f0 = (double)cutoff_hz;
+    if (f0 < 16.0)
+        f0 = 16.0;
+    if (f0 > fs * 0.46)
+        f0 = fs * 0.46;
+
+    double q = (double)q_tenths * 0.1;
+    if (q < 0.25)
+        q = 0.25;
+    if (q > 18.0)
+        q = 18.0;
+
+    double A = pow(10.0, (double)gain_tenths / 400.0);
+    double w0 = 2.0 * M_PI * f0 / fs;
+    double cw = cos(w0);
+    double sw = sin(w0);
+    double alpha = sw / (2.0 * q);
+
+    double b0, b1, b2, a0, a1, a2;
+    if (band == 0)
+    {
+        double sq = 2.0 * sqrt(A) * alpha;
+        b0 = A * ((A + 1.0) - (A - 1.0) * cw + sq);
+        b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cw);
+        b2 = A * ((A + 1.0) - (A - 1.0) * cw - sq);
+        a0 = (A + 1.0) + (A - 1.0) * cw + sq;
+        a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cw);
+        a2 = (A + 1.0) + (A - 1.0) * cw - sq;
+    }
+    else if (band == TAPE_EQ_BANDS - 1)
+    {
+        double sq = 2.0 * sqrt(A) * alpha;
+        b0 = A * ((A + 1.0) + (A - 1.0) * cw + sq);
+        b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cw);
+        b2 = A * ((A + 1.0) + (A - 1.0) * cw - sq);
+        a0 = (A + 1.0) - (A - 1.0) * cw + sq;
+        a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cw);
+        a2 = (A + 1.0) - (A - 1.0) * cw - sq;
+    }
+    else
+    {
+        b0 = 1.0 + alpha * A;
+        b1 = -2.0 * cw;
+        b2 = 1.0 - alpha * A;
+        a0 = 1.0 + alpha / A;
+        a1 = -2.0 * cw;
+        a2 = 1.0 - alpha / A;
+    }
+
+    double inv_a0 = (fabs(a0) > 1e-12) ? (1.0 / a0) : 1.0;
+    *out_b0 = b0 * inv_a0;
+    *out_b1 = b1 * inv_a0;
+    *out_b2 = b2 * inv_a0;
+    *out_a1 = a1 * inv_a0;
+    *out_a2 = a2 * inv_a0;
+}
+
+static void update_eq_coeffs(unsigned int sr)
+{
+    double fs = (sr >= 8000U) ? (double)sr : 44100.0;
+    int next_idx = 1 - s_eq_bank_idx;
+    struct sink_eq_bank *bk = &s_eq_banks[next_idx];
+
+    int pc = s_eq_cfg.precut_tenths;
+    if (pc < -240) pc = -240;
+    if (pc > 240)  pc = 240;
+    bk->preamp_lin = (float)pow(10.0, -(double)pc / 200.0);
+
+    uint32_t mask = 0U;
+    for (int b = 0; b < TAPE_EQ_BANDS; b++)
+    {
+        int g = s_eq_cfg.gain_tenths[b];
+        if (g == 0)
+        {
+            bk->b0[b] = 1.0f;
+            bk->b1[b] = bk->b2[b] = bk->a1[b] = bk->a2[b] = 0.0f;
+            continue;
+        }
+        if (g < -240) g = -240;
+        if (g > 240)  g = 240;
+        double b0, b1, b2, a1, a2;
+        compute_single_eq_biquad(b, fs, s_eq_cfg.cutoff_hz[b], s_eq_cfg.q_tenths[b], g,
+                                 &b0, &b1, &b2, &a1, &a2);
+        bk->b0[b] = (float)b0;
+        bk->b1[b] = (float)b1;
+        bk->b2[b] = (float)b2;
+        bk->a1[b] = (float)a1;
+        bk->a2[b] = (float)a2;
+        mask |= (1U << b);
+    }
+    bk->active_mask = mask;
+    s_eq_bank_idx = next_idx;
+}
+
 static void fire_mech_click(float amp)
 {
     st.click_hi_env = amp;
@@ -280,20 +645,126 @@ static void update_coeffs(unsigned int sr)
     if (w < 0.0f) w = 0.0f;
     if (w > 1.0f) w = 1.0f;
     float mean_dly_frames = 2.0f + (0.35f * w + 0.65f * w * w) * 260.0f * st.sr_scale;
-    st.cur_delay_us = s_cfg.enabled
+    st.cur_delay_us = tape_mode_active()
                     ? (unsigned int)(mean_dly_frames * 1000000.0f / fs)
                     : 0U;
+
+    /* 1. Stereo Chorus coefficients */
+    float ch_rate = clamp01f(s_cfg.chorus_rate_pct);
+    float ch_depth = clamp01f(s_cfg.chorus_depth_pct);
+    float ch_mix = clamp01f(s_cfg.chorus_mix_pct);
+    float ch_hz = 0.15f + 3.05f * ch_rate * ch_rate;
+    st.chorus_inc1 = ch_hz * st.inv_fs;
+    st.chorus_inc2 = (ch_hz * 0.37f) * st.inv_fs;
+    st.chorus_center_samp = 0.0145f * fs;
+    st.chorus_depth_samp  = (0.25f * ch_depth + 0.75f * ch_depth * ch_depth) * 0.0065f * fs;
+    float fc_ch = 9500.0f;
+    if (fc_ch > fs * 0.44f) fc_ch = fs * 0.44f;
+    st.chorus_lp_alpha = 1.0f - expf((float)(-2.0 * M_PI) * fc_ch / fs);
+    st.chorus_dry_g = 1.0f - 0.38f * ch_mix;
+    st.chorus_wet_g = ch_mix * 0.86f;
+
+    /* 2. Stereo Flanger coefficients */
+    float fl_rate = clamp01f(s_cfg.flanger_rate_pct);
+    float fl_depth = clamp01f(s_cfg.flanger_depth_pct);
+    float fl_mix = clamp01f(s_cfg.flanger_mix_pct);
+    int fb_raw = s_cfg.flanger_feedback_pct;
+    if (fb_raw < -90) fb_raw = -90;
+    if (fb_raw > 90)  fb_raw = 90;
+    float fl_hz = 0.07f + 2.45f * fl_rate * fl_rate;
+    st.flanger_inc = fl_hz * st.inv_fs;
+    st.flanger_min_samp  = 0.00055f * fs;
+    st.flanger_span_samp = (0.20f * fl_depth + 0.80f * fl_depth * fl_depth) * 0.0058f * fs;
+    st.flanger_fb = ((float)fb_raw * 0.01f) * 0.96f;
+    st.flanger_dry_g = 1.0f - 0.35f * fl_mix;
+    st.flanger_wet_g = fl_mix * 0.85f;
+
+    /* 3. Stereo / Ping-Pong Delay coefficients */
+    int dly_ms = s_cfg.delay_time_ms;
+    if (dly_ms < 20)   dly_ms = 20;
+    if (dly_ms > 1200) dly_ms = 1200;
+    float tgt_samp = ((float)dly_ms * 0.001f) * fs;
+    if (tgt_samp > (float)(DELAY_RING_FRAMES - 8U))
+        tgt_samp = (float)(DELAY_RING_FRAMES - 8U);
+    st.delay_tgt_samp = tgt_samp;
+    if (st.delay_cur_samp <= 1.0f)
+        st.delay_cur_samp = tgt_samp;
+    st.delay_slew_alpha = 1.0f - expf(-1.0f / (0.045f * fs));
+    int dfb_raw = s_cfg.delay_feedback_pct;
+    if (dfb_raw < 0)  dfb_raw = 0;
+    if (dfb_raw > 92) dfb_raw = 92;
+    st.delay_fb = (float)dfb_raw * 0.01f;
+    float dtone = clamp01f(s_cfg.delay_tone_pct);
+    float fc_dly = 1100.0f * powf(12.5f, dtone);
+    if (fc_dly > fs * 0.44f) fc_dly = fs * 0.44f;
+    st.delay_lp_alpha = 1.0f - expf((float)(-2.0 * M_PI) * fc_dly / fs);
+    st.delay_hp_alpha = 1.0f - expf((float)(-2.0 * M_PI * 85.0) / fs);
+    st.delay_wet_g = clamp01f(s_cfg.delay_mix_pct) * 0.92f;
+
+    /* 4. True-Stereo Studio Reverb coefficients */
+    float rv_size = clamp01f(s_cfg.reverb_size_pct);
+    float rv_damp = clamp01f(s_cfg.reverb_damp_pct);
+    float rv_width = clamp01f(s_cfg.reverb_width_pct);
+    float rv_mix = clamp01f(s_cfg.reverb_mix_pct);
+    int pre_ms = s_cfg.reverb_predelay_ms;
+    if (pre_ms < 0)   pre_ms = 0;
+    if (pre_ms > 150) pre_ms = 150;
+    uint32_t pre_samp = (uint32_t)(((float)pre_ms * 0.001f) * fs);
+    if (pre_samp > PREDELAY_RING_FRAMES - 4U)
+        pre_samp = PREDELAY_RING_FRAMES - 4U;
+    st.rev_predly_samp = pre_samp;
+    st.rev_in_hp_alpha = 1.0f - expf((float)(-2.0 * M_PI * 115.0) / fs);
+    st.rev_feedback = 0.70f + 0.268f * rv_size;
+    /* Sample-rate-invariant HF absorption (1.6 kHz heavy damp .. 14 kHz bright) */
+    float fc_damp = 14000.0f * powf(0.115f, rv_damp);
+    if (fc_damp > fs * 0.44f) fc_damp = fs * 0.44f;
+    st.rev_damp_alpha = 1.0f - expf((float)(-2.0 * M_PI) * fc_damp / fs);
+    float wet_tot = rv_mix * 0.42f;
+    st.rev_wet1 = wet_tot * (rv_width * 0.5f + 0.5f);
+    st.rev_wet2 = wet_tot * ((1.0f - rv_width) * 0.5f);
+    st.rev_dry_g = 1.0f - 0.22f * rv_mix;
+
+    uint32_t spread = (uint32_t)(REV_STEREO_SPREAD_44K * st.sr_scale + 0.5f);
+    if (spread < 1U) spread = 1U;
+    for (uint32_t c = 0; c < REV_NUM_COMBS; c++)
+    {
+        uint32_t ll = (uint32_t)((float)k_rev_comb_base[c] * st.sr_scale + 0.5f);
+        if (ll < 16U) ll = 16U;
+        if (ll >= REV_COMB_CAP - 2U) ll = REV_COMB_CAP - 2U;
+        uint32_t lr = ll + spread;
+        if (lr >= REV_COMB_CAP - 2U) lr = REV_COMB_CAP - 2U;
+        st.rev_comb_len_l[c] = ll;
+        st.rev_comb_len_r[c] = lr;
+        if (st.rev_comb_idx_l[c] >= ll) st.rev_comb_idx_l[c] = 0;
+        if (st.rev_comb_idx_r[c] >= lr) st.rev_comb_idx_r[c] = 0;
+    }
+    for (uint32_t a = 0; a < REV_NUM_ALLPASS; a++)
+    {
+        uint32_t al = (uint32_t)((float)k_rev_allpass_base[a] * st.sr_scale + 0.5f);
+        if (al < 8U) al = 8U;
+        if (al >= REV_ALLPASS_CAP - 2U) al = REV_ALLPASS_CAP - 2U;
+        uint32_t ar = al + spread;
+        if (ar >= REV_ALLPASS_CAP - 2U) ar = REV_ALLPASS_CAP - 2U;
+        st.rev_ap_len_l[a] = al;
+        st.rev_ap_len_r[a] = ar;
+        if (st.rev_ap_idx_l[a] >= al) st.rev_ap_idx_l[a] = 0;
+        if (st.rev_ap_idx_r[a] >= ar) st.rev_ap_idx_r[a] = 0;
+    }
+
+    update_eq_coeffs(sr);
 }
 
 void tape_deck_fx_init(void)
 {
     memset(&st, 0, sizeof(st));
+    memset(&fx_buf, 0, sizeof(fx_buf));
     st.rng    = 0xA341316CU;
     st.ff_rng = 0x6D2B79F5U;
     st.motor_mode  = TAPE_MOTOR_RUN;
     st.motor_speed = 1.0f;
     st.base_age = (double)TAPE_SEED_FRAMES;
     update_coeffs(44100U);
+    st.delay_cur_samp = st.delay_tgt_samp;
     st.frames_until_first_crease = 44100U * 3U;
 }
 
@@ -301,10 +772,22 @@ void tape_deck_fx_set_params(const struct tape_deck_params *p)
 {
     if (!p)
         return;
-    bool was_enabled = s_cfg.enabled;
+    bool prev_tape    = tape_mode_active();
+    bool prev_chorus  = s_cfg.master_enabled && s_cfg.chorus_on;
+    bool prev_flanger = s_cfg.master_enabled && s_cfg.flanger_on;
+    bool prev_delay   = s_cfg.master_enabled && s_cfg.delay_on;
+    bool prev_reverb  = s_cfg.master_enabled && s_cfg.reverb_on;
+
     s_cfg = *p;
+    bool now_tape    = tape_mode_active();
+    bool now_chorus  = s_cfg.master_enabled && s_cfg.chorus_on;
+    bool now_flanger = s_cfg.master_enabled && s_cfg.flanger_on;
+    bool now_delay   = s_cfg.master_enabled && s_cfg.delay_on;
+    bool now_reverb  = s_cfg.master_enabled && s_cfg.reverb_on;
+
     update_coeffs(st.sr ? st.sr : 44100U);
-    if (!was_enabled && s_cfg.enabled)
+
+    if (!prev_tape && now_tape)
     {
         st.seeded_frames = 0;
         st.in_accum = 0.0;
@@ -314,32 +797,118 @@ void tape_deck_fx_set_params(const struct tape_deck_params *p)
         st.motor_speed = 1.0f;
         st.frames_until_first_crease = (uint32_t)(2.8f * (float)(st.sr ? st.sr : 44100U));
     }
+    else if (prev_tape && !now_tape)
+    {
+        st.pause_req_pending = false;
+        st.motor_mode = TAPE_MOTOR_RUN;
+        st.motor_speed = 1.0f;
+    }
+
+    if (!prev_chorus && now_chorus)
+        clear_chorus_state();
+    if (!prev_flanger && now_flanger)
+        clear_flanger_state();
+    if (!prev_delay && now_delay)
+        clear_delay_state();
+    if (!prev_reverb && now_reverb)
+        clear_reverb_state();
+}
+
+void tape_deck_fx_set_eq(bool enabled,
+                         int precut_tenths,
+                         const int cutoff_hz[TAPE_EQ_BANDS],
+                         const int q_tenths[TAPE_EQ_BANDS],
+                         const int gain_tenths[TAPE_EQ_BANDS])
+{
+    bool was_on = s_eq_cfg.enabled;
+    s_eq_cfg.enabled       = enabled;
+    s_eq_cfg.precut_tenths = precut_tenths;
+    if (cutoff_hz && q_tenths && gain_tenths)
+    {
+        for (int i = 0; i < TAPE_EQ_BANDS; i++)
+        {
+            s_eq_cfg.cutoff_hz[i]   = cutoff_hz[i];
+            s_eq_cfg.q_tenths[i]    = q_tenths[i];
+            s_eq_cfg.gain_tenths[i] = gain_tenths[i];
+        }
+    }
+    if (!was_on && enabled)
+        clear_eq_state();
+    update_eq_coeffs(st.sr ? st.sr : 44100U);
+}
+
+void tape_deck_fx_set_eq_bypass(bool bypass)
+{
+    s_eq_bypass = bypass;
+}
+
+int tape_deck_fx_eval_eq_curve_tenths_db(double freq_hz)
+{
+    const double fs = 48000.0;
+    if (freq_hz < 16.0)
+        freq_hz = 16.0;
+    if (freq_hz > fs * 0.46)
+        freq_hz = fs * 0.46;
+
+    double w = 2.0 * M_PI * freq_hz / fs;
+    double c1 = cos(w);
+    double s1 = sin(w);
+    double c2 = cos(2.0 * w);
+    double s2 = sin(2.0 * w);
+
+    double total_mag_sq = 1.0;
+    for (int b = 0; b < TAPE_EQ_BANDS; b++)
+    {
+        int g = s_eq_cfg.gain_tenths[b];
+        if (g == 0)
+            continue;
+        double b0, b1, b2, a1, a2;
+        compute_single_eq_biquad(b, fs, s_eq_cfg.cutoff_hz[b], s_eq_cfg.q_tenths[b], g,
+                                 &b0, &b1, &b2, &a1, &a2);
+        double nr = b0 + b1 * c1 + b2 * c2;
+        double ni = -(b1 * s1 + b2 * s2);
+        double dr = 1.0 + a1 * c1 + a2 * c2;
+        double di = -(a1 * s1 + a2 * s2);
+        double den = dr * dr + di * di;
+        if (den > 1e-18)
+            total_mag_sq *= (nr * nr + ni * ni) / den;
+    }
+
+    if (total_mag_sq <= 1e-12)
+        return -240;
+    double db = 10.0 * log10(total_mag_sq);
+    int tenths = (int)floor(db * 10.0 + 0.5);
+    if (tenths < -240) tenths = -240;
+    if (tenths > 240)  tenths = 240;
+    return tenths;
 }
 
 bool tape_deck_fx_is_enabled(void)
 {
-    return s_cfg.enabled;
+    return sink_eq_active() || tape_mode_active() || studio_fx_active();
 }
 
 bool tape_deck_fx_pause_fx_enabled(void)
 {
-    return s_cfg.enabled && s_cfg.pause_fx;
+    return tape_mode_active() && s_cfg.pause_fx;
 }
 
 float tape_deck_fx_visual_speed(void)
 {
-    if (!s_cfg.enabled || !s_cfg.pause_fx)
+    if (!tape_mode_active() || !s_cfg.pause_fx)
         return 1.0f;
     return st.motor_speed;
 }
 
 unsigned int tape_deck_fx_delay_us(void)
 {
-    return s_cfg.enabled ? st.cur_delay_us : 0U;
+    return tape_mode_active() ? st.cur_delay_us : 0U;
 }
 
 bool tape_deck_fx_is_steady_run(void)
 {
+    if (!tape_mode_active())
+        return true;
     return st.motor_mode == TAPE_MOTOR_RUN &&
            st.seeded_frames >= TAPE_SEED_FRAMES &&
            !st.pause_req_pending;
@@ -347,7 +916,7 @@ bool tape_deck_fx_is_steady_run(void)
 
 bool tape_deck_fx_begin_pause(void)
 {
-    if (!s_cfg.enabled || !s_cfg.pause_fx)
+    if (!tape_mode_active() || !s_cfg.pause_fx)
         return false;
 
     st.ramp_start_speed = (st.motor_speed > 0.08f) ? st.motor_speed : 1.0f;
@@ -360,6 +929,8 @@ bool tape_deck_fx_begin_pause(void)
 
 bool tape_deck_fx_is_stopped_idle(void)
 {
+    if (!tape_mode_active())
+        return false;
     return st.motor_mode == TAPE_MOTOR_STOPPED &&
            st.click_lo_env <= 0.0005f &&
            !st.pause_req_pending;
@@ -381,7 +952,7 @@ void tape_deck_fx_begin_resume(void)
 {
     st.pause_req_pending = false;
 
-    if (!s_cfg.enabled || !s_cfg.pause_fx)
+    if (!tape_mode_active() || !s_cfg.pause_fx)
     {
         st.motor_mode = TAPE_MOTOR_RUN;
         st.motor_speed = 1.0f;
@@ -414,8 +985,14 @@ void tape_deck_fx_on_seek_or_stop(void)
     st.base_age = (double)TAPE_SEED_FRAMES;
     st.crinkle_env = 0.0f;
 
+    clear_chorus_state();
+    clear_flanger_state();
+    clear_delay_state();
+    clear_reverb_state();
+    clear_eq_state();
+
     /* Only do pinch-roller spin-up if user just released manual FF/Rewind */
-    if (st.was_manual_ff && s_cfg.enabled && s_cfg.pause_fx)
+    if (st.was_manual_ff && tape_mode_active() && s_cfg.pause_fx)
     {
         st.was_manual_ff = false;
         st.ramp_start_speed = 0.36f;
@@ -442,7 +1019,7 @@ void tape_deck_fx_set_ffmode(int dir)
     if (dir != 0)
         st.was_manual_ff = true;
 
-    if (!s_cfg.enabled || !s_cfg.ff_sound)
+    if (!tape_mode_active() || !s_cfg.ff_sound)
         return;
 
     if (dir != 0)
@@ -471,7 +1048,7 @@ void tape_deck_fx_set_ffmode(int dir)
 
 bool tape_deck_fx_ff_active(void)
 {
-    if (!s_cfg.enabled || !s_cfg.ff_sound)
+    if (!tape_mode_active() || !s_cfg.ff_sound)
         return false;
     return (st.ff_dir != 0) || (st.ff_vel > 0.01f) || (st.ff_clack_lo_env > 0.001f);
 }
@@ -480,6 +1057,8 @@ int tape_deck_fx_need_seed_frames(unsigned int sample_rate)
 {
     if (sample_rate != st.sr)
         update_coeffs(sample_rate);
+    if (!tape_mode_active())
+        return 0;
     if (st.seeded_frames >= TAPE_SEED_FRAMES)
         return 0;
     return (int)(TAPE_SEED_FRAMES - st.seeded_frames);
@@ -624,6 +1203,230 @@ static inline void update_wow_subblock(float capstan_v)
     st.lfo_rem = LFO_SUBBLOCK;
 }
 
+static inline void process_sink_eq_sample(float *io_l, float *io_r)
+{
+    const struct sink_eq_bank *bk = &s_eq_banks[s_eq_bank_idx];
+    float s_l = *io_l * bk->preamp_lin;
+    float s_r = *io_r * bk->preamp_lin;
+    uint32_t mask = bk->active_mask;
+    if (mask != 0U)
+    {
+        for (int b = 0; b < TAPE_EQ_BANDS; b++)
+        {
+            if ((mask & (1U << b)) == 0U)
+                continue;
+            const float b0 = bk->b0[b];
+            const float b1 = bk->b1[b];
+            const float b2 = bk->b2[b];
+            const float a1 = bk->a1[b];
+            const float a2 = bk->a2[b];
+
+            float yl = b0 * s_l + st.eq_z1_l[b];
+            st.eq_z1_l[b] = b1 * s_l - a1 * yl + st.eq_z2_l[b];
+            st.eq_z2_l[b] = b2 * s_l - a2 * yl;
+            s_l = yl;
+
+            float yr = b0 * s_r + st.eq_z1_r[b];
+            st.eq_z1_r[b] = b1 * s_r - a1 * yr + st.eq_z2_r[b];
+            st.eq_z2_r[b] = b2 * s_r - a2 * yr;
+            s_r = yr;
+        }
+    }
+    *io_l = s_l;
+    *io_r = s_r;
+}
+
+/* Zero-libm real-time studio rack: Chorus -> Flanger -> Delay -> Reverb */
+static inline void process_studio_fx_sample(float *io_l, float *io_r)
+{
+    float s_l = *io_l;
+    float s_r = *io_r;
+
+    /* 1. Multi-Voice Stereo Chorus */
+    if (s_cfg.chorus_on)
+    {
+        uint32_t wp = st.chorus_wp;
+        fx_buf.chorus_l[wp] = s_l;
+        fx_buf.chorus_r[wp] = s_r;
+        uint32_t next_wp = (wp + 1U) & CHORUS_RING_MASK;
+        st.chorus_wp = next_wp;
+
+        st.chorus_ph1 += st.chorus_inc1;
+        if (st.chorus_ph1 >= 1.0f)
+            st.chorus_ph1 -= 1.0f;
+        st.chorus_ph2 += st.chorus_inc2;
+        if (st.chorus_ph2 >= 1.0f)
+            st.chorus_ph2 -= 1.0f;
+
+        float mod_slow = 0.25f * fast_sin2pi(st.chorus_ph2);
+        float l1 = st.chorus_center_samp +
+                   st.chorus_depth_samp * (0.75f * fast_sin2pi(st.chorus_ph1) + mod_slow);
+        float l2 = st.chorus_center_samp * 1.28f +
+                   st.chorus_depth_samp * (0.75f * fast_sin2pi(st.chorus_ph1 + 0.33f) - mod_slow);
+        float r1 = st.chorus_center_samp * 1.04f +
+                   st.chorus_depth_samp * (0.75f * fast_sin2pi(st.chorus_ph1 + 0.50f) - mod_slow);
+        float r2 = st.chorus_center_samp * 1.32f +
+                   st.chorus_depth_samp * (0.75f * fast_sin2pi(st.chorus_ph1 + 0.83f) + mod_slow);
+
+        float wet_l = 0.55f * sample_pow2_ring_linear(fx_buf.chorus_l, CHORUS_RING_MASK, next_wp, l1) +
+                      0.45f * sample_pow2_ring_linear(fx_buf.chorus_r, CHORUS_RING_MASK, next_wp, l2);
+        float wet_r = 0.55f * sample_pow2_ring_linear(fx_buf.chorus_r, CHORUS_RING_MASK, next_wp, r1) +
+                      0.45f * sample_pow2_ring_linear(fx_buf.chorus_l, CHORUS_RING_MASK, next_wp, r2);
+
+        st.chorus_lp_l += st.chorus_lp_alpha * (wet_l - st.chorus_lp_l);
+        st.chorus_lp_r += st.chorus_lp_alpha * (wet_r - st.chorus_lp_r);
+
+        s_l = s_l * st.chorus_dry_g + st.chorus_lp_l * st.chorus_wet_g;
+        s_r = s_r * st.chorus_dry_g + st.chorus_lp_r * st.chorus_wet_g;
+    }
+
+    /* 2. Quadrature Stereo Jet Flanger */
+    if (s_cfg.flanger_on)
+    {
+        st.flanger_ph += st.flanger_inc;
+        if (st.flanger_ph >= 1.0f)
+            st.flanger_ph -= 1.0f;
+
+        float u_l = 0.5f + 0.5f * fast_sin2pi(st.flanger_ph);
+        float u_r = 0.5f + 0.5f * fast_sin2pi(st.flanger_ph + 0.25f);
+        float dly_l = st.flanger_min_samp + u_l * st.flanger_span_samp;
+        float dly_r = st.flanger_min_samp + u_r * st.flanger_span_samp;
+
+        uint32_t wp = st.flanger_wp;
+        float tap_l = sample_pow2_ring_linear(fx_buf.flanger_l, FLANGER_RING_MASK, wp, dly_l);
+        float tap_r = sample_pow2_ring_linear(fx_buf.flanger_r, FLANGER_RING_MASK, wp, dly_r);
+
+        float fb_l = gb_pade_tanh(s_l + tap_l * st.flanger_fb);
+        float fb_r = gb_pade_tanh(s_r + tap_r * st.flanger_fb);
+
+        /* DC blocker in feedback loop prevents low-end offset buildup at high feedback */
+        float dc_l = fb_l - st.flanger_dc_in_l + st.dc_pole * st.flanger_dc_out_l;
+        st.flanger_dc_in_l = fb_l;
+        st.flanger_dc_out_l = dc_l;
+
+        float dc_r = fb_r - st.flanger_dc_in_r + st.dc_pole * st.flanger_dc_out_r;
+        st.flanger_dc_in_r = fb_r;
+        st.flanger_dc_out_r = dc_r;
+
+        fx_buf.flanger_l[wp] = dc_l;
+        fx_buf.flanger_r[wp] = dc_r;
+        st.flanger_wp = (wp + 1U) & FLANGER_RING_MASK;
+
+        s_l = s_l * st.flanger_dry_g + tap_l * st.flanger_wet_g;
+        s_r = s_r * st.flanger_dry_g + tap_r * st.flanger_wet_g;
+    }
+
+    /* 3. Stereo / Ping-Pong Delay with Tape-Echo Time Slew & Filtered Feedback */
+    if (s_cfg.delay_on)
+    {
+        st.delay_cur_samp += st.delay_slew_alpha * (st.delay_tgt_samp - st.delay_cur_samp);
+        uint32_t wp = st.delay_wp;
+
+        float tap_l = sample_pow2_ring_linear(fx_buf.delay_l, DELAY_RING_MASK, wp, st.delay_cur_samp);
+        float tap_r = sample_pow2_ring_linear(fx_buf.delay_r, DELAY_RING_MASK, wp, st.delay_cur_samp);
+
+        /* 85 Hz HPF + Tone LPF inside echo feedback path */
+        st.delay_hp_l += st.delay_hp_alpha * (tap_l - st.delay_hp_l);
+        st.delay_hp_r += st.delay_hp_alpha * (tap_r - st.delay_hp_r);
+        float hp_l = tap_l - st.delay_hp_l;
+        float hp_r = tap_r - st.delay_hp_r;
+
+        st.delay_lp_l += st.delay_lp_alpha * (hp_l - st.delay_lp_l);
+        st.delay_lp_r += st.delay_lp_alpha * (hp_r - st.delay_lp_r);
+        float filt_l = st.delay_lp_l;
+        float filt_r = st.delay_lp_r;
+
+        float wr_l, wr_r;
+        if (s_cfg.delay_pingpong)
+        {
+            float mono_in = (s_l + s_r) * 0.5f;
+            wr_l = gb_pade_tanh(mono_in + filt_r * st.delay_fb);
+            wr_r = gb_pade_tanh(filt_l * st.delay_fb);
+        }
+        else
+        {
+            wr_l = gb_pade_tanh(s_l + filt_l * st.delay_fb);
+            wr_r = gb_pade_tanh(s_r + filt_r * st.delay_fb);
+        }
+
+        fx_buf.delay_l[wp] = wr_l;
+        fx_buf.delay_r[wp] = wr_r;
+        st.delay_wp = (wp + 1U) & DELAY_RING_MASK;
+
+        s_l += filt_l * st.delay_wet_g;
+        s_r += filt_r * st.delay_wet_g;
+    }
+
+    /* 4. True-Stereo Studio Reverb (Pre-Delay + 8 LP-Comb/ch + 4 Allpass/ch) */
+    if (s_cfg.reverb_on)
+    {
+        float mono_raw = (s_l + s_r) * 0.5f;
+        st.rev_in_hp_state += st.rev_in_hp_alpha * (mono_raw - st.rev_in_hp_state);
+        float rev_in_clean = (mono_raw - st.rev_in_hp_state) * 0.032f;
+
+        uint32_t pwp = st.rev_predly_wp;
+        fx_buf.predly_m[pwp] = rev_in_clean;
+        uint32_t prp = (pwp - st.rev_predly_samp) & PREDELAY_RING_MASK;
+        float pre_out = (st.rev_predly_samp == 0U) ? rev_in_clean : fx_buf.predly_m[prp];
+        st.rev_predly_wp = (pwp + 1U) & PREDELAY_RING_MASK;
+
+        float out_l = 0.0f;
+        float out_r = 0.0f;
+        const float fb = st.rev_feedback;
+        const float damp = st.rev_damp_alpha;
+
+        for (uint32_t c = 0; c < REV_NUM_COMBS; c++)
+        {
+            uint32_t il = st.rev_comb_idx_l[c];
+            float yn_l = fx_buf.rev_comb_l[c][il];
+            float lp_l = st.rev_comb_lp_l[c] + damp * (yn_l - st.rev_comb_lp_l[c]);
+            st.rev_comb_lp_l[c] = lp_l;
+            fx_buf.rev_comb_l[c][il] = pre_out + lp_l * fb;
+            if (++il >= st.rev_comb_len_l[c])
+                il = 0;
+            st.rev_comb_idx_l[c] = il;
+            out_l += yn_l;
+
+            uint32_t ir = st.rev_comb_idx_r[c];
+            float yn_r = fx_buf.rev_comb_r[c][ir];
+            float lp_r = st.rev_comb_lp_r[c] + damp * (yn_r - st.rev_comb_lp_r[c]);
+            st.rev_comb_lp_r[c] = lp_r;
+            fx_buf.rev_comb_r[c][ir] = pre_out + lp_r * fb;
+            if (++ir >= st.rev_comb_len_r[c])
+                ir = 0;
+            st.rev_comb_idx_r[c] = ir;
+            out_r += yn_r;
+        }
+
+        for (uint32_t a = 0; a < REV_NUM_ALLPASS; a++)
+        {
+            uint32_t il = st.rev_ap_idx_l[a];
+            float buf_l = fx_buf.rev_ap_l[a][il];
+            float x_l = out_l;
+            out_l = -x_l + buf_l;
+            fx_buf.rev_ap_l[a][il] = x_l + buf_l * 0.5f;
+            if (++il >= st.rev_ap_len_l[a])
+                il = 0;
+            st.rev_ap_idx_l[a] = il;
+
+            uint32_t ir = st.rev_ap_idx_r[a];
+            float buf_r = fx_buf.rev_ap_r[a][ir];
+            float x_r = out_r;
+            out_r = -x_r + buf_r;
+            fx_buf.rev_ap_r[a][ir] = x_r + buf_r * 0.5f;
+            if (++ir >= st.rev_ap_len_r[a])
+                ir = 0;
+            st.rev_ap_idx_r[a] = ir;
+        }
+
+        s_l = s_l * st.rev_dry_g + out_l * st.rev_wet1 + out_r * st.rev_wet2;
+        s_r = s_r * st.rev_dry_g + out_r * st.rev_wet1 + out_l * st.rev_wet2;
+    }
+
+    *io_l = s_l;
+    *io_r = s_r;
+}
+
 static inline void process_core_sample(float base_age_f,
                                        float capstan_v,
                                        float stop_fade,
@@ -678,6 +1481,9 @@ static inline void process_core_sample(float base_age_f,
 
         s_l = sample_ring_linear(st.ring_l, st.write_pos, dly_l);
         s_r = sample_ring_linear(st.ring_r, st.write_pos, dly_r);
+
+        if (sink_eq_active())
+            process_sink_eq_sample(&s_l, &s_r);
 
         if (st.sat_amt > 0.001f)
         {
@@ -769,6 +1575,9 @@ static inline void process_core_sample(float base_age_f,
         st.click_lo_env *= st.click_lo_dec;
     }
 
+    if (studio_fx_active())
+        process_studio_fx_sample(&s_l, &s_r);
+
     if (s_l > 0.96f || s_l < -0.96f)
         s_l = gb_pade_tanh(s_l);
     if (s_r > 0.96f || s_r < -0.96f)
@@ -788,6 +1597,35 @@ void tape_deck_fx_process_steady_block(const int16_t *in_interleaved,
         update_coeffs(sample_rate);
 
     const float inv32768 = 1.0f / 32768.0f;
+
+    if (!tape_mode_active())
+    {
+        const bool eq_on = sink_eq_active();
+        const bool fx_on = studio_fx_active();
+        if (!eq_on && !fx_on)
+        {
+            if (out_interleaved != in_interleaved && frames > 0)
+                memcpy(out_interleaved, in_interleaved, (size_t)frames * 2U * sizeof(int16_t));
+            return;
+        }
+        for (int i = 0; i < frames; i++)
+        {
+            float s_l = (float)in_interleaved[2 * i]     * inv32768;
+            float s_r = (float)in_interleaved[2 * i + 1] * inv32768;
+            if (eq_on)
+                process_sink_eq_sample(&s_l, &s_r);
+            if (fx_on)
+                process_studio_fx_sample(&s_l, &s_r);
+            if (s_l > 0.96f || s_l < -0.96f)
+                s_l = gb_pade_tanh(s_l);
+            if (s_r > 0.96f || s_r < -0.96f)
+                s_r = gb_pade_tanh(s_r);
+            out_interleaved[2 * i]     = float_to_s16(s_l);
+            out_interleaved[2 * i + 1] = float_to_s16(s_r);
+        }
+        return;
+    }
+
     const float age_f = (float)st.base_age;
 
     for (int i = 0; i < frames; i++)

@@ -2648,3 +2648,633 @@
     *: "Неможливо вкласти папку у себе"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_FX_ENABLE
+  desc: UIPod Sound -> Effects master toggle
+  user: core
+  <source>
+    *: "Enable Effects"
+  </source>
+  <dest>
+    *: "Увімкнути ефекти"
+  </dest>
+  <voice>
+    *: "Увімкнути ефекти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB
+  desc: UIPod Sound -> Effects -> Reverb
+  user: core
+  <source>
+    *: "Reverb"
+  </source>
+  <dest>
+    *: "Реверберація"
+  </dest>
+  <voice>
+    *: "Реверберація"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_SIZE
+  desc: UIPod Reverb room size
+  user: core
+  <source>
+    *: "Room Size"
+  </source>
+  <dest>
+    *: "Розмір кімнати"
+  </dest>
+  <voice>
+    *: "Розмір кімнати"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_DAMP
+  desc: UIPod Reverb HF damping
+  user: core
+  <source>
+    *: "Damping"
+  </source>
+  <dest>
+    *: "Демпфування"
+  </dest>
+  <voice>
+    *: "Демпфування"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_PREDELAY
+  desc: UIPod Reverb pre-delay
+  user: core
+  <source>
+    *: "Pre-Delay"
+  </source>
+  <dest>
+    *: "Передзатримка"
+  </dest>
+  <voice>
+    *: "Передзатримка"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_REVERB_WIDTH
+  desc: UIPod Reverb stereo width
+  user: core
+  <source>
+    *: "Stereo Width"
+  </source>
+  <dest>
+    *: "Ширина стерео"
+  </dest>
+  <voice>
+    *: "Ширина стерео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_MIX
+  desc: UIPod Effect dry/wet mix
+  user: core
+  <source>
+    *: "Mix"
+  </source>
+  <dest>
+    *: "Мікс"
+  </dest>
+  <voice>
+    *: "Мікс"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY
+  desc: UIPod Sound -> Effects -> Delay
+  user: core
+  <source>
+    *: "Delay"
+  </source>
+  <dest>
+    *: "Ділей"
+  </dest>
+  <voice>
+    *: "Ділей"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_TIME
+  desc: UIPod Delay time in ms
+  user: core
+  <source>
+    *: "Delay Time"
+  </source>
+  <dest>
+    *: "Час затримки"
+  </dest>
+  <voice>
+    *: "Час затримки"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_FEEDBACK
+  desc: UIPod Delay / Flanger feedback
+  user: core
+  <source>
+    *: "Feedback"
+  </source>
+  <dest>
+    *: "Зворотний зв'язок"
+  </dest>
+  <voice>
+    *: "Зворотний зв'язок"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_TONE
+  desc: UIPod Delay feedback tone filter
+  user: core
+  <source>
+    *: "Tone"
+  </source>
+  <dest>
+    *: "Тон"
+  </dest>
+  <voice>
+    *: "Тон"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DELAY_PINGPONG
+  desc: UIPod Delay stereo ping-pong toggle
+  user: core
+  <source>
+    *: "Ping-Pong"
+  </source>
+  <dest>
+    *: "Пінг-понг"
+  </dest>
+  <voice>
+    *: "Пінг-понг"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_CHORUS
+  desc: UIPod Sound -> Effects -> Chorus
+  user: core
+  <source>
+    *: "Chorus"
+  </source>
+  <dest>
+    *: "Хорус"
+  </dest>
+  <voice>
+    *: "Хорус"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_RATE
+  desc: UIPod Chorus / Flanger LFO rate
+  user: core
+  <source>
+    *: "Rate"
+  </source>
+  <dest>
+    *: "Частота"
+  </dest>
+  <voice>
+    *: "Частота"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FX_DEPTH
+  desc: UIPod Chorus / Flanger modulation depth
+  user: core
+  <source>
+    *: "Depth"
+  </source>
+  <dest>
+    *: "Глибина"
+  </dest>
+  <voice>
+    *: "Глибина"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_FLANGER
+  desc: UIPod Sound -> Effects -> Flanger
+  user: core
+  <source>
+    *: "Flanger"
+  </source>
+  <dest>
+    *: "Фленжер"
+  </dest>
+  <voice>
+    *: "Фленжер"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_GRAPHIC_EQ
+  desc: UIPod Sound -> Equalizer -> Graphic Equalizer
+  user: core
+  <source>
+    *: "Graphic Equalizer"
+  </source>
+  <dest>
+    *: "Графічний еквалайзер"
+  </dest>
+  <voice>
+    *: "Графічний еквалайзер"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_BYPASS
+  desc: UIPod Graphic Equalizer momentary bypass header label
+  user: core
+  <source>
+    *: "Bypass"
+  </source>
+  <dest>
+    *: "Байпас"
+  </dest>
+  <voice>
+    *: "Байпас"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ACCOUNTS
+  desc: UIPod Settings -> Accounts submenu
+  user: core
+  <source>
+    *: "Accounts"
+  </source>
+  <dest>
+    *: "Акаунти"
+  </dest>
+  <voice>
+    *: "Акаунти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LASTFM
+  desc: UIPod Settings -> Accounts -> Last.fm
+  user: core
+  <source>
+    *: "Last.fm"
+  </source>
+  <dest>
+    *: "Last.fm"
+  </dest>
+  <voice>
+    *: "Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SCROBBLING
+  desc: UIPod Last.fm master scrobbling toggle
+  user: core
+  <source>
+    *: "Scrobbling"
+  </source>
+  <dest>
+    *: "Скроблінг"
+  </dest>
+  <voice>
+    *: "Скроблінг"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_ACCOUNT
+  desc: UIPod Last.fm account status row
+  user: core
+  <source>
+    *: "Account"
+  </source>
+  <dest>
+    *: "Акаунт"
+  </dest>
+  <voice>
+    *: "Акаунт"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_NOT_SIGNED_IN
+  desc: UIPod Last.fm signed out status
+  user: core
+  <source>
+    *: "Not signed in"
+  </source>
+  <dest>
+    *: "Не здійснено вхід"
+  </dest>
+  <voice>
+    *: "Не здійснено вхід"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_IN_QR
+  desc: UIPod Last.fm sign in via QR code / web browser
+  user: core
+  <source>
+    *: "Sign In via QR / Browser"
+  </source>
+  <dest>
+    *: "Вхід за QR / браузером"
+  </dest>
+  <voice>
+    *: "Вхід за QR або браузером"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_IN_PASS
+  desc: UIPod Last.fm sign in with username and password
+  user: core
+  <source>
+    *: "Sign In with Password"
+  </source>
+  <dest>
+    *: "Вхід за логіном і паролем"
+  </dest>
+  <voice>
+    *: "Вхід за логіном і паролем"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGN_OUT_Q
+  desc: UIPod Last.fm sign out confirmation prompt
+  user: core
+  <source>
+    *: "Sign out of Last.fm?"
+  </source>
+  <dest>
+    *: "Вийти з Last.fm?"
+  </dest>
+  <voice>
+    *: "Вийти з Last.fm?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SIGNED_IN
+  desc: UIPod Last.fm sign in success splash
+  user: core
+  <source>
+    *: "Signed in"
+  </source>
+  <dest>
+    *: "Вхід виконано"
+  </dest>
+  <voice>
+    *: "Вхід виконано"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SCROBBLE_STREAMING
+  desc: UIPod Last.fm toggle to scrobble Navidrome / Jellyfin tracks
+  user: core
+  <source>
+    *: "Scrobble Streaming"
+  </source>
+  <dest>
+    *: "Скроблити стрімінг"
+  </dest>
+  <voice>
+    *: "Скроблити стрімінг"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_CACHE
+  desc: UIPod Last.fm flush offline cached scrobbles now
+  user: core
+  <source>
+    *: "Sync Cached Scrobbles"
+  </source>
+  <dest>
+    *: "Відправити кеш скроблів"
+  </dest>
+  <voice>
+    *: "Відправити кеш скроблів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_CLEAR_CACHE
+  desc: UIPod Last.fm clear offline cached scrobbles
+  user: core
+  <source>
+    *: "Clear Cached Scrobbles"
+  </source>
+  <dest>
+    *: "Очистити кеш скроблів"
+  </dest>
+  <voice>
+    *: "Очистити кеш скроблів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_CLEAR_CACHE_Q
+  desc: UIPod Last.fm clear cached scrobbles confirmation
+  user: core
+  <source>
+    *: "Clear cached scrobbles?"
+  </source>
+  <dest>
+    *: "Очистити кешовані скробли?"
+  </dest>
+  <voice>
+    *: "Очистити кешовані скробли?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNCING
+  desc: UIPod Last.fm foreground sync status
+  user: core
+  <source>
+    *: "Syncing Last.fm..."
+  </source>
+  <dest>
+    *: "Синхронізація з Last.fm..."
+  </dest>
+  <voice>
+    *: "Синхронізація з Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_EMPTY
+  desc: UIPod Last.fm empty cache message
+  user: core
+  <source>
+    *: "No cached scrobbles"
+  </source>
+  <dest>
+    *: "Немає кешованих скроблів"
+  </dest>
+  <voice>
+    *: "Немає кешованих скроблів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SYNC_DONE
+  desc: UIPod Last.fm flushed scrobbles count format string
+  user: core
+  <source>
+    *: "Scrobbled %d tracks"
+  </source>
+  <dest>
+    *: "Відправлено скроблів: %d"
+  </dest>
+  <voice>
+    *: "Відправлено скробли"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_API_KEY
+  desc: UIPod Last.fm API Key field
+  user: core
+  <source>
+    *: "API Key"
+  </source>
+  <dest>
+    *: "API Key"
+  </dest>
+  <voice>
+    *: "API Key"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_API_SECRET
+  desc: UIPod Last.fm API Shared Secret field
+  user: core
+  <source>
+    *: "API Secret"
+  </source>
+  <dest>
+    *: "API Secret"
+  </dest>
+  <voice>
+    *: "API Secret"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_SET_KEYS_FIRST
+  desc: UIPod Last.fm missing API credentials warning
+  user: core
+  <source>
+    *: "Set API Key & Secret first"
+  </source>
+  <dest>
+    *: "Спочатку вкажіть API Key і Secret"
+  </dest>
+  <voice>
+    *: "Спочатку вкажіть API Key і Secret"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_QR_SCAN
+  desc: UIPod Last.fm QR authorization screen instruction
+  user: core
+  <source>
+    *: "Scan QR code to authorize Last.fm"
+  </source>
+  <dest>
+    *: "Зіскануйте QR-код для входу в Last.fm"
+  </dest>
+  <voice>
+    *: "Зіскануйте QR-код для входу в Last.fm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LFM_QR_WAIT
+  desc: UIPod Last.fm QR authorization waiting hint
+  user: core
+  <source>
+    *: "Waiting for browser approval... (B Cancel)"
+  </source>
+  <dest>
+    *: "Очікування підтвердження... (B Скасувати)"
+  </dest>
+  <voice>
+    *: "Очікування підтвердження"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ASPECT_FIT
+  desc: UIPod video aspect fit mode
+  user: core
+  <source>
+    *: "Fit"
+  </source>
+  <dest>
+    *: "Пропорційно"
+  </dest>
+  <voice>
+    *: "Пропорційно"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ASPECT_STRETCH
+  desc: UIPod video aspect stretch mode
+  user: core
+  <source>
+    *: "Stretch"
+  </source>
+  <dest>
+    *: "Розтягнути"
+  </dest>
+  <voice>
+    *: "Розтягнути"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_VIDEO_SETTINGS
+  desc: UIPod Video Player context menu title
+  user: core
+  <source>
+    *: "Video Settings"
+  </source>
+  <dest>
+    *: "Налаштування Відео"
+  </dest>
+  <voice>
+    *: "Налаштування Відео"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_ASPECT_MODE
+  desc: UIPod Video Player aspect ratio setting label
+  user: core
+  <source>
+    *: "Aspect Fit"
+  </source>
+  <dest>
+    *: "Формат кадру"
+  </dest>
+  <voice>
+    *: "Формат кадру"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_AUDIO_TRACK
+  desc: UIPod Video Player audio track selector label
+  user: core
+  <source>
+    *: "Audio Track"
+  </source>
+  <dest>
+    *: "Аудіодоріжка"
+  </dest>
+  <voice>
+    *: "Аудіодоріжка"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SUBTITLES
+  desc: UIPod Video Player subtitle track selector label
+  user: core
+  <source>
+    *: "Subtitles"
+  </source>
+  <dest>
+    *: "Субтитри"
+  </dest>
+  <voice>
+    *: "Субтитри"
+  </voice>
+</phrase>

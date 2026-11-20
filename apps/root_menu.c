@@ -198,7 +198,7 @@ static const struct root_items items[] = {
     [GO_TO_MAINMENU] =      { uipod_settings_screen, NULL },
     [GO_TO_PLAYLISTS_SCREEN] = { uipod_playlists_screen, NULL },
     [GO_TO_PLAYLIST_VIEWER] = { playlist_view, NULL },
-    [GO_TO_UIPOD_MUSIC] =     { uipod_music_browse, NULL },
+    [GO_TO_UIPOD_MUSIC] =     { uipod_files_browse, NULL },
     [GO_TO_UIPOD_PODCASTS] =  { uipod_podcast_browse, NULL },
     [GO_TO_UIPOD_AUDIOBOOKS] = { uipod_audiobook_browse, NULL },
     [GO_TO_UIPOD_SHUFFLE] =   { uipod_shuffle_all, NULL },
@@ -225,8 +225,6 @@ MENUITEM_RETURNVALUE_CHEVRON(menu_, ID2P(LANG_SETTINGS), GO_TO_MAINMENU,
                         NULL, Icon_Submenu_Entered);
 MENUITEM_RETURNVALUE_CHEVRON(playlists, ID2P(LANG_PLAYLISTS), GO_TO_PLAYLISTS_SCREEN,
                      item_callback, Icon_Playlist);
-MENUITEM_RETURNVALUE_CHEVRON(music_item, ID2P(LANG_UIPOD_FILES), GO_TO_UIPOD_MUSIC,
-                     item_callback, Icon_Audio);
 MENUITEM_RETURNVALUE_CHEVRON(extras_item, ID2P(LANG_UIPOD_EXTRAS), GO_TO_UIPOD_EXTRAS,
                      item_callback, Icon_Submenu_Entered);
 MENUITEM_RETURNVALUE_CHEVRON(podcast_item, ID2P(LANG_UIPOD_PODCASTS), GO_TO_UIPOD_PODCASTS,
@@ -256,7 +254,6 @@ static struct menu_callback_with_desc root_menu_desc = {
 static struct menu_table menu_table[] = {
     /* Browse is the first item on the Main Menu, followed by library & media */
     { "browse", &file_browser },
-    { "files", &music_item },
     { "extras", &extras_item },
     { "artists", &artists_item },
     { "albums", &albums_item },
@@ -373,12 +370,7 @@ static int item_callback(int action,
             return ACTION_REDRAW;
         case ACTION_REQUEST_MENUITEM:
             /* user-toggleable entries (Settings -> Appearance -> Main Menu) */
-            if (this_item == &music_item)
-            {
-                if (!uipod_mainmenu_is_enabled(UIPOD_MM_MUSIC))
-                    return ACTION_EXIT_MENUITEM;
-            }
-            else if (this_item == &extras_item)
+            if (this_item == &extras_item)
             {
                 if (!uipod_mainmenu_is_enabled(UIPOD_MM_EXTRAS))
                     return ACTION_EXIT_MENUITEM;
@@ -453,7 +445,6 @@ static int uipod_root_run(int last)
 #define ROOT_ADD(cond, itemp) \
     do { if (cond) root_menu__[n++] = (struct menu_item_ex *)(itemp); } while (0)
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_BROWSE),     &file_browser);
-    ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_MUSIC),      &music_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_EXTRAS),     &extras_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_ARTISTS),    &artists_item);
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_ALBUMS),     &albums_item);
