@@ -9,8 +9,12 @@
  */
 
 export interface DspParams {
+  fxEnabled?: boolean;
   eq: boolean;
+  eqBypass?: boolean;
   autoeq: number;
+  eqPreamp?: number;     // tenths of dB (-120..+120)
+  eqBands?: number[];    // 10 band gains in tenths of dB (-120..+120)
   tape: boolean;
   wow: number;       // 0..100
   hiss: number;      // 0..100
@@ -18,6 +22,25 @@ export interface DspParams {
   hf: number;        // 0..100
   stopStart: boolean;
   speed: number;     // 50..150 (%)
+  reverb?: boolean;
+  reverbSize?: number;
+  reverbDamp?: number;
+  reverbPredelay?: number;
+  reverbMix?: number;
+  delay?: boolean;
+  delayTime?: number;
+  delayFeedback?: number;
+  delayTone?: number;
+  delayMix?: number;
+  chorus?: boolean;
+  chorusRate?: number;
+  chorusDepth?: number;
+  chorusMix?: number;
+  flanger?: boolean;
+  flangerRate?: number;
+  flangerDepth?: number;
+  flangerFeedback?: number;
+  flangerMix?: number;
 }
 
 const BUILTIN_TRACK_URLS: string[] = [
@@ -56,6 +79,29 @@ export class UIPodAudioEngine {
   private hissNode: AudioBufferSourceNode | null = null;
   private hissGain: GainNode | null = null;
 
+  // Studio FX Web Audio nodes
+  private chorusDelay: DelayNode | null = null;
+  private chorusOsc: OscillatorNode | null = null;
+  private chorusDepthGain: GainNode | null = null;
+  private chorusWet: GainNode | null = null;
+
+  private flangerDelay: DelayNode | null = null;
+  private flangerOsc: OscillatorNode | null = null;
+  private flangerDepthGain: GainNode | null = null;
+  private flangerFbGain: GainNode | null = null;
+  private flangerWet: GainNode | null = null;
+
+  private echoDelay: DelayNode | null = null;
+  private echoFbGain: GainNode | null = null;
+  private echoToneLp: BiquadFilterNode | null = null;
+  private echoWet: GainNode | null = null;
+
+  private reverbPredelay: DelayNode | null = null;
+  private reverbConvolver: ConvolverNode | null = null;
+  private reverbDampLp: BiquadFilterNode | null = null;
+  private reverbWet: GainNode | null = null;
+  private lastReverbSize = -1;
+
   private splitter: ChannelSplitterNode | null = null;
   private analyserL: AnalyserNode | null = null;
   private analyserR: AnalyserNode | null = null;
@@ -64,6 +110,9 @@ export class UIPodAudioEngine {
   private pcmOut = new Int16Array(2048);
 
   private sourceNode: AudioBufferSourceNode | null = null;
+  private seekOsc: OscillatorNode | null = null;
+  private seekLfo: OscillatorNode | null = null;
+  private seekGain: GainNode | null = null;
   private builtinCache = new Map<number, AudioBuffer>();
   private builtinLoading = new Map<number, Promise<AudioBuffer>>();
   private userBuffers = new Map<number, AudioBuffer>();
@@ -188,10 +237,91 @@ export class UIPodAudioEngine {
     master.gain.value = Math.pow(this.volumeNorm, 2.1);
     this.masterGain = master;
 
+    // 1. Chorus send/insert
+    const chDelay = ctx.createDelay(0.05);
+    chDelay.delayTime.value = 0.015;
+    const chOsc = ctx.createOscillator();
+    chOsc.frequency.value = 0.8;
+    const chDepth = ctx.createGain();
+    chDepth.gain.value = 0;
+    const chWet = ctx.createGain();
+    chWet.gain.value = 0;
+    chOsc.connect(chDepth).connect(chDelay.delayTime);
+    chOsc.start();
+    this.chorusDelay = chDelay;
+    this.chorusOsc = chOsc;
+    this.chorusDepthGain = chDepth;
+    this.chorusWet = chWet;
+
+    // 2. Flanger send
+    const flDelay = ctx.createDelay(0.02);
+    flDelay.delayTime.value = 0.003;
+    const flOsc = ctx.createOscillator();
+    flOsc.frequency.value = 0.35;
+    const flDepth = ctx.createGain();
+    flDepth.gain.value = 0;
+    const flFb = ctx.createGain();
+    flFb.gain.value = 0;
+    const flWet = ctx.createGain();
+    flWet.gain.value = 0;
+    flOsc.connect(flDepth).connect(flDelay.delayTime);
+    flDelay.connect(flFb).connect(flDelay);
+    flOsc.start();
+    this.flangerDelay = flDelay;
+    this.flangerOsc = flOsc;
+    this.flangerDepthGain = flDepth;
+    this.flangerFbGain = flFb;
+    this.flangerWet = flWet;
+
+    // 3. Stereo Delay send
+    const ecDelay = ctx.createDelay(1.5);
+    ecDelay.delayTime.value = 0.36;
+    const ecTone = ctx.createBiquadFilter();
+    ecTone.type = 'lowpass';
+    ecTone.frequency.value = 5200;
+    const ecFb = ctx.createGain();
+    ecFb.gain.value = 0;
+    const ecWet = ctx.createGain();
+    ecWet.gain.value = 0;
+    ecDelay.connect(ecTone);
+    ecTone.connect(ecFb).connect(ecDelay);
+    this.echoDelay = ecDelay;
+    this.echoToneLp = ecTone;
+    this.echoFbGain = ecFb;
+    this.echoWet = ecWet;
+
+    // 4. Studio Reverb send
+    const rvPre = ctx.createDelay(0.2);
+    rvPre.delayTime.value = 0.02;
+    const rvConv = ctx.createConvolver();
+    rvConv.buffer = this.makeReverbImpulse(ctx, 65);
+    this.lastReverbSize = 65;
+    const rvDamp = ctx.createBiquadFilter();
+    rvDamp.type = 'lowpass';
+    rvDamp.frequency.value = 6500;
+    const rvWet = ctx.createGain();
+    rvWet.gain.value = 0;
+    rvPre.connect(rvConv).connect(rvDamp).connect(rvWet);
+    this.reverbPredelay = rvPre;
+    this.reverbConvolver = rvConv;
+    this.reverbDampLp = rvDamp;
+    this.reverbWet = rvWet;
+
     this.eqFilters[this.eqFilters.length - 1].connect(delay);
     delay.connect(shaper);
     shaper.connect(lp);
+
+    // Dry + Chorus + Flanger + Delay + Reverb summed into preTap (so visualizers react to FX too!)
     lp.connect(preTap);
+    lp.connect(chDelay);
+    chDelay.connect(chWet).connect(preTap);
+    lp.connect(flDelay);
+    flDelay.connect(flWet).connect(preTap);
+    lp.connect(ecDelay);
+    ecTone.connect(ecWet).connect(preTap);
+    lp.connect(rvPre);
+    rvWet.connect(preTap);
+
     preTap.connect(splitter);
     splitter.connect(analyserL, 0);
     splitter.connect(analyserR, 1);
@@ -200,6 +330,20 @@ export class UIPodAudioEngine {
 
     this.applyDsp(this.dsp);
     return ctx;
+  }
+
+  private makeReverbImpulse(ctx: AudioContext, sizePct: number): AudioBuffer {
+    const dur = 0.6 + (Math.max(0, Math.min(100, sizePct)) / 100) * 3.2;
+    const len = Math.max(1024, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const env = Math.pow(1 - i / len, 2.6);
+        d[i] = (Math.random() * 2 - 1) * env * 0.42;
+      }
+    }
+    return buf;
   }
 
   private makeSaturationCurve(amount: number): Float32Array<ArrayBuffer> {
@@ -226,14 +370,21 @@ export class UIPodAudioEngine {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    const curve = dsp.eq
-      ? AUTOEQ_CURVES[dsp.autoeq % AUTOEQ_CURVES.length]
+    const eqActive = dsp.eq && !dsp.eqBypass;
+    const curve = eqActive
+      ? dsp.eqBands && dsp.eqBands.length === 10
+        ? dsp.eqBands.map((t) => t / 10)
+        : AUTOEQ_CURVES[dsp.autoeq % AUTOEQ_CURVES.length]
       : AUTOEQ_CURVES[0];
     this.eqFilters.forEach((f, i) => {
-      f.gain.setTargetAtTime(curve[i] ?? 0, now, 0.03);
+      f.gain.setTargetAtTime(curve[i] ?? 0, now, 0.02);
     });
+    const preampDb = eqActive && typeof dsp.eqPreamp === 'number' ? dsp.eqPreamp / 10 : 0;
+    this.preTapGain?.gain.setTargetAtTime(Math.pow(10, preampDb / 20), now, 0.02);
 
-    if (dsp.tape) {
+    const fxOn = dsp.fxEnabled !== false;
+
+    if (fxOn && dsp.tape) {
       const wowAmt = (dsp.wow / 100) * 0.0032;
       const flutAmt = (dsp.wow / 100) * 0.00055;
       this.wowGain1?.gain.setTargetAtTime(wowAmt, now, 0.05);
@@ -255,8 +406,67 @@ export class UIPodAudioEngine {
       this.hissGain?.gain.setTargetAtTime(0, now, 0.05);
     }
 
+    // Chorus
+    if (fxOn && dsp.chorus) {
+      const r = (dsp.chorusRate ?? 35) / 100;
+      const d = (dsp.chorusDepth ?? 50) / 100;
+      const m = (dsp.chorusMix ?? 40) / 100;
+      this.chorusOsc?.frequency.setTargetAtTime(0.15 + 3.0 * r * r, now, 0.04);
+      this.chorusDepthGain?.gain.setTargetAtTime(d * 0.006, now, 0.04);
+      this.chorusWet?.gain.setTargetAtTime(m * 0.85, now, 0.04);
+    } else {
+      this.chorusWet?.gain.setTargetAtTime(0, now, 0.03);
+    }
+
+    // Flanger
+    if (fxOn && dsp.flanger) {
+      const r = (dsp.flangerRate ?? 25) / 100;
+      const d = (dsp.flangerDepth ?? 60) / 100;
+      const fb = Math.max(-0.88, Math.min(0.88, ((dsp.flangerFeedback ?? 60) / 100) * 0.92));
+      const m = (dsp.flangerMix ?? 45) / 100;
+      this.flangerOsc?.frequency.setTargetAtTime(0.08 + 2.4 * r * r, now, 0.04);
+      this.flangerDepthGain?.gain.setTargetAtTime(d * 0.0028, now, 0.04);
+      this.flangerFbGain?.gain.setTargetAtTime(fb, now, 0.04);
+      this.flangerWet?.gain.setTargetAtTime(m * 0.85, now, 0.04);
+    } else {
+      this.flangerFbGain?.gain.setTargetAtTime(0, now, 0.03);
+      this.flangerWet?.gain.setTargetAtTime(0, now, 0.03);
+    }
+
+    // Delay
+    if (fxOn && dsp.delay) {
+      const tSec = Math.max(0.04, Math.min(1.2, (dsp.delayTime ?? 360) / 1000));
+      const fb = Math.max(0, Math.min(0.9, (dsp.delayFeedback ?? 45) / 100));
+      const tone = (dsp.delayTone ?? 60) / 100;
+      const m = (dsp.delayMix ?? 35) / 100;
+      this.echoDelay?.delayTime.setTargetAtTime(tSec, now, 0.05);
+      this.echoFbGain?.gain.setTargetAtTime(fb, now, 0.04);
+      this.echoToneLp?.frequency.setTargetAtTime(1100 * Math.pow(12.5, tone), now, 0.04);
+      this.echoWet?.gain.setTargetAtTime(m * 0.9, now, 0.04);
+    } else {
+      this.echoFbGain?.gain.setTargetAtTime(0, now, 0.03);
+      this.echoWet?.gain.setTargetAtTime(0, now, 0.03);
+    }
+
+    // Reverb
+    if (fxOn && dsp.reverb) {
+      const sz = Math.round((dsp.reverbSize ?? 65) / 5) * 5;
+      if (this.reverbConvolver && Math.abs(sz - this.lastReverbSize) >= 5) {
+        this.reverbConvolver.buffer = this.makeReverbImpulse(this.ctx, sz);
+        this.lastReverbSize = sz;
+      }
+      const damp = (dsp.reverbDamp ?? 45) / 100;
+      const pre = Math.max(0, Math.min(0.15, (dsp.reverbPredelay ?? 20) / 1000));
+      const m = (dsp.reverbMix ?? 30) / 100;
+      this.reverbPredelay?.delayTime.setTargetAtTime(pre, now, 0.03);
+      this.reverbDampLp?.frequency.setTargetAtTime(14000 * Math.pow(0.12, damp), now, 0.04);
+      this.reverbWet?.gain.setTargetAtTime(m * 0.95, now, 0.04);
+    } else {
+      this.reverbWet?.gain.setTargetAtTime(0, now, 0.03);
+    }
+
     if (this.sourceNode && this.playing) {
-      const rate = Math.max(0.5, Math.min(1.5, dsp.speed / 100));
+      const rate = fxOn ? Math.max(0.5, Math.min(1.5, dsp.speed / 100)) : 1.0;
       this.sourceNode.playbackRate.setTargetAtTime(rate, now, 0.04);
     }
   }
@@ -336,9 +546,10 @@ export class UIPodAudioEngine {
     src.loop = !isUser;
     src.connect(this.eqFilters[0]);
 
-    const targetRate = Math.max(0.5, Math.min(1.5, this.dsp.speed / 100));
+    const fxOn = this.dsp.fxEnabled !== false;
+    const targetRate = fxOn ? Math.max(0.5, Math.min(1.5, this.dsp.speed / 100)) : 1.0;
     const now = ctx.currentTime;
-    if (this.dsp.tape && this.dsp.stopStart) {
+    if (fxOn && this.dsp.tape && this.dsp.stopStart) {
       src.playbackRate.setValueAtTime(0.32, now);
       src.playbackRate.exponentialRampToValueAtTime(targetRate, now + 0.24);
     } else {
@@ -407,7 +618,7 @@ export class UIPodAudioEngine {
     } else if (this.playing) {
       this.playSeq++;
       this.offsetSec = this.getPositionSec();
-      this.stopSource(this.dsp.tape && this.dsp.stopStart);
+      this.stopSource(this.dsp.fxEnabled !== false && this.dsp.tape && this.dsp.stopStart);
       this.playing = false;
       this.applyDsp(this.dsp);
     }
@@ -418,6 +629,66 @@ export class UIPodAudioEngine {
     if (this.playing) {
       this.playTrack(this.currentTrack, this.offsetSec);
     }
+  }
+
+  public setSeekMotor(dir: number, enabled: boolean): void {
+    if (dir === 0 || !enabled) {
+      if (this.seekGain && this.ctx) {
+        const now = this.ctx.currentTime;
+        this.seekGain.gain.setTargetAtTime(0.0001, now, 0.02);
+      }
+      if (this.seekOsc) {
+        try {
+          this.seekOsc.stop((this.ctx?.currentTime ?? 0) + 0.05);
+        } catch {
+          // ignore
+        }
+        this.seekOsc = null;
+      }
+      if (this.seekLfo) {
+        try {
+          this.seekLfo.stop((this.ctx?.currentTime ?? 0) + 0.05);
+        } catch {
+          // ignore
+        }
+        this.seekLfo = null;
+      }
+      this.seekGain = null;
+      return;
+    }
+
+    const ctx = this.ensureContext();
+    if (this.seekOsc) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const bp = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(dir > 0 ? 410 : 340, now);
+    osc.frequency.exponentialRampToValueAtTime(dir > 0 ? 640 : 520, now + 0.9);
+
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(22, now);
+    lfoGain.gain.setValueAtTime(38, now);
+
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1150, now);
+    bp.Q.setValueAtTime(2.2, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.032 * this.volumeNorm, now + 0.06);
+
+    lfo.connect(lfoGain).connect(osc.frequency);
+    osc.connect(bp).connect(gain).connect(ctx.destination);
+    osc.start(now);
+    lfo.start(now);
+
+    this.seekOsc = osc;
+    this.seekLfo = lfo;
+    this.seekGain = gain;
   }
 
   private stopSource(withTapeSpinDown: boolean): void {

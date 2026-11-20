@@ -1,6 +1,6 @@
 //! Vector primitives and composite UI icons faithfully implementing `assets/icons/ui.figcraft`.
 
-use femtovg::{Align, Baseline, Canvas, Color, FontId, LineCap, LineJoin, Paint, Path, Renderer};
+use femtovg::{Align, Baseline, Canvas, Color, FontId, LineCap, Paint, Path, Renderer};
 
 use crate::{FileIconKind, HeaderSourceIcon, PlayMode};
 
@@ -374,7 +374,7 @@ pub fn draw_charge_bolt<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, col
     draw_charge_bolt_scaled(canvas, x + 5.0, y + 2.0, 1.0, color);
 }
 
-/// Draws a crisp padlock icon (`28x36`) when the Hold switch is engaged.
+/// Draws `icon_lock_64` (`[2968]`/`[2970]`: `30.476x40.0` at `(x + 16.7619, y + 12.0)`) when Hold is engaged.
 pub fn draw_hold_lock<R: Renderer>(
     canvas: &mut Canvas<R>,
     x: f32,
@@ -382,26 +382,308 @@ pub fn draw_hold_lock<R: Renderer>(
     fg: Color,
     bg: Color,
 ) {
-    // Shackle arch
-    let mut shackle = Path::new();
-    shackle.move_to(x + 7.0, y + 16.0);
-    shackle.line_to(x + 7.0, y + 9.0);
-    shackle.arc_to(x + 7.0, y + 2.0, x + 14.0, y + 2.0, 7.0);
-    shackle.arc_to(x + 21.0, y + 2.0, x + 21.0, y + 9.0, 7.0);
-    shackle.line_to(x + 21.0, y + 16.0);
-    let mut sp = Paint::color(fg);
-    sp.set_line_width(3.5);
-    sp.set_line_cap(LineCap::Round);
-    sp.set_line_join(LineJoin::Round);
-    canvas.stroke_path(&shackle, &sp);
+    let ox = x + 16.761_906;
+    let oy = y + 12.0;
 
-    // Body
-    fill_rounded_rect(canvas, x + 2.0, y + 15.0, 24.0, 19.0, 4.0, fg);
-    // Keyhole cutout
-    let mut kh = Path::new();
-    kh.circle(x + 14.0, y + 23.0, 2.5);
-    kh.rounded_rect(x + 12.75, y + 24.0, 2.5, 6.0, 1.0);
-    canvas.fill_path(&kh, &Paint::color(bg));
+    // Outer silhouette: rounded 30.476x26.667 body + 19.048-wide arched shackle (r = 9.5238)
+    let shackle_outer_r = 9.523_81;
+    let mut shackle_outer = Path::new();
+    shackle_outer.rounded_rect(ox + 5.714_285, oy, 19.047_62, 22.0, shackle_outer_r);
+    canvas.fill_path(&shackle_outer, &Paint::color(fg));
+
+    fill_rounded_rect(
+        canvas,
+        ox,
+        oy + 13.333_333,
+        30.476_19,
+        26.666_666,
+        3.809_523_8,
+        fg,
+    );
+
+    // Inner shackle cutout ([2970] loop 2: x=9.5238..20.9524, y=3.8095..13.3333, r=5.7143)
+    let mut shackle_cut = Path::new();
+    shackle_cut.rounded_rect_varying(
+        ox + 9.523_809,
+        oy + 3.809_524,
+        11.428_571,
+        9.523_809,
+        5.714_285_4,
+        5.714_285_4,
+        0.0,
+        0.0,
+    );
+    canvas.fill_path(&shackle_cut, &Paint::color(bg));
+
+    // Circular keyhole cutout ([2970] loop 1: cx=15.2381, cy=26.6667, r=3.8095)
+    let mut keyhole = Path::new();
+    keyhole.circle(ox + 15.238_094, oy + 26.666_666, 3.809_523_8);
+    canvas.fill_path(&keyhole, &Paint::color(bg));
+}
+
+/// Draws `icon_fx_64` (`[3187]`: `40x40` `r=8` badge at `(x+12, y+12)` in `fg` with `[3195]` `FX` cutout in `bg`).
+pub fn draw_fx_64<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    fg: Color,
+    bg: Color,
+) {
+    fill_rounded_rect(canvas, x + 12.0, y + 12.0, 40.0, 40.0, 8.0, fg);
+
+    let ox = x + 12.0 + 5.926_156;
+    let oy = y + 12.0 + 11.6;
+    const F_PTS: [(f32, f32); 10] = [
+        (0.0, 16.8),
+        (0.0, 0.0),
+        (10.836, 0.0),
+        (10.836, 3.24),
+        (3.552, 3.24),
+        (3.552, 7.176),
+        (10.092, 7.176),
+        (10.092, 10.296),
+        (3.552, 10.296),
+        (3.552, 16.8),
+    ];
+    const X_PTS: [(f32, f32); 12] = [
+        (12.559_688, 16.8),
+        (17.839_687, 8.22),
+        (12.799_687, 0.0),
+        (17.071_688, 0.0),
+        (20.395_687, 5.544),
+        (23.863_688, 0.0),
+        (28.015_688, 0.0),
+        (22.807_688, 8.292),
+        (28.147_688, 16.8),
+        (23.839_687, 16.8),
+        (20.239_687, 10.908),
+        (16.747_688, 16.8),
+    ];
+
+    let mut cut = Path::new();
+    cut.move_to(ox + F_PTS[0].0, oy + F_PTS[0].1);
+    for &(px, py) in &F_PTS[1..] {
+        cut.line_to(ox + px, oy + py);
+    }
+    cut.close();
+
+    cut.move_to(ox + X_PTS[0].0, oy + X_PTS[0].1);
+    for &(px, py) in &X_PTS[1..] {
+        cut.line_to(ox + px, oy + py);
+    }
+    cut.close();
+
+    canvas.fill_path(&cut, &Paint::color(bg));
+}
+
+fn append_speaker_cone_and_box(path: &mut Path, ox: f32, oy: f32) {
+    // Exact loops 0 & 1 of `icon_speaker_32` ([1599] & [1602])
+    const V: [(f32, f32); 18] = [
+        (17.997_786, 1.029_413),
+        (17.997_786, 24.956_47),
+        (17.509_096, 25.853_859),
+        (16.384_233, 25.783_867),
+        (8.188_992, 19.409_65),
+        (7.999_016, 19.015_951),
+        (7.999_016, 6.977_431),
+        (8.192_742, 6.583_73),
+        (16.387_983, 0.209_513_96),
+        (17.637_83, 0.229_511_48),
+        (5.499_323_4, 6.997_429),
+        (1.999_754, 6.997_429),
+        (0.0, 8.997_183),
+        (0.0, 16.996_199),
+        (1.999_754, 18.995_953),
+        (5.499_323_4, 18.995_953),
+        (5.999_262, 18.496_014),
+        (5.999_262, 7.497_367_4),
+    ];
+    const CONE_SEGS: [(usize, usize, (f32, f32), (f32, f32)); 10] = [
+        (0, 1, (0.0, 0.0), (0.0, 0.0)),
+        (1, 2, (0.006_189, 0.364_24), (0.309_328, -0.192_42)),
+        (2, 3, (-0.353_638, 0.210_341), (0.324_837, 0.252_557)),
+        (3, 4, (0.0, 0.0), (0.0, 0.0)),
+        (4, 5, (-0.120_385, -0.095_129), (-0.000_444, 0.153_433)),
+        (5, 6, (0.0, 0.0), (0.0, 0.0)),
+        (6, 7, (0.000_459, -0.154_074), (-0.121_793, 0.094_37)),
+        (7, 8, (0.0, 0.0), (0.0, 0.0)),
+        (8, 9, (0.369_952, -0.286_668), (-0.360_589, -0.298_357)),
+        (9, 0, (0.232_782, 0.199_977), (0.004_711, -0.306_849)),
+    ];
+    const BOX_SEGS: [(usize, usize, (f32, f32), (f32, f32)); 8] = [
+        (10, 11, (0.0, 0.0), (0.0, 0.0)),
+        (11, 12, (-1.104_434, 0.0), (0.0, -1.104_434)),
+        (12, 13, (0.0, 0.0), (0.0, 0.0)),
+        (13, 14, (0.0, 1.104_435), (-1.104_434, 0.0)),
+        (14, 15, (0.0, 0.0), (0.0, 0.0)),
+        (15, 16, (0.276_109, 0.0), (0.0, 0.276_108)),
+        (16, 17, (0.0, 0.0), (0.0, 0.0)),
+        (17, 10, (0.0, -0.276_108), (0.276_109, 0.0)),
+    ];
+
+    for loop_segs in [&CONE_SEGS[..], &BOX_SEGS[..]] {
+        let start = V[loop_segs[0].0];
+        path.move_to(ox + start.0, oy + start.1);
+        for &(a, b, ta, tb) in loop_segs {
+            let va = V[a];
+            let vb = V[b];
+            if ta.0.abs() < 1e-5 && ta.1.abs() < 1e-5 && tb.0.abs() < 1e-5 && tb.1.abs() < 1e-5 {
+                path.line_to(ox + vb.0, oy + vb.1);
+            } else {
+                path.bezier_to(
+                    ox + va.0 + ta.0,
+                    oy + va.1 + ta.1,
+                    ox + vb.0 + tb.0,
+                    oy + vb.1 + tb.1,
+                    ox + vb.0,
+                    oy + vb.1,
+                );
+            }
+        }
+        path.close();
+    }
+}
+
+/// Draws `icon_speaker_32` (`Property 1=Silent` `[1601]`/`[1602]`, `32x32`).
+pub fn draw_speaker_silent_32<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
+    let mut path = Path::new();
+    append_speaker_cone_and_box(&mut path, x + 7.001_032, y + 3.002_808);
+    canvas.fill_path(&path, &Paint::color(color));
+}
+
+/// Draws `icon_speaker_32` (`Property 1=Default` `[1597]`/`[1599]`, `32x32` with 2 acoustic waves).
+pub fn draw_speaker_loud_32<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
+    let ox = x + 2.0;
+    let oy = y + 3.002_808;
+    let mut path = Path::new();
+    append_speaker_cone_and_box(&mut path, ox, oy);
+
+    // Exact wave loops 2 & 3 from `[1599]`
+    const W: [(f32, f32); 18] = [
+        (21.343_624, 9.602_108),
+        (21.005_79, 10.289_613),
+        (21.253_635, 11.014_435),
+        (21.253_635, 14.978_947),
+        (21.043_798, 15.965_848),
+        (21.800_613, 16.633_106),
+        (22.753_45, 16.301_285),
+        (22.753_45, 9.692_097),
+        (22.065_346, 9.353_639),
+        (21.339_876, 9.602_108),
+        (26.454_247, 6.331_260_7),
+        (25.493_563, 5.991_954_3),
+        (24.734_112, 6.671_127_3),
+        (24.964_43, 7.663_597),
+        (24.964_43, 18.329_784),
+        (24.734_112, 19.322_254),
+        (25.493_563, 20.001_427),
+        (26.454_247, 19.662_12),
+    ];
+    const WAVE1: [(usize, usize, (f32, f32), (f32, f32)); 10] = [
+        (0, 1, (-0.199_412, 0.175_235), (0.016_88, -0.264_929)),
+        (1, 2, (-0.016_88, 0.264_929), (-0.175_559, -0.199_127)),
+        (2, 3, (0.997_747, 1.133_178), (0.997_747, -1.133_177)),
+        (3, 4, (-0.242_964, 0.266_971), (-0.113_328, -0.342_727)),
+        (4, 5, (0.113_328, 0.342_727), (-0.354_224, -0.069_499)),
+        (5, 6, (0.354_225, 0.069_499), (-0.234_43, 0.274_497)),
+        (6, 7, (1.663_888, -1.888_895), (1.663_888, 1.888_894)),
+        (7, 8, (-0.175_271, -0.199_786), (0.265_234, 0.016_885)),
+        (8, 9, (-0.265_236, -0.016_885), (0.199_19, -0.175_947)),
+        (9, 0, (0.0, 0.0), (0.0, 0.0)),
+    ];
+    const WAVE2: [(usize, usize, (f32, f32), (f32, f32)); 8] = [
+        (10, 11, (-0.234_268, -0.280_006), (0.358_158, -0.070_765)),
+        (11, 12, (-0.358_158, 0.070_765), (0.110_174, -0.348_062)),
+        (12, 13, (-0.110_174, 0.348_062), (-0.252_204, -0.263_967)),
+        (13, 14, (2.716_365, 3.036_561), (2.716_365, -3.036_562)),
+        (14, 15, (-0.252_204, 0.263_967), (-0.110_174, -0.348_062)),
+        (15, 16, (0.110_174, 0.348_062), (-0.358_158, -0.070_765)),
+        (16, 17, (0.358_158, 0.070_765), (-0.234_268, 0.280_006)),
+        (17, 10, (3.394_339, -3.795_414), (3.394_339, 3.795_413)),
+    ];
+
+    for loop_segs in [&WAVE1[..], &WAVE2[..]] {
+        let start = W[loop_segs[0].0];
+        path.move_to(ox + start.0, oy + start.1);
+        for &(a, b, ta, tb) in loop_segs {
+            let va = W[a];
+            let vb = W[b];
+            if ta.0.abs() < 1e-5 && ta.1.abs() < 1e-5 && tb.0.abs() < 1e-5 && tb.1.abs() < 1e-5 {
+                path.line_to(ox + vb.0, oy + vb.1);
+            } else {
+                path.bezier_to(
+                    ox + va.0 + ta.0,
+                    oy + va.1 + ta.1,
+                    ox + vb.0 + tb.0,
+                    oy + vb.1 + tb.1,
+                    ox + vb.0,
+                    oy + vb.1,
+                );
+            }
+        }
+        path.close();
+    }
+    canvas.fill_path(&path, &Paint::color(color));
+}
+
+/// Draws `VolumeBarPopup` (`[3214]`: `527x72`, `r=16`, `padding=16`, `bg` fill + `4px` inside `fg2` stroke).
+pub fn draw_volume_popup<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    level: f32,
+    bg: Color,
+    fg: Color,
+    fg1: Color,
+    fg2: Color,
+) {
+    use crate::layout::volume_popup_spec as vp;
+
+    let clamped = level.clamp(0.0, 1.0);
+    fill_rounded_rect(canvas, x, y, vp::WIDTH, vp::HEIGHT, vp::CORNER_RADIUS, bg);
+    stroke_rounded_rect_inside(
+        canvas,
+        x,
+        y,
+        vp::WIDTH,
+        vp::HEIGHT,
+        vp::CORNER_RADIUS,
+        vp::STROKE_WIDTH,
+        fg2,
+    );
+
+    let bar_x = x + vp::INNER_INSET;
+    let bar_y = y + vp::INNER_INSET;
+    draw_speaker_silent_32(canvas, bar_x, bar_y, fg2);
+
+    let track_x = bar_x + vp::TRACK_OFFSET_X;
+    let track_y = bar_y + vp::TRACK_OFFSET_Y;
+    stroke_rounded_rect_inside(
+        canvas,
+        track_x,
+        track_y,
+        vp::TRACK_WIDTH,
+        vp::TRACK_HEIGHT,
+        vp::TRACK_HEIGHT * 0.5,
+        vp::STROKE_WIDTH,
+        fg1,
+    );
+    if clamped > 0.001 {
+        let max_fill = vp::TRACK_WIDTH - vp::STROKE_WIDTH * 2.0;
+        let fill_h = vp::TRACK_HEIGHT - vp::STROKE_WIDTH * 2.0;
+        let fill_w = (max_fill * clamped).clamp(fill_h, max_fill);
+        fill_rounded_rect(
+            canvas,
+            track_x + vp::STROKE_WIDTH,
+            track_y + vp::STROKE_WIDTH,
+            fill_w,
+            fill_h,
+            fill_h * 0.5,
+            fg,
+        );
+    }
+
+    draw_speaker_loud_32(canvas, bar_x + vp::LOUD_ICON_OFFSET_X, bar_y, fg2);
 }
 
 /// Draws `icon_arrow_64` (`[1590]`/`[1589]`: `40x40` download arrow rotated 180° at `(x+52, y+52)`).

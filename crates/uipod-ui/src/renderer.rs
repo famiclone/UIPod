@@ -15,8 +15,8 @@ use rgb::RGBA8;
 
 use crate::icons::{
     draw_arrow_down_64, draw_arrow_s, draw_battery, draw_chevron_left_s, draw_chevron_s,
-    draw_filetype_icon, draw_header_source_icon, draw_hold_lock, draw_play_mode_icon,
-    draw_scrollbar_v, draw_seekbar_track_h, draw_toggle, fill_rounded_rect,
+    draw_filetype_icon, draw_fx_64, draw_header_source_icon, draw_hold_lock, draw_play_mode_icon,
+    draw_scrollbar_v, draw_seekbar_track_h, draw_toggle, draw_volume_popup, fill_rounded_rect,
     stroke_rounded_rect_inside,
 };
 use crate::layout::{
@@ -25,8 +25,8 @@ use crate::layout::{
     HeaderBoxes, LogicalMetrics, SCREEN_H, SCREEN_W,
 };
 use crate::{
-    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardState, ListRow, ListScreenState,
-    NowPlayingState, RightAccessory, ThemeColors,
+    FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardState, ListRow,
+    ListScreenState, NowPlayingState, RightAccessory, ThemeColors,
 };
 
 pub const WIDTH: usize = 1024;
@@ -204,6 +204,12 @@ pub struct UiEngine {
     art_image: Option<ImageId>,
     art_hash: Option<u64>,
     art_rgba_scratch: Vec<RGBA8>,
+    last_theme: ThemeColors,
+    vol_popup_level: f32,
+    vol_popup_open_ms: u64,
+    vol_popup_last_press_ms: u64,
+    vol_popup_clock_ms: u64,
+    vol_popup_active: bool,
 }
 
 impl UiEngine {
@@ -317,6 +323,12 @@ impl UiEngine {
             art_image: None,
             art_hash: None,
             art_rgba_scratch: vec![RGBA8::new(0, 0, 0, 255); 256 * 256],
+            last_theme: ThemeColors::default(),
+            vol_popup_level: 0.8,
+            vol_popup_open_ms: 0,
+            vol_popup_last_press_ms: 0,
+            vol_popup_clock_ms: 0,
+            vol_popup_active: false,
         };
 
         // Set constant 1024x768 canvas size once, warm up FBO creation, then sync back to Screen.
@@ -554,20 +566,22 @@ impl UiEngine {
         }
     }
 
-    /// Draws the shared `Header` (`[271]`: `960x80` at `(32, 32)` + `4px` bottom border in `fg1`).
+    /// Draws the shared `Header` (`[3105]`: `960x80` at `(32, 32)` + `4px` bottom border in `fg1`).
     fn draw_header_component(
         &mut self,
         boxes: &HeaderBoxes,
         state: &HeaderState,
         pal: ResolvedTheme,
     ) {
+        let regular = self.fonts_regular.clone();
         let semibold = self.fonts_semibold.clone();
+        let icon_y = boxes.right_slot.y;
 
         // Right-side Battery [1564] (64x64): shell in fg2, bar in fg1, cavity/bolt cutout in bg
         draw_battery(
             &mut self.canvas,
             boxes.right_slot.x,
-            boxes.right_slot.y,
+            icon_y,
             state.battery_percent,
             state.is_charging,
             pal.fg2,
@@ -575,11 +589,18 @@ impl UiEngine {
             pal.bg,
         );
 
-        let mut right_guard_x = boxes.right_slot.x - 16.0;
-        let icon_y = boxes.right_slot.y;
+        // Frame 24 [3140]: 32px (`space-4`) gap between Battery and Frame 23 status badges,
+        // and 16px (`space-2`) gap between badges inside Frame 23 [3130].
+        let has_right_badges =
+            state.source_icon != HeaderSourceIcon::None || state.is_downloading || state.is_fx;
+        let mut cursor_right = if has_right_badges {
+            boxes.right_slot.x - 32.0
+        } else {
+            boxes.right_slot.x - 16.0
+        };
 
         if state.source_icon != HeaderSourceIcon::None {
-            let sx = right_guard_x + 16.0 - 16.0 - 64.0;
+            let sx = cursor_right - 64.0;
             draw_header_source_icon(
                 &mut self.canvas,
                 sx,
@@ -588,41 +609,44 @@ impl UiEngine {
                 pal.fg2,
                 pal.bg,
             );
-            right_guard_x = sx - 16.0;
+            cursor_right = sx - 16.0;
         }
 
         if state.is_downloading {
             if state.download_total > 0 {
-                let done = state.download_done.min(state.download_total);
-                let dl_label = format!("{done}/{}", state.download_total);
+                // Group 3 [3110]/[3129]: 64x64 arrow + 4px gap + Geologica Regular 32px queue count
+                let remaining = state.download_total.saturating_sub(state.download_done).max(1);
+                let dl_label = format!("{remaining}");
                 let mut dp = Paint::color(pal.fg2);
-                dp.set_font(&semibold);
-                dp.set_font_size(28.0);
+                dp.set_font(&regular);
+                dp.set_font_size(32.0);
                 dp.set_text_align(Align::Right);
                 dp.set_text_baseline(Baseline::Alphabetic);
                 let text_w = self
                     .canvas
                     .measure_text(0.0, 0.0, &dl_label, &dp)
                     .map(|m| m.width())
-                    .unwrap_or(48.0);
-                let base_y = Self::cap_centered_baseline(boxes.right_slot.center_y(), 28.0);
-                let _ = self.canvas.fill_text(right_guard_x, base_y, &dl_label, &dp);
-                let ax = right_guard_x - text_w - 6.0 - 52.0;
+                    .unwrap_or(40.0);
+                let base_y = Self::cap_centered_baseline(boxes.right_slot.center_y(), 32.0);
+                let _ = self.canvas.fill_text(cursor_right, base_y, &dl_label, &dp);
+                let ax = cursor_right - text_w - 4.0 - 64.0;
                 draw_arrow_down_64(&mut self.canvas, ax, icon_y, pal.fg2);
-                right_guard_x = (ax + 12.0) - 16.0;
+                cursor_right = ax - 16.0;
             } else {
-                let ax = right_guard_x + 16.0 - 16.0 - 64.0;
+                let ax = cursor_right - 64.0;
                 draw_arrow_down_64(&mut self.canvas, ax, icon_y, pal.fg2);
-                right_guard_x = ax - 16.0;
+                cursor_right = ax - 16.0;
             }
         }
 
-        if state.is_hold {
-            let lock_x = right_guard_x + 16.0 - 40.0;
-            let lock_y = boxes.right_slot.center_y() - 18.0;
-            draw_hold_lock(&mut self.canvas, lock_x, lock_y, pal.fg2, pal.bg);
-            right_guard_x = lock_x - 16.0;
+        if state.is_fx {
+            // `icon_fx_64` [3187] directly to the left of the download icon (or source/battery)
+            let fx_x = cursor_right - 64.0;
+            draw_fx_64(&mut self.canvas, fx_x, icon_y, pal.fg2, pal.bg);
+            cursor_right = fx_x - 16.0;
         }
+
+        let right_guard_x = cursor_right;
 
         if !state.legend.trim().is_empty() {
             // Header button-legend (%Tl) overrides left icon + centered title
@@ -636,7 +660,7 @@ impl UiEngine {
             let base_y = Self::text_row_baseline(boxes.title_slot.center_y(), 40.0);
             let _ = self.canvas.fill_text(boxes.container.x, base_y, &txt, &lp);
         } else {
-            // Left play-mode icon [90]/[91] in fg2 (48x48 inside Header left slot)
+            // Group 4 [3128]: Play-mode icon [90] (45x48 at y+8) + optional 16px gap + `icon_lock_64` [2968]
             draw_play_mode_icon(
                 &mut self.canvas,
                 boxes.left_slot.x,
@@ -644,8 +668,15 @@ impl UiEngine {
                 state.play_mode,
                 pal.fg2,
             );
+            let left_guard_x = if state.is_hold {
+                let lock_x = boxes.container.x + 61.0;
+                draw_hold_lock(&mut self.canvas, lock_x, icon_y, pal.fg2, pal.bg);
+                lock_x + 64.0 + 16.0
+            } else {
+                boxes.left_slot.x + 48.0 + 16.0
+            };
 
-            // Centered screen title: Geologica SemiBold 48px in fg centered at x_center = 512.0
+            // Centered screen title: Geologica SemiBold 48px in fg
             let title = if state.title.trim().is_empty() {
                 "UIPod"
             } else {
@@ -658,7 +689,7 @@ impl UiEngine {
             tp.set_text_baseline(Baseline::Alphabetic);
 
             let title_cx = boxes.container.center_x();
-            let half_avail = (title_cx - (boxes.left_slot.x + 56.0))
+            let half_avail = (title_cx - left_guard_x)
                 .min(right_guard_x - title_cx)
                 .max(60.0);
             let fitted = self.truncate_ellipsis(title, half_avail * 2.0, &tp);
@@ -885,6 +916,7 @@ impl UiEngine {
     }
 
     fn draw_list_screen_sized(&mut self, state: &ListScreenState, m: LogicalMetrics) {
+        self.last_theme = state.theme;
         let pal = resolve_theme(state.theme);
         self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
@@ -925,6 +957,7 @@ impl UiEngine {
     }
 
     fn draw_now_playing_screen_sized(&mut self, state: &NowPlayingState, m: LogicalMetrics) {
+        self.last_theme = state.theme;
         let pal = resolve_theme(state.theme);
         self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
@@ -954,16 +987,6 @@ impl UiEngine {
                         8.0,
                     );
                     self.canvas.fill_path(&rect, &paint);
-                    stroke_rounded_rect_inside(
-                        &mut self.canvas,
-                        alt.art_box.x,
-                        alt.art_box.y,
-                        alt.art_box.w,
-                        alt.art_box.h,
-                        8.0,
-                        4.0,
-                        pal.fg,
-                    );
                     true
                 } else {
                     false
@@ -1077,7 +1100,7 @@ impl UiEngine {
                 .fill_text(eq_x + eq_w * 0.5, base_y, "EQ", &eqp);
         }
 
-        // 2. Album Art [1402] Type=Cover (32, 256, 256, 256): r=8 image + 4px inside rounded border [1403]
+        // 2. Album Art [252] (32, 256, 256, 256): r=8 image without stroke (placeholder keeps 4px border)
         let art_drawn = if let Some(rgb24) = state.art_rgb24 {
             if let Some(img_id) =
                 self.ensure_album_art_uploaded(rgb24, state.mono_album_art, state.theme)
@@ -1094,16 +1117,6 @@ impl UiEngine {
                 let mut rect = VgPath::new();
                 rect.rounded_rect(np.art_box.x, np.art_box.y, np.art_box.w, np.art_box.h, 8.0);
                 self.canvas.fill_path(&rect, &paint);
-                stroke_rounded_rect_inside(
-                    &mut self.canvas,
-                    np.art_box.x,
-                    np.art_box.y,
-                    np.art_box.w,
-                    np.art_box.h,
-                    8.0,
-                    4.0,
-                    pal.fg,
-                );
                 true
             } else {
                 false
@@ -1271,6 +1284,7 @@ impl UiEngine {
     }
 
     fn draw_keyboard_screen_sized(&mut self, state: &KeyboardState, m: LogicalMetrics) {
+        self.last_theme = state.theme;
         let pal = resolve_theme(state.theme);
         self.begin_offscreen_sized(m, m.screen_h, pal.bg);
 
@@ -1377,6 +1391,160 @@ impl UiEngine {
         self.draw_keyboard_screen_sized(state, m);
     }
 
+    fn draw_graphic_eq_screen_sized(&mut self, state: &GraphicEqState, m: LogicalMetrics) {
+        const COL_LABELS: [&str; 11] = [
+            "Pre", "31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k",
+        ];
+        const HEADER_PREFIXES: [&str; 11] = [
+            "Pre", "31Hz", "63Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz",
+            "16kHz",
+        ];
+
+        self.last_theme = state.theme;
+        let pal = resolve_theme(state.theme);
+        self.begin_offscreen_sized(m, m.screen_h, pal.bg);
+
+        let sel = state.selected_col.min(10);
+        let cur_tenths: i32 = if sel == 0 {
+            state.preamp_tenths_db as i32
+        } else {
+            state.band_gains_tenths_db[sel - 1] as i32
+        };
+
+        let adj_title = if state.adjusting {
+            let prefix = HEADER_PREFIXES[sel];
+            if cur_tenths > 0 {
+                format!("{prefix}: +{}.{}", cur_tenths / 10, cur_tenths % 10)
+            } else if cur_tenths < 0 {
+                let av = -cur_tenths;
+                format!("{prefix}: -{}.{}", av / 10, av % 10)
+            } else {
+                format!("{prefix}: 0.0")
+            }
+        } else {
+            String::new()
+        };
+
+        let mut hdr = state.header;
+        if state.adjusting {
+            hdr.title = &adj_title;
+        }
+        let header_boxes = compute_header_layout_sized(m.screen_w, m.screen_h);
+        self.draw_header_component(&header_boxes, &hdr, pal);
+
+        // Exact ui.figcraft [3215] Graphic Equalizer geometry:
+        // Header ends at y=112, Frame 28 paddingTop=32 -> sliders start at y=144.
+        // Assembly height on 1024x768 is 572 (track_h=516, gap=16, label_h=40, underline at +572).
+        let margin = horizontal_margin(m.screen_w);
+        let content_x = margin;
+        let content_w = (m.screen_w - margin * 2.0).max(360.0);
+        let top_y = 144.0_f32;
+        let assembly_h = (m.screen_h - top_y - 52.0).max(280.0);
+        let track_h = (assembly_h - 56.0).max(220.0);
+        let label_cy = top_y + track_h + 16.0 + 20.0;
+        let underline_y = top_y + track_h + 56.0;
+
+        let pre_gap = 32.0_f32;
+        let unit_w = (content_w - pre_gap) / 11.0;
+        let pre_col_w = unit_w * (87.27273 / 84.36364);
+        let band_col_w = (content_w - pre_col_w - pre_gap) / 10.0;
+
+        let semibold = self.fonts_semibold.clone();
+        let label_base_y = Self::cap_centered_baseline(label_cy, 32.0);
+
+        for col in 0..11usize {
+            let (col_x, col_w) = if col == 0 {
+                (content_x, pre_col_w)
+            } else {
+                (
+                    content_x + pre_col_w + pre_gap + ((col - 1) as f32) * band_col_w,
+                    band_col_w,
+                )
+            };
+            let is_sel = col == sel;
+            let tenths = if col == 0 {
+                state.preamp_tenths_db as f32
+            } else {
+                state.band_gains_tenths_db[col - 1] as f32
+            };
+
+            // Map -12.0 dB..+12.0 dB (-120..+120 tenths) onto 0.0..=1.0 (0.0 dB = 0.5 center)
+            let norm = ((tenths + 120.0) / 240.0).clamp(0.0, 1.0);
+
+            let track_w = 24.0_f32;
+            let track_x = (col_x + (col_w - track_w) * 0.5).round();
+            let stroke_col = if is_sel { pal.fg2 } else { pal.fg1 };
+            stroke_rounded_rect_inside(
+                &mut self.canvas,
+                track_x,
+                top_y,
+                track_w,
+                track_h,
+                12.0,
+                4.0,
+                stroke_col,
+            );
+
+            let max_fill_h = (track_h - 8.0).max(16.0);
+            let raw_fill_h = (norm * max_fill_h).round();
+            if raw_fill_h > 0.5 {
+                let fill_h = raw_fill_h.clamp(16.0, max_fill_h);
+                let fill_y = top_y + track_h - 4.0 - fill_h;
+                let fill_col = if state.bypassed {
+                    pal.fg1
+                } else if is_sel {
+                    pal.fg
+                } else {
+                    pal.fg2
+                };
+                fill_rounded_rect(
+                    &mut self.canvas,
+                    track_x + 4.0,
+                    fill_y,
+                    16.0,
+                    fill_h,
+                    8.0,
+                    fill_col,
+                );
+            }
+
+            let txt_col = if is_sel { pal.fg } else { pal.fg2 };
+            let mut tp = Paint::color(txt_col);
+            tp.set_font(&semibold);
+            tp.set_font_size(32.0);
+            tp.set_text_align(Align::Center);
+            tp.set_text_baseline(Baseline::Alphabetic);
+
+            let cx = col_x + col_w * 0.5;
+            let lbl = COL_LABELS[col];
+            let _ = self.canvas.fill_text(cx, label_base_y, lbl, &tp);
+
+            if is_sel {
+                let tw = self
+                    .canvas
+                    .measure_text(0.0, 0.0, lbl, &tp)
+                    .map(|m| m.width())
+                    .unwrap_or(40.0);
+                let ul_w = (tw + 4.0).max(44.0).round();
+                let ul_x = (cx - ul_w * 0.5).round();
+                fill_rounded_rect(
+                    &mut self.canvas,
+                    ul_x,
+                    underline_y - 2.0,
+                    ul_w,
+                    4.0,
+                    2.0,
+                    pal.fg,
+                );
+            }
+        }
+    }
+
+    fn draw_graphic_eq_screen(&mut self, state: &GraphicEqState) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.draw_graphic_eq_screen_sized(state, m);
+    }
+
     /// Renders only the top `Header` band (`1024x120`) into Rockbox's `{b, g, r}` framebuffer,
     /// leaving rows `120..768` untouched for non-list screens (dialogs, sliders).
     pub fn render_header_into_bgr(
@@ -1414,6 +1582,13 @@ impl UiEngine {
         self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
     }
 
+    /// Renders the full `1024x768` `Graphic Equalizer` screen into Rockbox's `{b, g, r}` framebuffer.
+    pub fn render_graphic_eq_into_bgr(&mut self, state: &GraphicEqState, fb_bgr: &mut [u8]) {
+        self.draw_graphic_eq_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+    }
+
     /// Renders a full `1024x768` list/menu screen and returns top-down `RGBA8` bytes (for PNG previews/tests).
     pub fn render_list_rgba(&mut self, state: &ListScreenState) -> Vec<u8> {
         self.draw_list_screen(state);
@@ -1426,6 +1601,29 @@ impl UiEngine {
     /// Renders the full `1024x768` `Now Playing` screen and returns top-down `RGBA8` bytes (for PNG previews/tests).
     pub fn render_now_playing_rgba(&mut self, state: &NowPlayingState) -> Vec<u8> {
         self.draw_now_playing_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        let mut out = vec![0u8; WIDTH * HEIGHT * 4];
+        self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
+        out
+    }
+
+    /// Renders the full `1024x768` `Now Playing` screen with the resting `VolumeBarPopup` (`#10977`) and returns `RGBA8`.
+    pub fn render_volume_popup_rgba(&mut self, state: &NowPlayingState, level: f32) -> Vec<u8> {
+        use crate::layout::volume_popup_spec as vp;
+
+        self.draw_now_playing_screen(state);
+        let pal = resolve_theme(state.theme);
+        let px = (WIDTH as f32 - vp::WIDTH) * 0.5;
+        draw_volume_popup(
+            &mut self.canvas,
+            px,
+            vp::REST_Y,
+            level,
+            pal.bg,
+            pal.fg,
+            pal.fg1,
+            pal.fg2,
+        );
         self.finish_and_read_top_rows(HEIGHT);
         let mut out = vec![0u8; WIDTH * HEIGHT * 4];
         self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
@@ -1504,6 +1702,7 @@ impl UiEngine {
         win_w: u32,
         win_h: u32,
     ) {
+        self.last_theme = theme;
         let m = LogicalMetrics::from_physical(win_w, win_h);
         let pal = resolve_theme(theme);
         self.begin_offscreen_sized(m, HEADER_BAND_ROWS as f32, pal.bg);
@@ -1569,6 +1768,26 @@ impl UiEngine {
     /// Renders the QWERTY keyboard directly into `fbo_image` at canonical `1024x768`.
     pub fn render_keyboard_to_fbo(&mut self, state: &KeyboardState) {
         self.render_keyboard_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
+    }
+
+    /// Renders the responsive `Graphic Equalizer` screen directly into `fbo_image` at `(win_w, win_h)`.
+    pub fn render_graphic_eq_to_fbo_sized(
+        &mut self,
+        state: &GraphicEqState,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        self.draw_graphic_eq_screen_sized(state, m);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders the `Graphic Equalizer` screen directly into `fbo_image` at canonical `1024x768`.
+    pub fn render_graphic_eq_to_fbo(&mut self, state: &GraphicEqState) {
+        self.render_graphic_eq_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
     }
 
     /// Presents `fbo_image` directly to the window backbuffer, optionally blending from the
@@ -1705,6 +1924,8 @@ impl UiEngine {
             self.canvas.fill_path(&hq, &p_hdr);
         }
 
+        self.draw_volume_popup_on_screen_internal(win_w, win_h, self.vol_popup_clock_ms);
+
         self.canvas.flush();
         self.canvas
             .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
@@ -1743,6 +1964,7 @@ impl UiEngine {
         win_h: u32,
         responsive: bool,
     ) -> (f32, f32) {
+        self.last_theme = theme;
         let m = LogicalMetrics::from_physical(win_w, win_h);
         let bg = rgb_u32_to_color(bg_rgb);
         self.begin_offscreen_sized(m, m.screen_h, bg);
@@ -1931,6 +2153,119 @@ impl UiEngine {
         self.plugin_sync_fbo_into_bgr(fb_bgr);
     }
 
+    /// Triggers or refreshes the top-sliding `VolumeBarPopup` (`[3214]`: slides down to 1/4 height,
+    /// holds for `2000 ms` after the last volume press, then slides back up off-screen).
+    pub fn trigger_volume_popup(&mut self, level_norm: f32, now_ms: u64) {
+        const SLIDE_IN_MS: f32 = 180.0;
+        let cur_prog = self.compute_volume_popup_progress(now_ms).unwrap_or(0.0);
+        if cur_prog >= 0.995 {
+            self.vol_popup_open_ms = now_ms.saturating_sub(SLIDE_IN_MS as u64);
+        } else if cur_prog > 0.001 {
+            let u = (1.0 - (1.0 - cur_prog).clamp(0.0, 1.0).cbrt()).clamp(0.0, 1.0);
+            self.vol_popup_open_ms = now_ms.saturating_sub((u * SLIDE_IN_MS).round() as u64);
+        } else {
+            self.vol_popup_open_ms = now_ms;
+        }
+        self.vol_popup_level = level_norm.clamp(0.0, 1.0);
+        self.vol_popup_last_press_ms = now_ms;
+        self.vol_popup_clock_ms = now_ms;
+        self.vol_popup_active = true;
+    }
+
+    pub fn set_volume_popup_clock(&mut self, now_ms: u64) {
+        self.vol_popup_clock_ms = now_ms;
+    }
+
+    pub fn set_active_theme(&mut self, theme: ThemeColors) {
+        self.last_theme = theme;
+    }
+
+    /// Returns `Some(progress)` in `0.0..=1.0` while the volume popup is visible or animating,
+    /// or `None` once the 2-second hold + slide-out have completed.
+    pub fn compute_volume_popup_progress(&mut self, now_ms: u64) -> Option<f32> {
+        const SLIDE_IN_MS: f32 = 180.0;
+        const HOLD_MS: u64 = 2000;
+        const SLIDE_OUT_MS: f32 = 200.0;
+
+        if !self.vol_popup_active {
+            return None;
+        }
+        self.vol_popup_clock_ms = now_ms;
+        let hold_end = self.vol_popup_last_press_ms.saturating_add(HOLD_MS);
+        if now_ms < hold_end {
+            let el_in = now_ms.saturating_sub(self.vol_popup_open_ms) as f32;
+            let u = (el_in / SLIDE_IN_MS).clamp(0.0, 1.0);
+            Some(1.0 - (1.0 - u).powi(3))
+        } else {
+            let el_out = (now_ms - hold_end) as f32;
+            if el_out >= SLIDE_OUT_MS {
+                self.vol_popup_active = false;
+                None
+            } else {
+                let u = (el_out / SLIDE_OUT_MS).clamp(0.0, 1.0);
+                Some(1.0 - u.powi(3))
+            }
+        }
+    }
+
+    pub fn is_volume_popup_animating(&mut self, now_ms: u64) -> bool {
+        self.compute_volume_popup_progress(now_ms).is_some()
+    }
+
+    fn draw_volume_popup_on_screen_internal(&mut self, win_w: u32, win_h: u32, now_ms: u64) {
+        use crate::layout::volume_popup_spec as vp;
+
+        let Some(prog) = self.compute_volume_popup_progress(now_ms) else {
+            return;
+        };
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        let pal = resolve_theme(self.last_theme);
+        let hidden_y = vp::HIDDEN_Y;
+        let rest_y = vp::REST_Y;
+        let py = hidden_y + (rest_y - hidden_y) * prog;
+        let px = (m.screen_w - vp::WIDTH) * 0.5;
+
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+        self.canvas.scale(m.scale_x, m.scale_y);
+        draw_volume_popup(
+            &mut self.canvas,
+            px,
+            py,
+            self.vol_popup_level,
+            pal.bg,
+            pal.fg,
+            pal.fg1,
+            pal.fg2,
+        );
+        self.canvas.reset_transform();
+    }
+
+    /// Draws the volume popup directly onto `RenderTarget::Screen` over an already-rendered frame
+    /// (such as the 4-shade GPU visualizer) without clearing the backbuffer.
+    pub fn render_volume_popup_over_screen(
+        &mut self,
+        win_w: u32,
+        win_h: u32,
+        theme: ThemeColors,
+        now_ms: u64,
+    ) -> bool {
+        self.last_theme = theme;
+        if !self.is_volume_popup_animating(now_ms) {
+            return false;
+        }
+        let sw = win_w.max(1);
+        let sh = win_h.max(1);
+        self.canvas.set_size(sw, sh, 1.0);
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.draw_volume_popup_on_screen_internal(sw, sh, now_ms);
+        self.canvas.flush();
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
+        self.restore_gl_state();
+        true
+    }
+
     /// Zero-copy GPU presentation: flushes `self.fbo_image` and blits it straight to
     /// `RenderTarget::Screen` at `(win_w, win_h)`.
     pub fn plugin_present_gpu_screen(&mut self, win_w: u32, win_h: u32) {
@@ -1948,6 +2283,7 @@ impl UiEngine {
         let mut quad = VgPath::new();
         quad.rect(0.0, 0.0, sw as f32, sh as f32);
         self.canvas.fill_path(&quad, &paint);
+        self.draw_volume_popup_on_screen_internal(sw, sh, self.vol_popup_clock_ms);
         self.canvas.flush();
 
         self.canvas

@@ -79,7 +79,7 @@ impl UIPodWasm {
     }
 
     pub fn volume_step(&mut self, delta: i32) {
-        self.app.adjust_volume(delta);
+        self.app.adjust_volume(delta, &mut self.ui);
     }
 
     pub fn set_hold(&mut self, held: bool) {
@@ -197,7 +197,9 @@ impl UIPodWasm {
         menu_click: bool,
     ) {
         self.app.dsp.eq_enabled = eq_enabled;
-        self.app.dsp.autoeq_idx = autoeq_idx % AUTOEQ_PRESETS.len();
+        if self.app.dsp.autoeq_idx != autoeq_idx % AUTOEQ_PRESETS.len() {
+            self.app.apply_autoeq_preset(autoeq_idx);
+        }
         self.app.dsp.tape_enabled = tape_enabled;
         self.app.dsp.tape_wow = wow.min(100);
         self.app.dsp.tape_hiss = hiss.min(100);
@@ -237,6 +239,7 @@ impl UIPodWasm {
             self.app.current_track = idx;
             self.app.pos_ms = 0;
             self.app.dur_ms = self.app.tracks[idx].duration_ms;
+            self.app.audio_playing = true;
             self.app.play_mode = uipod_ui::PlayMode::Play;
             self.app.state_dirty = true;
         }

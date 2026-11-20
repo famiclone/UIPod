@@ -169,6 +169,8 @@ pub struct HeaderState<'a> {
     pub battery_percent: u8,
     pub is_charging: bool,
     pub is_hold: bool,
+    /// Shows `icon_fx_64` (`[3187]`) to the left of the download/source badges when audio FX are active.
+    pub is_fx: bool,
     /// Shows `icon_arrow_64` (`[1590]`) in `Header -> Group 3` while caching/downloading/syncing.
     pub is_downloading: bool,
     /// Completed download count shown beside `icon_arrow_64` (`DONE/TOTAL`) when `download_total > 0`.
@@ -247,4 +249,22 @@ pub struct KeyboardState<'a> {
     pub theme: ThemeColors,
     pub text: &'a str,
     pub rows: [Vec<KeyboardKey<'a>>; 5],
+}
+
+/// Complete state of the `Graphic Equalizer` screen (`[3215]` in `ui.figcraft`:
+/// `Pre` + 10 ISO octave bands `31, 63, 125, 250, 500, 1k, 2k, 4k, 8k, 16k`).
+#[derive(Debug, Clone, Copy)]
+pub struct GraphicEqState<'a> {
+    pub theme: ThemeColors,
+    pub header: HeaderState<'a>,
+    /// Preamp in tenths of dB (`-120..=120`, where `0` = `0.0 dB`).
+    pub preamp_tenths_db: i16,
+    /// 10 band gains in tenths of dB (`-120..=120`, where `0` = `0.0 dB`).
+    pub band_gains_tenths_db: [i16; 10],
+    /// Highlighted slider column `0..=10` (`0` = `Pre`, `1..=10` = `31..16k`).
+    pub selected_col: usize,
+    /// `true` while `A` is held to adjust the selected slider (`Header` shows e.g. `"63Hz: +4.5"`).
+    pub adjusting: bool,
+    /// `true` while `X` is held to momentarily bypass the current EQ curve.
+    pub bypassed: bool,
 }

@@ -18,6 +18,27 @@ pub const SCREEN_W: f32 = 1024.0;
 pub const SCREEN_H: f32 = 768.0;
 pub const LIST_VISIBLE_ROWS: usize = 8;
 
+/// Declarative layout spec for `VolumeBarPopup` (`#3214`) & `Volume Popup` (`#10977` in `ui.figcraft`).
+pub mod volume_popup_spec {
+    pub const WIDTH: f32 = 527.0;
+    pub const HEIGHT: f32 = 72.0;
+    pub const CORNER_RADIUS: f32 = 16.0;
+    pub const STROKE_WIDTH: f32 = 4.0;
+    pub const PADDING: f32 = 16.0;
+    /// Total inset from popup outer border to inner `VolumeBar` (`strokes_included: true`).
+    pub const INNER_INSET: f32 = STROKE_WIDTH + PADDING;
+    pub const BAR_WIDTH: f32 = WIDTH - INNER_INSET * 2.0;
+    pub const BAR_HEIGHT: f32 = 32.0;
+    pub const ICON_SIZE: f32 = 32.0;
+    pub const TRACK_WIDTH: f32 = 360.0;
+    pub const TRACK_HEIGHT: f32 = 16.0;
+    pub const TRACK_OFFSET_X: f32 = (BAR_WIDTH - TRACK_WIDTH) * 0.5;
+    pub const TRACK_OFFSET_Y: f32 = (BAR_HEIGHT - TRACK_HEIGHT) * 0.5;
+    pub const LOUD_ICON_OFFSET_X: f32 = BAR_WIDTH - ICON_SIZE;
+    pub const REST_Y: f32 = 22.0;
+    pub const HIDDEN_Y: f32 = -(HEIGHT + 8.0);
+}
+
 /// Responsive logical canvas metrics derived from physical drawable pixels `(phys_w, phys_h)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LogicalMetrics {

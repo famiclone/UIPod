@@ -455,30 +455,14 @@ async function boot(): Promise<void> {
     }
   });
 
-  // ---- Tactile TrimUI Brick Hardware Buttons (Click + Touch + Long Press) ----
-  const holdTimers = new Map<number, number>();
-
+  // ---- Tactile TrimUI Brick Hardware Buttons (Click + Touch + Firmware 650ms Hold) ----
   function pressHw(mask: number, el?: Element | null): void {
     el?.classList.add('pressed');
     uipod.button_down(mask);
-    if (mask === BTN.A || mask === BTN.B) {
-      const old = holdTimers.get(mask);
-      if (old) window.clearTimeout(old);
-      const id = window.setTimeout(() => {
-        uipod.button_long_press(mask);
-        holdTimers.delete(mask);
-      }, 520);
-      holdTimers.set(mask, id);
-    }
   }
 
   function releaseHw(mask: number, el?: Element | null): void {
     el?.classList.remove('pressed');
-    const id = holdTimers.get(mask);
-    if (id) {
-      window.clearTimeout(id);
-      holdTimers.delete(mask);
-    }
     uipod.button_up(mask);
   }
 
@@ -703,13 +687,20 @@ async function boot(): Promise<void> {
         case 'seek':
           audio.seekMs(Number(cmd.posMs ?? 0));
           break;
+        case 'seekMotor':
+          audio.setSeekMotor(Number(cmd.dir ?? 0), Boolean(cmd.enabled));
+          break;
         case 'volume':
           audio.setVolume(Number(cmd.norm ?? 0.8));
           break;
         case 'dsp':
           audio.applyDsp({
+            fxEnabled: cmd.fxEnabled !== false,
             eq: Boolean(cmd.eq),
+            eqBypass: Boolean(cmd.eqBypass),
             autoeq: Number(cmd.autoeq ?? 0),
+            eqPreamp: typeof cmd.eqPreamp === 'number' ? cmd.eqPreamp : 0,
+            eqBands: Array.isArray(cmd.eqBands) ? (cmd.eqBands as number[]) : undefined,
             tape: Boolean(cmd.tape),
             wow: Number(cmd.wow ?? 35),
             hiss: Number(cmd.hiss ?? 22),
@@ -717,6 +708,25 @@ async function boot(): Promise<void> {
             hf: Number(cmd.hf ?? 40),
             stopStart: Boolean(cmd.stopStart),
             speed: Number(cmd.speed ?? 100),
+            reverb: Boolean(cmd.reverb),
+            reverbSize: Number(cmd.reverbSize ?? 65),
+            reverbDamp: Number(cmd.reverbDamp ?? 45),
+            reverbPredelay: Number(cmd.reverbPredelay ?? 20),
+            reverbMix: Number(cmd.reverbMix ?? 30),
+            delay: Boolean(cmd.delay),
+            delayTime: Number(cmd.delayTime ?? 360),
+            delayFeedback: Number(cmd.delayFeedback ?? 45),
+            delayTone: Number(cmd.delayTone ?? 60),
+            delayMix: Number(cmd.delayMix ?? 35),
+            chorus: Boolean(cmd.chorus),
+            chorusRate: Number(cmd.chorusRate ?? 35),
+            chorusDepth: Number(cmd.chorusDepth ?? 50),
+            chorusMix: Number(cmd.chorusMix ?? 40),
+            flanger: Boolean(cmd.flanger),
+            flangerRate: Number(cmd.flangerRate ?? 25),
+            flangerDepth: Number(cmd.flangerDepth ?? 60),
+            flangerFeedback: Number(cmd.flangerFeedback ?? 60),
+            flangerMix: Number(cmd.flangerMix ?? 45),
           });
           break;
       }

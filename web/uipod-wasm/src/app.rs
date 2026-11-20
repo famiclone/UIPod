@@ -1,12 +1,12 @@
 use uipod_ui::layout::LIST_VISIBLE_ROWS;
 use uipod_ui::{
-    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
-    ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine, VizEngine,
-    VIZ_PRESETS,
+    FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState,
+    ListRow, ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
+    VizEngine, VIZ_PRESETS,
 };
 
 use crate::library::{built_in_demo_tracks, decode_cover_256, Track};
-use crate::plugins::{btn, ActivePlugin, PluginAction, PluginId};
+use crate::plugins::{btn, ActivePlugin, AudioSnapshot, PluginAction, PluginId};
 use crate::themes::{derive_4shade, parse_hex_rgb, THEME_PRESETS};
 
 pub const AUTOEQ_PRESETS: &[&str] = &[
@@ -17,6 +17,16 @@ pub const AUTOEQ_PRESETS: &[&str] = &[
     "Koss Porta Pro",
     "AirPods Pro 2",
     "Studio Warm",
+];
+
+pub const AUTOEQ_CURVES_TENTHS: [([i16; 10], i16); 7] = [
+    ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0),
+    ([-45, -52, -40, -18, 4, 15, 22, 34, 18, 10], -35),
+    ([12, 8, -5, -10, 2, 8, 15, -12, 6, 15], -15),
+    ([48, 32, 5, -14, -6, 0, 12, 18, 22, 16], -50),
+    ([25, 5, -35, -30, -8, 6, 20, 38, 42, 30], -45),
+    ([10, 6, -8, -4, 0, 4, 10, -6, 14, 20], -20),
+    ([28, 22, 12, 4, -4, 0, 6, 12, -8, -14], -30),
 ];
 
 pub const TRANSITION_NAMES_EN: &[&str] = &["Off", "Slide", "Cover", "Fade", "Pixels", "Blinds"];
@@ -44,27 +54,25 @@ const CHANNEL_MODES: &[&str] = &["Stereo", "Mono", "Custom", "Mono Left", "Mono 
 const CROSSFEED_MODES: &[&str] = &["Off", "Meier", "Custom"];
 const RG_TYPES: &[&str] = &["Off", "Track", "Album", "Track (Shuffle)"];
 
-/// Exact 13 toggleable Main Menu rows from `apps/uipod_mainmenu.c` (`uipod_mainmenu_id`).
+/// Exact 12 toggleable Main Menu rows from `apps/uipod_mainmenu.c` (`uipod_mainmenu_id`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainMenuId {
     Browse = 0,
-    Files = 1,
-    Extras = 2,
-    Artists = 3,
-    Albums = 4,
-    Genres = 5,
-    Videos = 6,
-    Songs = 7,
-    Playlists = 8,
-    Podcasts = 9,
-    Audiobooks = 10,
-    Television = 11,
-    Shuffle = 12,
+    Extras = 1,
+    Artists = 2,
+    Albums = 3,
+    Genres = 4,
+    Videos = 5,
+    Songs = 6,
+    Playlists = 7,
+    Podcasts = 8,
+    Audiobooks = 9,
+    Television = 10,
+    Shuffle = 11,
 }
 
-const ALL_MAIN_TOGGLES: [MainMenuId; 13] = [
+const ALL_MAIN_TOGGLES: [MainMenuId; 12] = [
     MainMenuId::Browse,
-    MainMenuId::Files,
     MainMenuId::Extras,
     MainMenuId::Artists,
     MainMenuId::Albums,
@@ -89,7 +97,6 @@ enum MainRowAction {
 pub enum Screen {
     MainMenu { sel: usize },
     Browse { path: String, sel: usize },
-    Files { sel: usize },
     ExtrasMenu { sel: usize },
     PluginsHub { sel: usize },
     PluginCategory { cat: u8, sel: usize },
@@ -103,7 +110,16 @@ pub enum Screen {
     GenreSongs { genre: String, sel: usize },
     AllSongs { sel: usize },
     Playlists { sel: usize },
-    EmptySection { title_en: &'static str, title_uk: &'static str, hint_en: &'static str, hint_uk: &'static str },
+    VideosList { sel: usize },
+    VideoPlayer { playing: bool, pos_ms: u32, dur_ms: u32 },
+    VideoContextMenu { sel: usize },
+    TrackContextMenu { track_idx: usize, sel: usize },
+    EmptySection {
+        title_en: &'static str,
+        title_uk: &'static str,
+        hint_en: &'static str,
+        hint_uk: &'static str,
+    },
     NowPlaying,
     NowPlayingContext { sel: usize },
     SettingsMenu { sel: usize },
@@ -111,20 +127,31 @@ pub enum Screen {
     ThemeList { sel: usize },
     CustomizeThemeMenu { sel: usize },
     MainMenuSettings { sel: usize },
-    KeyboardHex {
-        target: HexTarget,
+    Keyboard {
+        target: KbdTarget,
         text: String,
         row: usize,
         col: usize,
+        caps: bool,
+        sym_mode: bool,
+        allow_symbols: bool,
     },
     SoundMenu { sel: usize },
     EqualizerMenu { sel: usize },
+    GraphicEq { sel: usize },
     AutoEqList { sel: usize },
     EffectsMenu { sel: usize },
     TapeModeMenu { sel: usize },
+    ReverbMenu { sel: usize },
+    DelayMenu { sel: usize },
+    ChorusMenu { sel: usize },
+    FlangerMenu { sel: usize },
     ReplayGainMenu { sel: usize },
     SourcesMenu { sel: usize },
     SourceServerInfo { is_jellyfin: bool, sel: usize },
+    AccountsMenu { sel: usize },
+    LastFmMenu { sel: usize },
+    LastFmQrAuth,
     LibraryMenu { sel: usize },
     LibraryFolderList { kind: u8, sel: usize },
     VisualizersMenu { sel: usize },
@@ -134,18 +161,25 @@ pub enum Screen {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HexTarget {
-    Background,
-    Foreground,
-    Shade1,
-    Shade2,
+pub enum KbdTarget {
+    HexBackground,
+    HexForeground,
+    HexShade1,
+    HexShade2,
+    ServerUrl(bool),
+    ServerUser(bool),
+    LastFmApiKey,
+    LastFmApiSecret,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct DspConfig {
+    pub fx_enabled: bool,
     pub eq_enabled: bool,
+    pub eq_bypass: bool,
     pub autoeq_idx: usize,
-    pub eq_precut_tenth_db: i16,
+    pub eq_preamp_tenths_db: i16,
+    pub eq_bands_tenths_db: [i16; 10],
     pub tape_enabled: bool,
     pub tape_wow: u8,
     pub tape_hiss: u8,
@@ -154,6 +188,27 @@ pub struct DspConfig {
     pub tape_hf_rolloff: u8,
     pub tape_stop_start: bool,
     pub tape_ff_sound: bool,
+    pub reverb_enabled: bool,
+    pub reverb_size: u8,
+    pub reverb_damp: u8,
+    pub reverb_predelay_ms: u8,
+    pub reverb_width: u8,
+    pub reverb_mix: u8,
+    pub delay_enabled: bool,
+    pub delay_time_ms: u16,
+    pub delay_feedback: u8,
+    pub delay_tone: u8,
+    pub delay_pingpong: bool,
+    pub delay_mix: u8,
+    pub chorus_enabled: bool,
+    pub chorus_rate: u8,
+    pub chorus_depth: u8,
+    pub chorus_mix: u8,
+    pub flanger_enabled: bool,
+    pub flanger_rate: u8,
+    pub flanger_depth: u8,
+    pub flanger_feedback: i8,
+    pub flanger_mix: u8,
     pub speed_pct: u16,
     pub menu_click: bool,
     pub rg_type: usize,
@@ -167,9 +222,12 @@ pub struct DspConfig {
 impl Default for DspConfig {
     fn default() -> Self {
         Self {
+            fx_enabled: true,
             eq_enabled: true,
+            eq_bypass: false,
             autoeq_idx: 0,
-            eq_precut_tenth_db: 0,
+            eq_preamp_tenths_db: 0,
+            eq_bands_tenths_db: [0; 10],
             tape_enabled: false,
             tape_wow: 35,
             tape_hiss: 22,
@@ -178,6 +236,27 @@ impl Default for DspConfig {
             tape_hf_rolloff: 40,
             tape_stop_start: true,
             tape_ff_sound: true,
+            reverb_enabled: false,
+            reverb_size: 65,
+            reverb_damp: 45,
+            reverb_predelay_ms: 20,
+            reverb_width: 100,
+            reverb_mix: 30,
+            delay_enabled: false,
+            delay_time_ms: 360,
+            delay_feedback: 45,
+            delay_tone: 60,
+            delay_pingpong: false,
+            delay_mix: 35,
+            chorus_enabled: false,
+            chorus_rate: 35,
+            chorus_depth: 50,
+            chorus_mix: 40,
+            flanger_enabled: false,
+            flanger_rate: 25,
+            flanger_depth: 60,
+            flanger_feedback: 60,
+            flanger_mix: 45,
             speed_pct: 100,
             menu_click: true,
             rg_type: 1,
@@ -194,6 +273,7 @@ pub struct UIPodApp {
     pub tracks: Vec<Track>,
     pub current_track: usize,
     pub play_mode: PlayMode,
+    pub audio_playing: bool,
     pub pos_ms: u32,
     pub dur_ms: u32,
 
@@ -207,9 +287,9 @@ pub struct UIPodApp {
     pub offline_mode: bool,
 
     // Exact shipped Main Menu visibility flags (`apps/uipod_mainmenu.c` mm_default)
-    pub main_menu_enabled: [bool; 13],
+    pub main_menu_enabled: [bool; 12],
 
-    // Now Playing / Visualizers / Power settings
+    // Now Playing / Visualizers / Video / Power / Accounts settings
     pub repeat_idx: usize,
     pub sleep_idx: usize,
     pub viz_delay_idx: usize,
@@ -219,9 +299,19 @@ pub struct UIPodApp {
     pub idle_off_idx: usize,
     pub cpu_idx: usize,
     pub charge_limit_pct: u8,
+    pub video_aspect_idx: usize,
+    pub video_audio_sync_ms: i32,
+    pub navidrome_url: String,
+    pub navidrome_user: String,
+    pub jellyfin_url: String,
+    pub jellyfin_user: String,
+    pub lfm_enabled: bool,
+    pub lfm_streaming: bool,
+    pub lfm_api_key: String,
+    pub lfm_api_secret: String,
 
     pub volume_step: i32,
-    pub volume_toast_t: f32,
+    pub clock_ms: u64,
     pub hold_locked: bool,
 
     pub dsp: DspConfig,
@@ -241,6 +331,20 @@ pub struct UIPodApp {
     repeat_timer: f32,
     repeat_btn: u32,
 
+    // Firmware `tp_hold` (`650 ms`) & smooth Now Playing seek physics (`apps/action.c`)
+    b_deferred: bool,
+    b_hold_sec: f32,
+    b_hold_fired: bool,
+    a_deferred: bool,
+    a_hold_sec: f32,
+    a_hold_fired: bool,
+    seek_dir: i8,
+    seek_hold_sec: f32,
+    seek_active: bool,
+    seek_pos_f: f32,
+    seek_settle_sec: f32,
+    pending_np_skip: i8,
+
     pub outbound_cmds: Vec<String>,
     pub state_dirty: bool,
 }
@@ -253,6 +357,7 @@ impl UIPodApp {
             tracks,
             current_track: 0,
             play_mode: PlayMode::Pause,
+            audio_playing: false,
             pos_ms: 0,
             dur_ms,
             theme: THEME_PRESETS[0].colors,
@@ -264,9 +369,9 @@ impl UIPodApp {
             source_icon: HeaderSourceIcon::MicroSd,
             offline_mode: false,
             // Exact `mm_default` from `apps/uipod_mainmenu.c`:
-            // Browse, Files, Extras, Artists, Albums, Genres, Videos ON; rest OFF
+            // Browse, Extras, Artists, Albums, Genres, Videos ON; rest OFF
             main_menu_enabled: [
-                true, true, true, true, true, true, true, false, false, false, false, false, false,
+                true, true, true, true, true, true, false, false, false, false, false, false,
             ],
             repeat_idx: 0,
             sleep_idx: 0,
@@ -277,8 +382,18 @@ impl UIPodApp {
             idle_off_idx: 2,
             cpu_idx: 0,
             charge_limit_pct: 80,
+            video_aspect_idx: 0,
+            video_audio_sync_ms: 0,
+            navidrome_url: String::new(),
+            navidrome_user: String::new(),
+            jellyfin_url: String::new(),
+            jellyfin_user: String::new(),
+            lfm_enabled: true,
+            lfm_streaming: true,
+            lfm_api_key: String::new(),
+            lfm_api_secret: String::new(),
             volume_step: 32,
-            volume_toast_t: 0.0,
+            clock_ms: 1000,
             hold_locked: false,
             dsp: DspConfig::default(),
             stack: vec![Screen::MainMenu { sel: 0 }],
@@ -292,6 +407,18 @@ impl UIPodApp {
             held_buttons: 0,
             repeat_timer: 0.0,
             repeat_btn: 0,
+            b_deferred: false,
+            b_hold_sec: 0.0,
+            b_hold_fired: false,
+            a_deferred: false,
+            a_hold_sec: 0.0,
+            a_hold_fired: false,
+            seek_dir: 0,
+            seek_hold_sec: 0.0,
+            seek_active: false,
+            seek_pos_f: 0.0,
+            seek_settle_sec: 0.0,
+            pending_np_skip: 0,
             outbound_cmds: Vec::new(),
             state_dirty: true,
         }
@@ -309,7 +436,6 @@ impl UIPodApp {
     fn main_menu_label(&self, id: MainMenuId) -> &'static str {
         match id {
             MainMenuId::Browse => self.tr("Browse", "Огляд"),
-            MainMenuId::Files => self.tr("Files", "Файли"),
             MainMenuId::Extras => self.tr("Extras", "Екстра"),
             MainMenuId::Artists => self.tr("Artists", "Артисти"),
             MainMenuId::Albums => self.tr("Albums", "Альбоми"),
@@ -322,6 +448,17 @@ impl UIPodApp {
             MainMenuId::Television => self.tr("Television", "Серіали"),
             MainMenuId::Shuffle => self.tr("Shuffle All", "Перемішати все"),
         }
+    }
+
+    pub fn is_fx_active(&self) -> bool {
+        let d = &self.dsp;
+        d.fx_enabled
+            && (d.speed_pct != 100
+                || d.tape_enabled
+                || d.reverb_enabled
+                || d.delay_enabled
+                || d.chorus_enabled
+                || d.flanger_enabled)
     }
 
     fn visible_main_rows(&self) -> Vec<MainRowAction> {
@@ -342,19 +479,73 @@ impl UIPodApp {
         }
     }
 
+    pub fn apply_autoeq_preset(&mut self, idx: usize) {
+        let clamped = idx % AUTOEQ_CURVES_TENTHS.len();
+        self.dsp.autoeq_idx = clamped;
+        let (bands, preamp) = AUTOEQ_CURVES_TENTHS[clamped];
+        self.dsp.eq_bands_tenths_db = bands;
+        self.dsp.eq_preamp_tenths_db = preamp;
+        if clamped > 0 {
+            self.dsp.eq_enabled = true;
+        }
+    }
+
     fn emit_dsp(&mut self) {
         let d = self.dsp;
+        let bands_json = format!(
+            "[{},{},{},{},{},{},{},{},{},{}]",
+            d.eq_bands_tenths_db[0],
+            d.eq_bands_tenths_db[1],
+            d.eq_bands_tenths_db[2],
+            d.eq_bands_tenths_db[3],
+            d.eq_bands_tenths_db[4],
+            d.eq_bands_tenths_db[5],
+            d.eq_bands_tenths_db[6],
+            d.eq_bands_tenths_db[7],
+            d.eq_bands_tenths_db[8],
+            d.eq_bands_tenths_db[9],
+        );
         self.outbound_cmds.push(format!(
-            r#"{{"type":"dsp","eq":{},"autoeq":{},"tape":{},"wow":{},"hiss":{},"sat":{},"hf":{},"stopStart":{},"speed":{}}}"#,
+            concat!(
+                r#"{{"type":"dsp","fxEnabled":{},"eq":{},"eqBypass":{},"autoeq":{},"eqPreamp":{},"eqBands":{},"#,
+                r#""tape":{},"wow":{},"hiss":{},"sat":{},"hf":{},"stopStart":{},"speed":{},"#,
+                r#""reverb":{},"reverbSize":{},"reverbDamp":{},"reverbPredelay":{},"reverbMix":{},"#,
+                r#""delay":{},"delayTime":{},"delayFeedback":{},"delayTone":{},"delayMix":{},"#,
+                r#""chorus":{},"chorusRate":{},"chorusDepth":{},"chorusMix":{},"#,
+                r#""flanger":{},"flangerRate":{},"flangerDepth":{},"flangerFeedback":{},"flangerMix":{}}}"#
+            ),
+            d.fx_enabled,
             d.eq_enabled,
+            d.eq_bypass,
             d.autoeq_idx,
+            d.eq_preamp_tenths_db,
+            bands_json,
             d.tape_enabled,
             d.tape_wow,
             d.tape_hiss,
             d.tape_sat,
             d.tape_hf_rolloff,
             d.tape_stop_start,
-            d.speed_pct
+            d.speed_pct,
+            d.reverb_enabled,
+            d.reverb_size,
+            d.reverb_damp,
+            d.reverb_predelay_ms,
+            d.reverb_mix,
+            d.delay_enabled,
+            d.delay_time_ms,
+            d.delay_feedback,
+            d.delay_tone,
+            d.delay_mix,
+            d.chorus_enabled,
+            d.chorus_rate,
+            d.chorus_depth,
+            d.chorus_mix,
+            d.flanger_enabled,
+            d.flanger_rate,
+            d.flanger_depth,
+            d.flanger_feedback,
+            d.flanger_mix
         ));
         self.state_dirty = true;
     }
@@ -395,42 +586,200 @@ impl UIPodApp {
         self.state_dirty = true;
     }
 
-    fn emit_toggle_play_pause(&mut self) {
-        if self.play_mode == PlayMode::Play {
-            self.play_mode = PlayMode::Pause;
-        } else {
-            self.play_mode = PlayMode::Play;
+    fn emit_set_playing(&mut self, should_play: bool) {
+        self.audio_playing = should_play;
+        if !self.seek_active {
+            self.play_mode = if should_play {
+                PlayMode::Play
+            } else {
+                PlayMode::Pause
+            };
         }
         self.outbound_cmds.push(format!(
             r#"{{"type":"setPlaying","playing":{},"trackIndex":{}}}"#,
-            self.play_mode == PlayMode::Play,
-            self.current_track
+            should_play, self.current_track
         ));
+        self.state_dirty = true;
+    }
+
+    fn emit_toggle_play_pause(&mut self) {
+        let next = !self.audio_playing && self.play_mode != PlayMode::Play;
+        self.emit_set_playing(next);
+    }
+
+    fn emit_seek_abs(&mut self, pos_ms: u32) {
+        let clamped = pos_ms.min(self.dur_ms);
+        self.pos_ms = clamped;
+        self.seek_settle_sec = 0.25;
+        self.outbound_cmds
+            .push(format!(r#"{{"type":"seek","posMs":{clamped}}}"#));
         self.state_dirty = true;
     }
 
     fn emit_seek_delta(&mut self, delta_ms: i32) {
         let next = (self.pos_ms as i64 + delta_ms as i64).clamp(0, self.dur_ms as i64) as u32;
-        self.pos_ms = next;
-        self.outbound_cmds
-            .push(format!(r#"{{"type":"seek","posMs":{next}}}"#));
+        self.emit_seek_abs(next);
+    }
+
+    fn emit_seek_motor(&mut self, dir: i8) {
+        let enabled =
+            dir != 0 && self.dsp.fx_enabled && self.dsp.tape_enabled && self.dsp.tape_ff_sound;
+        self.outbound_cmds.push(format!(
+            r#"{{"type":"seekMotor","dir":{dir},"enabled":{enabled}}}"#
+        ));
+    }
+
+    fn cancel_seek_if_active(&mut self) {
+        if self.seek_active {
+            self.seek_active = false;
+            self.emit_seek_motor(0);
+            self.play_mode = if self.audio_playing {
+                PlayMode::Play
+            } else {
+                PlayMode::Pause
+            };
+        }
+        self.seek_dir = 0;
+        self.seek_hold_sec = 0.0;
     }
 
     pub fn volume_db(&self) -> i32 {
         ((self.volume_step - 40) as f32 * 1.5).round() as i32
     }
 
-    pub fn adjust_volume(&mut self, delta: i32) {
+    pub fn adjust_volume(&mut self, delta: i32, ui: &mut UiEngine) {
         self.volume_step = (self.volume_step + delta).clamp(0, 40);
-        self.volume_toast_t = 1.6;
         let norm = self.volume_step as f32 / 40.0;
-        self.outbound_cmds
-            .push(format!(r#"{{"type":"volume","norm":{norm:.3},"db":{}}}"#, self.volume_db()));
+        ui.trigger_volume_popup(norm, self.clock_ms);
+        self.outbound_cmds.push(format!(
+            r#"{{"type":"volume","norm":{norm:.3},"db":{}}}"#,
+            self.volume_db()
+        ));
         self.state_dirty = true;
     }
 
     pub fn set_hold(&mut self, held: bool) {
         self.hold_locked = held;
+        if held {
+            self.cancel_seek_if_active();
+            self.held_buttons = 0;
+            self.b_deferred = false;
+            self.a_deferred = false;
+        }
+        self.state_dirty = true;
+    }
+
+    fn is_context_aware_screen(&self) -> bool {
+        matches!(
+            self.stack.last(),
+            Some(
+                Screen::NowPlaying
+                    | Screen::VideoPlayer { .. }
+                    | Screen::MainMenu { .. }
+                    | Screen::Browse { .. }
+                    | Screen::Artists { .. }
+                    | Screen::ArtistSongs { .. }
+                    | Screen::Albums { .. }
+                    | Screen::AlbumSongs { .. }
+                    | Screen::Genres { .. }
+                    | Screen::GenreSongs { .. }
+                    | Screen::AllSongs { .. }
+                    | Screen::Playlists { .. }
+            )
+        )
+    }
+
+    fn resolved_selected_track_for_top(&self) -> Option<usize> {
+        match self.stack.last()? {
+            Screen::AllSongs { sel } => (*sel < self.tracks.len()).then_some(*sel),
+            Screen::Browse { path, sel } if path == "/mnt/SDCARD/Media/Music" => {
+                (*sel < self.tracks.len()).then_some(*sel)
+            }
+            Screen::ArtistSongs { artist, sel } => self
+                .tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| &t.artist == artist)
+                .map(|(i, _)| i)
+                .nth(*sel),
+            Screen::AlbumSongs { album, sel } => self
+                .tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| &t.album == album)
+                .map(|(i, _)| i)
+                .nth(*sel),
+            Screen::GenreSongs { genre, sel } => self
+                .tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| &t.genre == genre)
+                .map(|(i, _)| i)
+                .nth(*sel),
+            Screen::Playlists { sel } => {
+                (!self.tracks.is_empty()).then_some(*sel % self.tracks.len())
+            }
+            _ => (!self.tracks.is_empty()).then_some(self.current_track),
+        }
+    }
+
+    fn open_context_menu_for_top(&mut self, ui: &mut UiEngine) -> bool {
+        match self.stack.last() {
+            Some(Screen::NowPlaying) => {
+                self.emit_click();
+                self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
+                true
+            }
+            Some(Screen::VideoPlayer { .. }) => {
+                self.emit_click();
+                self.push_screen(Screen::VideoContextMenu { sel: 0 }, ui);
+                true
+            }
+            Some(Screen::MainMenu { .. }) => {
+                self.emit_click();
+                self.push_screen(Screen::SettingsMenu { sel: 0 }, ui);
+                true
+            }
+            Some(
+                Screen::Browse { .. }
+                | Screen::Artists { .. }
+                | Screen::ArtistSongs { .. }
+                | Screen::Albums { .. }
+                | Screen::AlbumSongs { .. }
+                | Screen::Genres { .. }
+                | Screen::GenreSongs { .. }
+                | Screen::AllSongs { .. }
+                | Screen::Playlists { .. },
+            ) => {
+                if let Some(track_idx) = self.resolved_selected_track_for_top() {
+                    self.emit_click();
+                    self.push_screen(
+                        Screen::TrackContextMenu {
+                            track_idx,
+                            sel: 0,
+                        },
+                        ui,
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn go_home(&mut self, ui: &mut UiEngine) {
+        self.cancel_seek_if_active();
+        self.emit_click();
+        self.active_plugin = None;
+        if matches!(self.stack.last(), Some(Screen::MainMenu { .. })) && self.stack.len() == 1 {
+            return;
+        }
+        ui.snapshot_fbo_for_transition();
+        self.stack.clear();
+        self.stack.push(Screen::MainMenu { sel: 0 });
+        self.start_transition(-1);
         self.state_dirty = true;
     }
 
@@ -438,10 +787,43 @@ impl UIPodApp {
         if self.hold_locked {
             return;
         }
-        self.pending_pressed |= mask;
         self.held_buttons |= mask;
-        self.repeat_btn = mask;
-        self.repeat_timer = 0.0;
+
+        let on_keyboard = matches!(self.stack.last(), Some(Screen::Keyboard { .. }));
+        let on_now_playing = matches!(self.stack.last(), Some(Screen::NowPlaying));
+        let ctx_aware = self.is_context_aware_screen();
+
+        let mut immediate = mask;
+
+        // `B` uses `650 ms` `tp_hold` (`Hold B` -> Main Menu, tap on release) everywhere except Keyboard
+        if (mask & btn::B) != 0 && !on_keyboard {
+            immediate &= !btn::B;
+            self.b_deferred = true;
+            self.b_hold_sec = 0.0;
+            self.b_hold_fired = false;
+        }
+
+        // `A` uses `650 ms` `tp_hold` (`Hold A` -> Context Menu, tap on release) on context-aware screens
+        if (mask & btn::A) != 0 && ctx_aware {
+            immediate &= !btn::A;
+            self.a_deferred = true;
+            self.a_hold_sec = 0.0;
+            self.a_hold_fired = false;
+        }
+
+        // `LEFT` / `RIGHT` on Now Playing: short tap skips track on release; hold engages smooth seek (`<<`/`>>`)
+        if on_now_playing && (mask & (btn::LEFT | btn::RIGHT)) != 0 {
+            immediate &= !(btn::LEFT | btn::RIGHT);
+            self.seek_dir = if (mask & btn::RIGHT) != 0 { 1 } else { -1 };
+            self.seek_hold_sec = 0.0;
+            self.seek_active = false;
+        }
+
+        self.pending_pressed |= immediate;
+        if immediate != 0 {
+            self.repeat_btn = immediate;
+            self.repeat_timer = 0.0;
+        }
     }
 
     pub fn button_up(&mut self, mask: u32) {
@@ -450,6 +832,39 @@ impl UIPodApp {
             self.repeat_btn = 0;
             self.repeat_timer = 0.0;
         }
+
+        if (mask & btn::B) != 0 && self.b_deferred {
+            self.b_deferred = false;
+            if !self.b_hold_fired && !self.hold_locked {
+                self.pending_pressed |= btn::B;
+            }
+            self.b_hold_fired = false;
+            self.b_hold_sec = 0.0;
+        }
+
+        if (mask & btn::A) != 0 && self.a_deferred {
+            self.a_deferred = false;
+            if !self.a_hold_fired && !self.hold_locked {
+                self.pending_pressed |= btn::A;
+            }
+            self.a_hold_fired = false;
+            self.a_hold_sec = 0.0;
+        }
+
+        if (mask & (btn::LEFT | btn::RIGHT)) != 0 && self.seek_dir != 0 {
+            if self.seek_active {
+                let target_ms = self.pos_ms;
+                self.cancel_seek_if_active();
+                self.emit_seek_abs(target_ms);
+            } else if !self.hold_locked {
+                self.pending_np_skip = self.seek_dir;
+                self.seek_dir = 0;
+                self.seek_hold_sec = 0.0;
+            } else {
+                self.seek_dir = 0;
+                self.seek_hold_sec = 0.0;
+            }
+        }
     }
 
     pub fn button_long_press(&mut self, mask: u32, ui: &mut UiEngine) {
@@ -457,16 +872,13 @@ impl UIPodApp {
             return;
         }
         if (mask & btn::B) != 0 {
-            self.emit_click();
-            self.active_plugin = None;
-            ui.snapshot_fbo_for_transition();
-            self.stack.clear();
-            self.stack.push(Screen::MainMenu { sel: 0 });
-            self.start_transition(-1);
-            self.state_dirty = true;
-        } else if (mask & btn::A) != 0 && matches!(self.stack.last(), Some(Screen::NowPlaying)) {
-            self.emit_click();
-            self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
+            self.b_deferred = false;
+            self.b_hold_fired = true;
+            self.go_home(ui);
+        } else if (mask & btn::A) != 0 {
+            self.a_deferred = false;
+            self.a_hold_fired = true;
+            self.open_context_menu_for_top(ui);
         }
     }
 
@@ -480,6 +892,7 @@ impl UIPodApp {
     }
 
     fn push_screen(&mut self, screen: Screen, ui: &mut UiEngine) {
+        self.cancel_seek_if_active();
         ui.snapshot_fbo_for_transition();
         self.stack.push(screen);
         self.start_transition(1);
@@ -487,6 +900,7 @@ impl UIPodApp {
     }
 
     fn pop_screen(&mut self, ui: &mut UiEngine) {
+        self.cancel_seek_if_active();
         if self.stack.len() > 1 {
             ui.snapshot_fbo_for_transition();
             self.stack.pop();
@@ -496,6 +910,7 @@ impl UIPodApp {
     }
 
     pub fn jump_to_screen(&mut self, screen_id: &str, ui: &mut UiEngine, viz: &mut VizEngine) {
+        self.cancel_seek_if_active();
         self.active_plugin = None;
         ui.snapshot_fbo_for_transition();
         match screen_id {
@@ -510,7 +925,7 @@ impl UIPodApp {
                 self.viz_fade = 0.0;
                 self.stack = vec![
                     Screen::MainMenu { sel: 0 },
-                    Screen::SettingsMenu { sel: 5 },
+                    Screen::SettingsMenu { sel: 6 },
                     Screen::VisualizersMenu { sel: 0 },
                     Screen::VisualizerPresets {
                         sel: self.viz_preset,
@@ -535,11 +950,14 @@ impl UIPodApp {
                     Screen::SettingsMenu { sel: 0 },
                     Screen::DisplayMenu { sel: 1 },
                     Screen::CustomizeThemeMenu { sel: 0 },
-                    Screen::KeyboardHex {
-                        target: HexTarget::Background,
+                    Screen::Keyboard {
+                        target: KbdTarget::HexBackground,
                         text: hex,
                         row: 0,
                         col: 0,
+                        caps: true,
+                        sym_mode: false,
+                        allow_symbols: false,
                     },
                 ];
             }
@@ -562,9 +980,9 @@ impl UIPodApp {
                     _ => PluginId::TextViewer,
                 };
                 let pool = self.track_quiz_pool();
-                self.active_plugin = Some(ActivePlugin::launch(pid, &pool));
+                self.active_plugin = Some(ActivePlugin::launch(pid, &pool, self.pos_ms));
                 self.stack = vec![
-                    Screen::MainMenu { sel: 2 },
+                    Screen::MainMenu { sel: 1 },
                     Screen::ExtrasMenu { sel: 0 },
                     Screen::PluginsHub { sel: 0 },
                     Screen::PluginActive,
@@ -607,14 +1025,18 @@ impl UIPodApp {
     }
 
     pub fn sync_audio_state(&mut self, playing: bool, pos_ms: u32, dur_ms: u32) {
-        self.play_mode = if playing {
-            PlayMode::Play
-        } else {
-            PlayMode::Pause
-        };
-        self.pos_ms = pos_ms;
+        self.audio_playing = playing;
         if dur_ms > 0 {
             self.dur_ms = dur_ms;
+        }
+        // Do NOT overwrite `PlayMode::FastForward` / `PlayMode::Rewind` (`>>` / `<<`) or live scrub position!
+        if !self.seek_active && self.seek_settle_sec <= 0.0 {
+            self.play_mode = if playing {
+                PlayMode::Play
+            } else {
+                PlayMode::Pause
+            };
+            self.pos_ms = pos_ms;
         }
     }
 
@@ -626,6 +1048,7 @@ impl UIPodApp {
             battery_percent: 87,
             is_charging: false,
             is_hold: self.hold_locked,
+            is_fx: self.is_fx_active(),
             is_downloading: false,
             download_done: 0,
             download_total: 0,
@@ -670,26 +1093,116 @@ impl UIPodApp {
         ui: &mut UiEngine,
         viz: &mut VizEngine,
     ) {
+        if self.seek_settle_sec > 0.0 {
+            self.seek_settle_sec = (self.seek_settle_sec - dt).max(0.0);
+        }
+
+        // Advance demo Video Player timeline when active & playing
+        if let Some(Screen::VideoPlayer {
+            playing: true,
+            pos_ms,
+            dur_ms,
+        }) = self.stack.last_mut()
+        {
+            let step = ((dt * 1000.0).round() as u32).max(1);
+            *pos_ms = (*pos_ms + step) % (*dur_ms).max(1000);
+        }
+
+        // 1. Firmware `650 ms` `Hold B` -> Home (`apps/action.c` `global_home_action`)
+        if self.b_deferred && (self.held_buttons & btn::B) != 0 && !self.b_hold_fired {
+            self.b_hold_sec += dt;
+            if self.b_hold_sec >= 0.65 {
+                self.b_hold_fired = true;
+                self.go_home(ui);
+                return;
+            }
+        }
+
+        // 2. Firmware `650 ms` `Hold A` -> Context Menu (`apps/action.c` `global_context_action`)
+        if self.a_deferred && (self.held_buttons & btn::A) != 0 && !self.a_hold_fired {
+            self.a_hold_sec += dt;
+            if self.a_hold_sec >= 0.65 {
+                self.a_hold_fired = true;
+                if self.open_context_menu_for_top(ui) {
+                    return;
+                }
+            }
+        }
+
+        // 3. Smooth accelerated `Now Playing` rewind / fast-forward (`<<` / `>>` in Header)
+        let on_now_playing = matches!(self.stack.last(), Some(Screen::NowPlaying));
+        if on_now_playing && self.seek_dir != 0 && (self.held_buttons & (btn::LEFT | btn::RIGHT)) != 0 {
+            self.seek_hold_sec += dt;
+            if self.seek_hold_sec >= 0.32 {
+                if !self.seek_active {
+                    self.seek_active = true;
+                    self.seek_pos_f = self.pos_ms as f32;
+                    self.emit_seek_motor(self.seek_dir);
+                }
+                self.play_mode = if self.seek_dir > 0 {
+                    PlayMode::FastForward
+                } else {
+                    PlayMode::Rewind
+                };
+                let hold_over = self.seek_hold_sec - 0.32;
+                let rate_x = if hold_over < 1.2 {
+                    5.0 + hold_over * 5.0
+                } else if hold_over < 3.0 {
+                    11.0 + (hold_over - 1.2) * 8.0
+                } else {
+                    26.0
+                };
+                self.seek_pos_f = (self.seek_pos_f
+                    + (self.seek_dir as f32) * rate_x * 1000.0 * dt)
+                    .clamp(0.0, self.dur_ms as f32);
+                self.pos_ms = self.seek_pos_f.round() as u32;
+            }
+        } else if self.seek_active && !on_now_playing {
+            self.cancel_seek_if_active();
+        }
+
         let is_plugin = matches!(self.stack.last(), Some(Screen::PluginActive));
         let is_viz = matches!(self.stack.last(), Some(Screen::VisualizerActive));
 
-        if !is_plugin
-            && !is_viz
-            && (self.held_buttons & (btn::UP | btn::DOWN | btn::LEFT | btn::RIGHT)) != 0
-        {
+        // Key auto-repeat for list scrolling / spinner cycling (NEVER auto-repeat Left/Right on NowPlaying!)
+        let repeat_mask = if on_now_playing {
+            btn::UP | btn::DOWN
+        } else {
+            btn::UP | btn::DOWN | btn::LEFT | btn::RIGHT
+        };
+        if !is_plugin && !is_viz && (self.held_buttons & repeat_mask) != 0 {
             self.repeat_timer += dt;
             if self.repeat_timer > 0.30 {
                 self.repeat_timer -= 0.085;
-                self.pending_pressed |=
-                    self.held_buttons & (btn::UP | btn::DOWN | btn::LEFT | btn::RIGHT);
+                self.pending_pressed |= self.held_buttons & repeat_mask;
             }
         }
 
         let pressed = self.pending_pressed;
         self.pending_pressed = 0;
 
-        // Global START Play/Pause outside games
-        if !is_plugin && (pressed & btn::START) != 0 {
+        let np_skip = self.pending_np_skip;
+        self.pending_np_skip = 0;
+        if on_now_playing && np_skip != 0 {
+            self.emit_click();
+            if np_skip < 0 {
+                if self.pos_ms > 3_500 {
+                    self.emit_seek_abs(0);
+                } else {
+                    let prev =
+                        (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
+                    self.emit_play_track(prev);
+                }
+            } else {
+                let next = (self.current_track + 1) % self.tracks.len().max(1);
+                self.emit_play_track(next);
+            }
+        }
+
+        let on_video = matches!(self.stack.last(), Some(Screen::VideoPlayer { .. }));
+
+        // Global START Play/Pause outside games & video player
+        if !is_plugin && !on_video && (pressed & btn::START) != 0 {
             self.emit_click();
             self.emit_toggle_play_pause();
         }
@@ -700,8 +1213,14 @@ impl UIPodApp {
                 .get(self.current_track)
                 .map(|t| format!("{} — {}", t.artist, t.title))
                 .unwrap_or_default();
+            let audio_snap = AudioSnapshot {
+                playing: self.audio_playing || self.play_mode == PlayMode::Play,
+                track_title: &cur_title,
+                pos_ms: self.pos_ms,
+                dur_ms: self.dur_ms,
+            };
             let act = if let Some(ref mut pl) = self.active_plugin {
-                pl.update(dt, pressed, self.held_buttons, pcm_interleaved, &cur_title)
+                pl.update(dt, pressed, self.held_buttons, pcm_interleaved, audio_snap, self.uk)
             } else {
                 PluginAction::Continue
             };
@@ -711,19 +1230,36 @@ impl UIPodApp {
                     self.active_plugin = None;
                     self.pop_screen(ui);
                 }
+                PluginAction::Click => {
+                    self.emit_click();
+                }
                 PluginAction::PlayTrackAt(idx, pos_ms) => {
+                    self.audio_playing = true;
                     self.emit_play_track_at(idx, pos_ms);
                 }
+                PluginAction::SeekMs(pos_ms) => {
+                    self.emit_set_playing(true);
+                    self.emit_seek_abs(pos_ms);
+                }
                 PluginAction::EnsurePlaying => {
-                    if self.play_mode != PlayMode::Play {
-                        self.emit_toggle_play_pause();
+                    if !self.audio_playing {
+                        self.emit_set_playing(true);
                     }
                 }
+                PluginAction::TogglePlayPause => {
+                    self.emit_click();
+                    self.emit_toggle_play_pause();
+                }
+                PluginAction::SetPlaying(play) => {
+                    self.emit_set_playing(play);
+                }
                 PluginAction::NextTrack => {
+                    self.audio_playing = true;
                     let next = (self.current_track + 1) % self.tracks.len().max(1);
                     self.emit_play_track(next);
                 }
                 PluginAction::PrevTrack => {
+                    self.audio_playing = true;
                     let prev =
                         (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
                     self.emit_play_track(prev);
@@ -763,6 +1299,14 @@ impl UIPodApp {
                 self.state_dirty = true;
             }
             return;
+        }
+
+        // Momentary X-hold bypass while on Graphic Equalizer
+        let on_graphic_eq = matches!(self.stack.last(), Some(Screen::GraphicEq { .. }));
+        let want_eq_bypass = on_graphic_eq && (self.held_buttons & btn::X) != 0;
+        if want_eq_bypass != self.dsp.eq_bypass {
+            self.dsp.eq_bypass = want_eq_bypass;
+            self.emit_dsp();
         }
 
         if pressed == 0 {
@@ -807,7 +1351,6 @@ impl UIPodApp {
                                 },
                                 ui,
                             ),
-                            MainMenuId::Files => self.push_screen(Screen::Files { sel: 0 }, ui),
                             MainMenuId::Extras => {
                                 self.push_screen(Screen::ExtrasMenu { sel: 0 }, ui)
                             }
@@ -816,15 +1359,9 @@ impl UIPodApp {
                             }
                             MainMenuId::Albums => self.push_screen(Screen::Albums { sel: 0 }, ui),
                             MainMenuId::Genres => self.push_screen(Screen::Genres { sel: 0 }, ui),
-                            MainMenuId::Videos => self.push_screen(
-                                Screen::EmptySection {
-                                    title_en: "Videos",
-                                    title_uk: "Відео",
-                                    hint_en: "No videos in /mnt/SDCARD/Media/Videos",
-                                    hint_uk: "Немає відео у /mnt/SDCARD/Media/Videos",
-                                },
-                                ui,
-                            ),
+                            MainMenuId::Videos => {
+                                self.push_screen(Screen::VideosList { sel: 0 }, ui)
+                            }
                             MainMenuId::Songs => self.push_screen(Screen::AllSongs { sel: 0 }, ui),
                             MainMenuId::Playlists => {
                                 self.push_screen(Screen::Playlists { sel: 0 }, ui)
@@ -874,6 +1411,8 @@ impl UIPodApp {
                 };
                 if self.nav_list(pressed, &mut sel, count.max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
                     match path.as_str() {
@@ -887,7 +1426,11 @@ impl UIPodApp {
                             ),
                             1 => self.push_screen(Screen::PluginsHub { sel: 0 }, ui),
                             _ => {
-                                self.active_plugin = Some(ActivePlugin::launch(PluginId::TextViewer, &[]));
+                                self.active_plugin = Some(ActivePlugin::launch(
+                                    PluginId::TextViewer,
+                                    &[],
+                                    self.pos_ms,
+                                ));
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
@@ -900,7 +1443,11 @@ impl UIPodApp {
                                 ui,
                             ),
                             _ => {
-                                self.active_plugin = Some(ActivePlugin::launch(PluginId::TextViewer, &[]));
+                                self.active_plugin = Some(ActivePlugin::launch(
+                                    PluginId::TextViewer,
+                                    &[],
+                                    self.pos_ms,
+                                ));
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
@@ -909,22 +1456,15 @@ impl UIPodApp {
                                 self.emit_play_track(sel);
                                 self.push_screen(Screen::NowPlaying, ui);
                             } else {
-                                self.active_plugin = Some(ActivePlugin::launch(PluginId::TextViewer, &[]));
+                                self.active_plugin = Some(ActivePlugin::launch(
+                                    PluginId::TextViewer,
+                                    &[],
+                                    self.pos_ms,
+                                ));
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         }
                     }
-                }
-            }
-
-            Screen::Files { mut sel } => {
-                let count = self.tracks.len().max(1);
-                if self.nav_list(pressed, &mut sel, count, ui) {
-                    self.set_top_sel(sel);
-                } else if (pressed & btn::A) != 0 && sel < self.tracks.len() {
-                    self.emit_click();
-                    self.emit_play_track(sel);
-                    self.push_screen(Screen::NowPlaying, ui);
                 }
             }
 
@@ -980,12 +1520,16 @@ impl UIPodApp {
                                 4 => PluginId::Game2048,
                                 _ => PluginId::BrickBreaker,
                             };
-                            self.active_plugin = Some(ActivePlugin::launch(pid, &pool));
+                            self.active_plugin =
+                                Some(ActivePlugin::launch(pid, &pool, self.pos_ms));
                             self.push_screen(Screen::PluginActive, ui);
                         }
                         1 => {
-                            self.active_plugin =
-                                Some(ActivePlugin::launch(PluginId::Stopwatch, &pool));
+                            self.active_plugin = Some(ActivePlugin::launch(
+                                PluginId::Stopwatch,
+                                &pool,
+                                self.pos_ms,
+                            ));
                             self.push_screen(Screen::PluginActive, ui);
                         }
                         2 => {
@@ -996,8 +1540,11 @@ impl UIPodApp {
                             self.push_screen(Screen::VisualizerActive, ui);
                         }
                         _ => {
-                            self.active_plugin =
-                                Some(ActivePlugin::launch(PluginId::TextViewer, &pool));
+                            self.active_plugin = Some(ActivePlugin::launch(
+                                PluginId::TextViewer,
+                                &pool,
+                                self.pos_ms,
+                            ));
                             self.push_screen(Screen::PluginActive, ui);
                         }
                     }
@@ -1007,6 +1554,118 @@ impl UIPodApp {
             Screen::Downloads { mut sel } => {
                 if self.nav_list(pressed, &mut sel, 1, ui) {
                     self.set_top_sel(sel);
+                }
+            }
+
+            Screen::VideosList { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 1, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    self.push_screen(
+                        Screen::VideoPlayer {
+                            playing: true,
+                            pos_ms: 0,
+                            dur_ms: 94_000,
+                        },
+                        ui,
+                    );
+                }
+            }
+
+            Screen::VideoPlayer {
+                mut playing,
+                mut pos_ms,
+                dur_ms,
+            } => {
+                if (pressed & btn::B) != 0 {
+                    self.emit_click();
+                    self.pop_screen(ui);
+                    return;
+                }
+                if (pressed & (btn::A | btn::START)) != 0 {
+                    self.emit_click();
+                    playing = !playing;
+                } else if (pressed & btn::MENU) != 0 {
+                    self.emit_click();
+                    self.push_screen(Screen::VideoContextMenu { sel: 0 }, ui);
+                    return;
+                } else if (pressed & (btn::LEFT | btn::L2)) != 0 {
+                    pos_ms = pos_ms.saturating_sub(10_000);
+                } else if (pressed & (btn::RIGHT | btn::R2)) != 0 {
+                    pos_ms = (pos_ms + 10_000).min(dur_ms);
+                } else if (pressed & btn::UP) != 0 {
+                    self.adjust_volume(2, ui);
+                } else if (pressed & btn::DOWN) != 0 {
+                    self.adjust_volume(-2, ui);
+                }
+                if let Some(Screen::VideoPlayer {
+                    playing: p,
+                    pos_ms: pm,
+                    ..
+                }) = self.stack.last_mut()
+                {
+                    *p = playing;
+                    *pm = pos_ms;
+                }
+            }
+
+            Screen::VideoContextMenu { mut sel } => {
+                // Exact 3 rows from `apps/uipod_video.c` (`#11301` — `Video Settings`):
+                // Aspect Ratio, Brightness, Audio Sync
+                if self.nav_list(pressed, &mut sel, 3, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let left = (pressed & btn::LEFT) != 0;
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.video_aspect_idx = if left {
+                                (self.video_aspect_idx + 2) % 3
+                            } else {
+                                (self.video_aspect_idx + 1) % 3
+                            };
+                        }
+                        1 => {
+                            let d = if left { -10i32 } else { 10i32 };
+                            self.brightness_pct =
+                                (self.brightness_pct as i32 + d).clamp(10, 100) as u8;
+                        }
+                        _ => {
+                            let d = if left { -50i32 } else { 50i32 };
+                            self.video_audio_sync_ms =
+                                (self.video_audio_sync_ms + d).clamp(-500, 500);
+                        }
+                    }
+                    self.state_dirty = true;
+                }
+            }
+
+            Screen::TrackContextMenu { track_idx, mut sel } => {
+                if self.nav_list(pressed, &mut sel, 5, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.pop_screen(ui);
+                            self.emit_play_track(track_idx);
+                            self.push_screen(Screen::NowPlaying, ui);
+                        }
+                        1 | 2 => {
+                            self.pop_screen(ui);
+                        }
+                        3 => {
+                            let idx = (track_idx + 1) % self.tracks.len().max(1);
+                            self.pop_screen(ui);
+                            self.emit_play_track(idx);
+                            self.push_screen(Screen::NowPlaying, ui);
+                        }
+                        _ => {
+                            self.pop_screen(ui);
+                            self.push_screen(Screen::NowPlaying, ui);
+                        }
+                    }
                 }
             }
 
@@ -1021,6 +1680,8 @@ impl UIPodApp {
                 let artists = self.artists_list();
                 if self.nav_list(pressed, &mut sel, artists.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(artist) = artists.get(sel).cloned() {
                         self.emit_click();
@@ -1039,6 +1700,8 @@ impl UIPodApp {
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(&idx) = indices.get(sel) {
                         self.emit_click();
@@ -1052,6 +1715,8 @@ impl UIPodApp {
                 let albums = self.albums_list();
                 if self.nav_list(pressed, &mut sel, albums.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(album) = albums.get(sel).cloned() {
                         self.emit_click();
@@ -1070,6 +1735,8 @@ impl UIPodApp {
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(&idx) = indices.get(sel) {
                         self.emit_click();
@@ -1083,6 +1750,8 @@ impl UIPodApp {
                 let genres = self.genres_list();
                 if self.nav_list(pressed, &mut sel, genres.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(genre) = genres.get(sel).cloned() {
                         self.emit_click();
@@ -1101,6 +1770,8 @@ impl UIPodApp {
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     if let Some(&idx) = indices.get(sel) {
                         self.emit_click();
@@ -1114,6 +1785,8 @@ impl UIPodApp {
                 let count = self.tracks.len().max(1);
                 if self.nav_list(pressed, &mut sel, count, ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 && sel < self.tracks.len() {
                     self.emit_click();
                     self.emit_play_track(sel);
@@ -1124,6 +1797,8 @@ impl UIPodApp {
             Screen::Playlists { mut sel } => {
                 if self.nav_list(pressed, &mut sel, 3, ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
                     let idx = sel % self.tracks.len().max(1);
@@ -1146,11 +1821,11 @@ impl UIPodApp {
                 } else if (pressed & btn::MENU) != 0 {
                     self.emit_click();
                     self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
-                } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
+                } else if (pressed & btn::R1) != 0 {
                     self.emit_click();
                     let next = (self.current_track + 1) % self.tracks.len().max(1);
                     self.emit_play_track(next);
-                } else if (pressed & (btn::LEFT | btn::L1)) != 0 {
+                } else if (pressed & btn::L1) != 0 {
                     self.emit_click();
                     let prev =
                         (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
@@ -1160,16 +1835,16 @@ impl UIPodApp {
                 } else if (pressed & btn::L2) != 0 {
                     self.emit_seek_delta(-15_000);
                 } else if (pressed & btn::UP) != 0 {
-                    self.adjust_volume(2);
+                    self.adjust_volume(2, ui);
                 } else if (pressed & btn::DOWN) != 0 {
-                    self.adjust_volume(-2);
+                    self.adjust_volume(-2, ui);
                 }
             }
 
             Screen::NowPlayingContext { mut sel } => {
-                // Exact 8 rows from `apps/gui/wps.c` line 614:
-                // Pause/Resume, Shuffle, Repeat, Sleep Timer, Monochrome album art, Large Album Art, Add to Playlist, Start Visualizer
-                if self.nav_list(pressed, &mut sel, 8, ui) {
+                // Exact 9 rows from `apps/gui/wps.c`:
+                // Pause/Resume, Effects, Shuffle, Repeat, Sleep Timer, Monochrome album art, Large Album Art, Add to Playlist, Start Visualizer
+                if self.nav_list(pressed, &mut sel, 9, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
@@ -1177,11 +1852,15 @@ impl UIPodApp {
                     match sel {
                         0 => self.emit_toggle_play_pause(),
                         1 => {
+                            self.dsp.fx_enabled = !self.dsp.fx_enabled;
+                            self.emit_dsp();
+                        }
+                        2 => {
                             let next = (self.current_track + 2) % self.tracks.len().max(1);
                             self.emit_play_track(next);
                             self.pop_screen(ui);
                         }
-                        2 => {
+                        3 => {
                             let n = REPEAT_MODES_EN.len();
                             self.repeat_idx = if left {
                                 (self.repeat_idx + n - 1) % n
@@ -1189,7 +1868,7 @@ impl UIPodApp {
                                 (self.repeat_idx + 1) % n
                             };
                         }
-                        3 => {
+                        4 => {
                             let n = SLEEP_TIMERS.len();
                             self.sleep_idx = if left {
                                 (self.sleep_idx + n - 1) % n
@@ -1197,15 +1876,15 @@ impl UIPodApp {
                                 (self.sleep_idx + 1) % n
                             };
                         }
-                        4 => {
+                        5 => {
                             self.mono_album_art = !self.mono_album_art;
                             self.state_dirty = true;
                         }
-                        5 => {
+                        6 => {
                             self.alt_now_playing = !self.alt_now_playing;
                             self.state_dirty = true;
                         }
-                        6 => {
+                        7 => {
                             self.pop_screen(ui);
                         }
                         _ => {
@@ -1219,9 +1898,9 @@ impl UIPodApp {
             }
 
             Screen::SettingsMenu { mut sel } => {
-                // Exact 9 rows from `apps/menus/main_menu.c` lines 189-193:
-                // Display, Sound, Offline Mode, Sources, Library, Visualizers, Power, About, Exit
-                if self.nav_list(pressed, &mut sel, 9, ui) {
+                // Exact 10 rows from `apps/menus/main_menu.c`:
+                // Display, Sound, Offline Mode, Sources, Accounts, Library, Visualizers, Power, About, Exit
+                if self.nav_list(pressed, &mut sel, 10, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
@@ -1234,15 +1913,19 @@ impl UIPodApp {
                             self.state_dirty = true;
                         }
                         3 if !is_dir => self.push_screen(Screen::SourcesMenu { sel: 0 }, ui),
-                        4 if !is_dir => self.push_screen(Screen::LibraryMenu { sel: 0 }, ui),
-                        5 if !is_dir => self.push_screen(Screen::VisualizersMenu { sel: 0 }, ui),
-                        6 if !is_dir => self.push_screen(Screen::PowerMenu { sel: 0 }, ui),
-                        7 if !is_dir => {
-                            self.active_plugin = Some(ActivePlugin::launch(PluginId::TextViewer, &[]));
+                        4 if !is_dir => self.push_screen(Screen::AccountsMenu { sel: 0 }, ui),
+                        5 if !is_dir => self.push_screen(Screen::LibraryMenu { sel: 0 }, ui),
+                        6 if !is_dir => self.push_screen(Screen::VisualizersMenu { sel: 0 }, ui),
+                        7 if !is_dir => self.push_screen(Screen::PowerMenu { sel: 0 }, ui),
+                        8 if !is_dir => {
+                            self.active_plugin = Some(ActivePlugin::launch(
+                                PluginId::TextViewer,
+                                &[],
+                                self.pos_ms,
+                            ));
                             self.push_screen(Screen::PluginActive, ui);
                         }
-                        8 if !is_dir => {
-                            // Exit returns to Main Menu in browser simulator
+                        9 if !is_dir => {
                             self.pop_screen(ui);
                         }
                         _ => {}
@@ -1331,17 +2014,20 @@ impl UIPodApp {
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
                     let (target, rgb) = match sel {
-                        0 => (HexTarget::Background, self.theme.bg_rgb),
-                        1 => (HexTarget::Foreground, self.theme.fg_rgb),
-                        2 => (HexTarget::Shade1, self.theme.fg1_rgb),
-                        _ => (HexTarget::Shade2, self.theme.fg2_rgb),
+                        0 => (KbdTarget::HexBackground, self.theme.bg_rgb),
+                        1 => (KbdTarget::HexForeground, self.theme.fg_rgb),
+                        2 => (KbdTarget::HexShade1, self.theme.fg1_rgb),
+                        _ => (KbdTarget::HexShade2, self.theme.fg2_rgb),
                     };
                     self.push_screen(
-                        Screen::KeyboardHex {
+                        Screen::Keyboard {
                             target,
                             text: format!("{rgb:06X}"),
                             row: 0,
                             col: 0,
+                            caps: true,
+                            sym_mode: false,
+                            allow_symbols: false,
                         },
                         ui,
                     );
@@ -1349,7 +2035,7 @@ impl UIPodApp {
             }
 
             Screen::MainMenuSettings { mut sel } => {
-                if self.nav_list(pressed, &mut sel, 13, ui) {
+                if self.nav_list(pressed, &mut sel, 12, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     self.emit_click();
@@ -1357,77 +2043,115 @@ impl UIPodApp {
                 }
             }
 
-            Screen::KeyboardHex {
+            Screen::Keyboard {
                 target,
                 mut text,
                 mut row,
                 mut col,
+                mut caps,
+                mut sym_mode,
+                allow_symbols,
             } => {
-                let rows = Self::qwerty_rows();
                 if (pressed & btn::B) != 0 {
                     self.emit_click();
                     self.pop_screen(ui);
                     return;
                 }
-                if (pressed & btn::UP) != 0 {
-                    row = (row + 4) % 5;
-                    col = col.min(rows[row].len() - 1);
+                if (pressed & btn::Y) != 0 {
+                    text.pop();
+                    self.emit_click();
+                } else if (pressed & btn::UP) != 0 {
+                    let next_row = (row + 4) % 5;
+                    col = Self::kbd_remap_col(allow_symbols, sym_mode, row, col, next_row);
+                    row = next_row;
                     self.emit_click();
                 } else if (pressed & btn::DOWN) != 0 {
-                    row = (row + 1) % 5;
-                    col = col.min(rows[row].len() - 1);
+                    let next_row = (row + 1) % 5;
+                    col = Self::kbd_remap_col(allow_symbols, sym_mode, row, col, next_row);
+                    row = next_row;
                     self.emit_click();
                 } else if (pressed & btn::LEFT) != 0 {
-                    col = (col + rows[row].len() - 1) % rows[row].len();
+                    let n = Self::kbd_row_len(allow_symbols, sym_mode, row);
+                    col = (col + n - 1) % n;
                     self.emit_click();
                 } else if (pressed & btn::RIGHT) != 0 {
-                    col = (col + 1) % rows[row].len();
+                    let n = Self::kbd_row_len(allow_symbols, sym_mode, row);
+                    col = (col + 1) % n;
                     self.emit_click();
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
-                    let k = rows[row][col];
-                    match k {
-                        "DEL" => {
+                    let k = Self::kbd_key_label(allow_symbols, caps, sym_mode, row, col);
+                    match k.as_str() {
+                        "caps" | "CAPS" => caps = !caps,
+                        "sym" | "abc" => sym_mode = !sym_mode,
+                        "space" => {
+                            let max_len = if allow_symbols { 128 } else { 6 };
+                            if allow_symbols && text.len() < max_len {
+                                text.push(' ');
+                            }
+                        }
+                        "del" => {
                             text.pop();
                         }
-                        "CLR" => {
-                            text.clear();
-                        }
-                        "DONE" => {
-                            if let Some(rgb) = parse_hex_rgb(&text) {
-                                match target {
-                                    HexTarget::Background => {
-                                        self.theme = derive_4shade(rgb, self.theme.fg_rgb);
+                        "enter" => {
+                            match target {
+                                KbdTarget::HexBackground
+                                | KbdTarget::HexForeground
+                                | KbdTarget::HexShade1
+                                | KbdTarget::HexShade2 => {
+                                    if let Some(rgb) = parse_hex_rgb(&text) {
+                                        match target {
+                                            KbdTarget::HexBackground => {
+                                                self.theme = derive_4shade(rgb, self.theme.fg_rgb);
+                                            }
+                                            KbdTarget::HexForeground => {
+                                                self.theme = derive_4shade(self.theme.bg_rgb, rgb);
+                                            }
+                                            KbdTarget::HexShade1 => self.theme.fg1_rgb = rgb,
+                                            KbdTarget::HexShade2 => self.theme.fg2_rgb = rgb,
+                                            _ => {}
+                                        }
+                                        self.theme_idx = None;
                                     }
-                                    HexTarget::Foreground => {
-                                        self.theme = derive_4shade(self.theme.bg_rgb, rgb);
-                                    }
-                                    HexTarget::Shade1 => self.theme.fg1_rgb = rgb,
-                                    HexTarget::Shade2 => self.theme.fg2_rgb = rgb,
                                 }
-                                self.theme_idx = None;
-                                self.state_dirty = true;
+                                KbdTarget::ServerUrl(is_jf) => {
+                                    if is_jf {
+                                        self.jellyfin_url = text;
+                                    } else {
+                                        self.navidrome_url = text;
+                                    }
+                                }
+                                KbdTarget::ServerUser(is_jf) => {
+                                    if is_jf {
+                                        self.jellyfin_user = text;
+                                    } else {
+                                        self.navidrome_user = text;
+                                    }
+                                }
+                                KbdTarget::LastFmApiKey => self.lfm_api_key = text,
+                                KbdTarget::LastFmApiSecret => self.lfm_api_secret = text,
                             }
-                            self.pop_screen(ui);
-                            return;
-                        }
-                        "CANCEL" => {
+                            self.state_dirty = true;
                             self.pop_screen(ui);
                             return;
                         }
                         ch => {
-                            if text.len() < 6 {
+                            let max_len = if allow_symbols { 128 } else { 6 };
+                            if text.len() < max_len {
                                 text.push_str(ch);
                             }
                         }
                     }
                 }
                 if let Some(last) = self.stack.last_mut() {
-                    *last = Screen::KeyboardHex {
+                    *last = Screen::Keyboard {
                         target,
                         text,
                         row,
                         col,
+                        caps,
+                        sym_mode,
+                        allow_symbols,
                     };
                 }
             }
@@ -1475,12 +2199,11 @@ impl UIPodApp {
             }
 
             Screen::EqualizerMenu { mut sel } => {
-                // Exact 8 rows from `apps/menus/eq_menu.c` lines 378-380:
-                // Enable EQ, AutoEQ, Browse EQ Presets, Precut, Simple EQ, Advanced EQ, Save, Reset
-                if self.nav_list(pressed, &mut sel, 8, ui) {
+                // Exact 6 rows from `apps/menus/eq_menu.c`:
+                // Enable EQ, Graphic Equalizer, AutoEQ, Browse EQ Presets, Save, Reset
+                if self.nav_list(pressed, &mut sel, 6, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
-                    let left = (pressed & btn::LEFT) != 0;
                     let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
                     self.emit_click();
                     match sel {
@@ -1489,12 +2212,7 @@ impl UIPodApp {
                             self.emit_dsp();
                         }
                         1 if !is_dir => {
-                            self.push_screen(
-                                Screen::AutoEqList {
-                                    sel: self.dsp.autoeq_idx,
-                                },
-                                ui,
-                            );
+                            self.push_screen(Screen::GraphicEq { sel: 1 }, ui);
                         }
                         2 if !is_dir => {
                             self.push_screen(
@@ -1504,14 +2222,16 @@ impl UIPodApp {
                                 ui,
                             );
                         }
-                        3 => {
-                            let d = if left { -5 } else { 5 };
-                            self.dsp.eq_precut_tenth_db =
-                                (self.dsp.eq_precut_tenth_db + d).clamp(0, 120);
+                        3 if !is_dir => {
+                            self.push_screen(
+                                Screen::AutoEqList {
+                                    sel: self.dsp.autoeq_idx,
+                                },
+                                ui,
+                            );
                         }
-                        7 if !is_dir => {
-                            self.dsp.autoeq_idx = 0;
-                            self.dsp.eq_precut_tenth_db = 0;
+                        5 if !is_dir => {
+                            self.apply_autoeq_preset(0);
                             self.emit_dsp();
                         }
                         _ => {}
@@ -1519,48 +2239,88 @@ impl UIPodApp {
                 }
             }
 
+            Screen::GraphicEq { mut sel } => {
+                let a_held = (self.held_buttons & btn::A) != 0;
+                if (pressed & (btn::B | btn::MENU)) != 0 {
+                    self.dsp.eq_bypass = false;
+                    self.emit_dsp();
+                    self.emit_click();
+                    self.pop_screen(ui);
+                } else if (pressed & btn::LEFT) != 0 {
+                    sel = (sel + 10) % 11;
+                    self.emit_click();
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::RIGHT) != 0 {
+                    sel = (sel + 1) % 11;
+                    self.emit_click();
+                    self.set_top_sel(sel);
+                } else if a_held && (pressed & (btn::UP | btn::DOWN)) != 0 {
+                    let dir = if (pressed & btn::UP) != 0 { 5i16 } else { -5i16 };
+                    if sel == 0 {
+                        let cur = self.dsp.eq_preamp_tenths_db;
+                        let snapped = ((cur as f32 / 5.0).round() as i16) * 5;
+                        self.dsp.eq_preamp_tenths_db = (snapped + dir).clamp(-120, 120);
+                    } else {
+                        let b = sel - 1;
+                        let cur = self.dsp.eq_bands_tenths_db[b];
+                        let snapped = ((cur as f32 / 5.0).round() as i16) * 5;
+                        self.dsp.eq_bands_tenths_db[b] = (snapped + dir).clamp(-120, 120);
+                    }
+                    self.dsp.eq_enabled = true;
+                    self.emit_click();
+                    self.emit_dsp();
+                }
+            }
+
             Screen::AutoEqList { mut sel } => {
                 let count = AUTOEQ_PRESETS.len();
                 if self.nav_list(pressed, &mut sel, count, ui) {
                     self.set_top_sel(sel);
-                    self.dsp.autoeq_idx = sel;
-                    if sel > 0 {
-                        self.dsp.eq_enabled = true;
-                    }
+                    self.apply_autoeq_preset(sel);
                     self.emit_dsp();
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
-                    self.dsp.autoeq_idx = sel;
-                    if sel > 0 {
-                        self.dsp.eq_enabled = true;
-                    }
+                    self.apply_autoeq_preset(sel);
                     self.emit_dsp();
                     self.pop_screen(ui);
                 }
             }
 
             Screen::EffectsMenu { mut sel } => {
-                // Exact 2 rows from `apps/menus/sound_menu.c` lines 67-68:
-                // Speed, Tape Mode
-                if self.nav_list(pressed, &mut sel, 2, ui) {
+                // Exact 7 rows from `apps/menus/sound_menu.c`:
+                // Enable Effects, Speed, Tape Mode, Reverb, Delay, Chorus, Flanger
+                if self.nav_list(pressed, &mut sel, 7, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
                     let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
                     self.emit_click();
-                    if sel == 0 {
-                        let d = if left { -10i32 } else { 10i32 };
-                        self.dsp.speed_pct =
-                            ((self.dsp.speed_pct as i32 + d).clamp(50, 150)) as u16;
-                        self.emit_dsp();
-                    } else if !is_dir {
-                        self.push_screen(Screen::TapeModeMenu { sel: 0 }, ui);
+                    match sel {
+                        0 => {
+                            self.dsp.fx_enabled = !self.dsp.fx_enabled;
+                            self.emit_dsp();
+                        }
+                        1 => {
+                            let d = if left { -10i32 } else { 10i32 };
+                            self.dsp.speed_pct =
+                                ((self.dsp.speed_pct as i32 + d).clamp(50, 150)) as u16;
+                            if self.dsp.speed_pct != 100 {
+                                self.dsp.fx_enabled = true;
+                            }
+                            self.emit_dsp();
+                        }
+                        2 if !is_dir => self.push_screen(Screen::TapeModeMenu { sel: 0 }, ui),
+                        3 if !is_dir => self.push_screen(Screen::ReverbMenu { sel: 0 }, ui),
+                        4 if !is_dir => self.push_screen(Screen::DelayMenu { sel: 0 }, ui),
+                        5 if !is_dir => self.push_screen(Screen::ChorusMenu { sel: 0 }, ui),
+                        6 if !is_dir => self.push_screen(Screen::FlangerMenu { sel: 0 }, ui),
+                        _ => {}
                     }
                 }
             }
 
             Screen::TapeModeMenu { mut sel } => {
-                // Exact 8 rows from `apps/menus/sound_menu.c` lines 57-65:
+                // Exact 8 rows from `apps/menus/sound_menu.c`:
                 // Enable, Wow & Flutter, Tape Hiss, Tape Crinkles, Saturation, HF Roll-Off, Stop/Start FX, Seek Motor Sound
                 if self.nav_list(pressed, &mut sel, 8, ui) {
                     self.set_top_sel(sel);
@@ -1568,7 +2328,12 @@ impl UIPodApp {
                     let delta = if (pressed & btn::LEFT) != 0 { -10i32 } else { 10i32 };
                     self.emit_click();
                     match sel {
-                        0 => self.dsp.tape_enabled = !self.dsp.tape_enabled,
+                        0 => {
+                            self.dsp.tape_enabled = !self.dsp.tape_enabled;
+                            if self.dsp.tape_enabled {
+                                self.dsp.fx_enabled = true;
+                            }
+                        }
                         1 => {
                             self.dsp.tape_wow =
                                 (self.dsp.tape_wow as i32 + delta).clamp(0, 100) as u8;
@@ -1591,6 +2356,147 @@ impl UIPodApp {
                         }
                         6 => self.dsp.tape_stop_start = !self.dsp.tape_stop_start,
                         _ => self.dsp.tape_ff_sound = !self.dsp.tape_ff_sound,
+                    }
+                    self.emit_dsp();
+                }
+            }
+
+            Screen::ReverbMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 6, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let left = (pressed & btn::LEFT) != 0;
+                    let d5 = if left { -5i32 } else { 5i32 };
+                    let d10 = if left { -10i32 } else { 10i32 };
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.dsp.reverb_enabled = !self.dsp.reverb_enabled;
+                            if self.dsp.reverb_enabled {
+                                self.dsp.fx_enabled = true;
+                            }
+                        }
+                        1 => {
+                            self.dsp.reverb_size =
+                                (self.dsp.reverb_size as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        2 => {
+                            self.dsp.reverb_damp =
+                                (self.dsp.reverb_damp as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        3 => {
+                            self.dsp.reverb_predelay_ms =
+                                (self.dsp.reverb_predelay_ms as i32 + d5).clamp(0, 120) as u8;
+                        }
+                        4 => {
+                            self.dsp.reverb_width =
+                                (self.dsp.reverb_width as i32 + d10).clamp(0, 100) as u8;
+                        }
+                        _ => {
+                            self.dsp.reverb_mix =
+                                (self.dsp.reverb_mix as i32 + d5).clamp(0, 100) as u8;
+                        }
+                    }
+                    self.emit_dsp();
+                }
+            }
+
+            Screen::DelayMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 6, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let left = (pressed & btn::LEFT) != 0;
+                    let d5 = if left { -5i32 } else { 5i32 };
+                    let d20 = if left { -20i32 } else { 20i32 };
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.dsp.delay_enabled = !self.dsp.delay_enabled;
+                            if self.dsp.delay_enabled {
+                                self.dsp.fx_enabled = true;
+                            }
+                        }
+                        1 => {
+                            self.dsp.delay_time_ms =
+                                (self.dsp.delay_time_ms as i32 + d20).clamp(40, 1000) as u16;
+                        }
+                        2 => {
+                            self.dsp.delay_feedback =
+                                (self.dsp.delay_feedback as i32 + d5).clamp(0, 90) as u8;
+                        }
+                        3 => {
+                            self.dsp.delay_tone =
+                                (self.dsp.delay_tone as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        4 => self.dsp.delay_pingpong = !self.dsp.delay_pingpong,
+                        _ => {
+                            self.dsp.delay_mix =
+                                (self.dsp.delay_mix as i32 + d5).clamp(0, 100) as u8;
+                        }
+                    }
+                    self.emit_dsp();
+                }
+            }
+
+            Screen::ChorusMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 4, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let d5 = if (pressed & btn::LEFT) != 0 { -5i32 } else { 5i32 };
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.dsp.chorus_enabled = !self.dsp.chorus_enabled;
+                            if self.dsp.chorus_enabled {
+                                self.dsp.fx_enabled = true;
+                            }
+                        }
+                        1 => {
+                            self.dsp.chorus_rate =
+                                (self.dsp.chorus_rate as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        2 => {
+                            self.dsp.chorus_depth =
+                                (self.dsp.chorus_depth as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        _ => {
+                            self.dsp.chorus_mix =
+                                (self.dsp.chorus_mix as i32 + d5).clamp(0, 100) as u8;
+                        }
+                    }
+                    self.emit_dsp();
+                }
+            }
+
+            Screen::FlangerMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 5, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let d5 = if (pressed & btn::LEFT) != 0 { -5i32 } else { 5i32 };
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.dsp.flanger_enabled = !self.dsp.flanger_enabled;
+                            if self.dsp.flanger_enabled {
+                                self.dsp.fx_enabled = true;
+                            }
+                        }
+                        1 => {
+                            self.dsp.flanger_rate =
+                                (self.dsp.flanger_rate as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        2 => {
+                            self.dsp.flanger_depth =
+                                (self.dsp.flanger_depth as i32 + d5).clamp(0, 100) as u8;
+                        }
+                        3 => {
+                            self.dsp.flanger_feedback =
+                                (self.dsp.flanger_feedback as i32 + d5).clamp(-90, 90) as i8;
+                        }
+                        _ => {
+                            self.dsp.flanger_mix =
+                                (self.dsp.flanger_mix as i32 + d5).clamp(0, 100) as u8;
+                        }
                     }
                     self.emit_dsp();
                 }
@@ -1658,10 +2564,127 @@ impl UIPodApp {
                 }
             }
 
-            Screen::SourceServerInfo { mut sel, .. } => {
+            Screen::SourceServerInfo {
+                is_jellyfin,
+                mut sel,
+            } => {
                 if self.nav_list(pressed, &mut sel, 4, ui) {
                     self.set_top_sel(sel);
-                } else if (pressed & btn::B) != 0 {
+                } else if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            let cur = if is_jellyfin {
+                                self.jellyfin_url.clone()
+                            } else {
+                                self.navidrome_url.clone()
+                            };
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::ServerUrl(is_jellyfin),
+                                    text: if cur.is_empty() {
+                                        "https://".to_string()
+                                    } else {
+                                        cur
+                                    },
+                                    row: 1,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        1 => {
+                            let cur = if is_jellyfin {
+                                self.jellyfin_user.clone()
+                            } else {
+                                self.navidrome_user.clone()
+                            };
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::ServerUser(is_jellyfin),
+                                    text: cur,
+                                    row: 1,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Screen::AccountsMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 1, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    self.push_screen(Screen::LastFmMenu { sel: 0 }, ui);
+                }
+            }
+
+            Screen::LastFmMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 9, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.lfm_enabled = !self.lfm_enabled;
+                            self.state_dirty = true;
+                        }
+                        2 if !is_dir => {
+                            self.push_screen(Screen::LastFmQrAuth, ui);
+                        }
+                        4 => {
+                            self.lfm_streaming = !self.lfm_streaming;
+                            self.state_dirty = true;
+                        }
+                        7 if !is_dir => {
+                            let cur = self.lfm_api_key.clone();
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::LastFmApiKey,
+                                    text: cur,
+                                    row: 0,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        8 if !is_dir => {
+                            let cur = self.lfm_api_secret.clone();
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::LastFmApiSecret,
+                                    text: cur,
+                                    row: 0,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Screen::LastFmQrAuth => {
+                if (pressed & (btn::B | btn::A)) != 0 {
+                    self.emit_click();
                     self.pop_screen(ui);
                 }
             }
@@ -1827,11 +2850,13 @@ impl UIPodApp {
             match top {
                 Screen::MainMenu { sel }
                 | Screen::Browse { sel, .. }
-                | Screen::Files { sel }
                 | Screen::ExtrasMenu { sel }
                 | Screen::PluginsHub { sel }
                 | Screen::PluginCategory { sel, .. }
                 | Screen::Downloads { sel }
+                | Screen::VideosList { sel }
+                | Screen::VideoContextMenu { sel }
+                | Screen::TrackContextMenu { sel, .. }
                 | Screen::Artists { sel }
                 | Screen::ArtistSongs { sel, .. }
                 | Screen::Albums { sel }
@@ -1848,12 +2873,19 @@ impl UIPodApp {
                 | Screen::MainMenuSettings { sel }
                 | Screen::SoundMenu { sel }
                 | Screen::EqualizerMenu { sel }
+                | Screen::GraphicEq { sel }
                 | Screen::AutoEqList { sel }
                 | Screen::EffectsMenu { sel }
                 | Screen::TapeModeMenu { sel }
+                | Screen::ReverbMenu { sel }
+                | Screen::DelayMenu { sel }
+                | Screen::ChorusMenu { sel }
+                | Screen::FlangerMenu { sel }
                 | Screen::ReplayGainMenu { sel }
                 | Screen::SourcesMenu { sel }
                 | Screen::SourceServerInfo { sel, .. }
+                | Screen::AccountsMenu { sel }
+                | Screen::LastFmMenu { sel }
                 | Screen::LibraryMenu { sel }
                 | Screen::LibraryFolderList { sel, .. }
                 | Screen::VisualizersMenu { sel }
@@ -1864,14 +2896,104 @@ impl UIPodApp {
         }
     }
 
-    fn qwerty_rows() -> [&'static [&'static str]; 5] {
-        [
-            &["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
-            &["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
-            &["A", "S", "D", "F", "G", "H", "J", "K", "L"],
-            &["Z", "X", "C", "V", "B", "N", "M", "DEL"],
-            &["CANCEL", "CLR", "DONE"],
-        ]
+    /* ---- Exact 45-Key UIPod Keyboard (`apps/uipod_keyboard.c` + Figcraft `#4212`) ---- */
+
+    fn kbd_alpha_row(allow_symbols: bool, sym_mode: bool, row: usize) -> &'static str {
+        const PLAIN: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm-"];
+        const URL: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm.:/"];
+        const SYM: [&str; 4] = ["1234567890", ":/.-_@?=&+", "#!$%*~,;|\\", "()[]{}<>'\""];
+        if allow_symbols && sym_mode {
+            SYM[row]
+        } else if allow_symbols {
+            URL[row]
+        } else {
+            PLAIN[row]
+        }
+    }
+
+    fn kbd_row_len(allow_symbols: bool, sym_mode: bool, row: usize) -> usize {
+        if row == 4 {
+            if allow_symbols { 5 } else { 4 }
+        } else {
+            Self::kbd_alpha_row(allow_symbols, sym_mode, row).len()
+        }
+    }
+
+    fn kbd_key_label(
+        allow_symbols: bool,
+        caps: bool,
+        sym_mode: bool,
+        row: usize,
+        col: usize,
+    ) -> String {
+        if row == 4 {
+            let lbl = if allow_symbols {
+                match col {
+                    0 => if caps { "CAPS" } else { "caps" },
+                    1 => if sym_mode { "abc" } else { "sym" },
+                    2 => "space",
+                    3 => "del",
+                    _ => "enter",
+                }
+            } else {
+                match col {
+                    0 => if caps { "CAPS" } else { "caps" },
+                    1 => "space",
+                    2 => "del",
+                    _ => "enter",
+                }
+            };
+            return lbl.to_string();
+        }
+        let bytes = Self::kbd_alpha_row(allow_symbols, sym_mode, row).as_bytes();
+        let ch = bytes.get(col).copied().unwrap_or(b'a') as char;
+        if !sym_mode && caps {
+            ch.to_ascii_uppercase().to_string()
+        } else {
+            ch.to_string()
+        }
+    }
+
+    fn kbd_key_center_x(allow_symbols: bool, sym_mode: bool, row: usize, col: usize) -> i32 {
+        let w10 = 1024 * 10;
+        let inner10 = 960 * 10;
+        let gap10 = 12 * 10;
+        let n = Self::kbd_row_len(allow_symbols, sym_mode, row) as i32;
+        if n <= 0 {
+            return w10 / 2;
+        }
+        let kw10 = if row == 4 {
+            (inner10 - (n - 1) * gap10) / n
+        } else {
+            (inner10 - 9 * gap10) / 10
+        };
+        let row_w10 = n * kw10 + (n - 1) * gap10;
+        let start_x10 = (w10 - row_w10) / 2;
+        start_x10 + (col as i32) * (kw10 + gap10) + kw10 / 2
+    }
+
+    fn kbd_remap_col(
+        allow_symbols: bool,
+        sym_mode: bool,
+        from_row: usize,
+        col: usize,
+        to_row: usize,
+    ) -> usize {
+        let to_n = Self::kbd_row_len(allow_symbols, sym_mode, to_row);
+        if to_n <= 1 {
+            return 0;
+        }
+        let target_cx = Self::kbd_key_center_x(allow_symbols, sym_mode, from_row, col);
+        let mut best_c = 0usize;
+        let mut best_d = i32::MAX;
+        for c in 0..to_n {
+            let d = (Self::kbd_key_center_x(allow_symbols, sym_mode, to_row, c) - target_cx).abs();
+            if d < best_d {
+                best_d = d;
+                best_c = c;
+            }
+        }
+        best_c
     }
 
     fn render_list(
@@ -1925,9 +3047,10 @@ impl UIPodApp {
         viz: &mut VizEngine,
     ) {
         let dt = dt.clamp(1.0 / 240.0, 0.1);
-        if self.volume_toast_t > 0.0 {
-            self.volume_toast_t = (self.volume_toast_t - dt).max(0.0);
-        }
+        self.clock_ms = self
+            .clock_ms
+            .saturating_add(((dt * 1000.0).round() as u64).max(1));
+        ui.set_volume_popup_clock(self.clock_ms);
         if self.trans_t < 1.0 {
             self.trans_t = (self.trans_t + dt * 4.6).min(1.0);
         }
@@ -1947,7 +3070,11 @@ impl UIPodApp {
                 0.0
             };
             let transport_speed = if self.play_mode == PlayMode::Play {
-                self.dsp.speed_pct as f32 / 100.0
+                if self.dsp.fx_enabled {
+                    self.dsp.speed_pct as f32 / 100.0
+                } else {
+                    1.0
+                }
             } else {
                 0.0
             };
@@ -1964,13 +3091,16 @@ impl UIPodApp {
                     transport_speed,
                 );
             }
+            ui.render_volume_popup_over_screen(win_w, win_h, self.theme, self.clock_ms);
             return;
         }
 
         if matches!(top, Screen::PluginActive) {
-            if let Some(ref pl) = self.active_plugin {
-                let title = pl.title(self.uk);
-                let hdr = self.header_state(title);
+            let hdr = self
+                .active_plugin
+                .as_ref()
+                .map(|pl| self.header_state(pl.title(self.uk)));
+            if let (Some(ref mut pl), Some(hdr)) = (&mut self.active_plugin, hdr) {
                 pl.render(ui, self.theme, &hdr, self.uk);
                 ui.present_fbo_transition(
                     win_w,
@@ -2046,21 +3176,6 @@ impl UIPodApp {
                 self.render_list(ui, &path, &items, sel);
             }
 
-            Screen::Files { sel } => {
-                let items: Vec<_> = self
-                    .tracks
-                    .iter()
-                    .map(|t| {
-                        (
-                            format!("{} - {}.{}", t.artist, t.title, t.codec.to_lowercase()),
-                            FileIconKind::from_tag(&t.codec),
-                            OwnedRight::Value(fmt_ms(t.duration_ms)),
-                        )
-                    })
-                    .collect();
-                self.render_list(ui, self.tr("Files", "Файли"), &items, sel);
-            }
-
             Screen::ExtrasMenu { sel } => {
                 let items = vec![
                     (self.tr("Plugins", "Плагіни").to_string(), FileIconKind::None, OwnedRight::Chevron),
@@ -2128,6 +3243,156 @@ impl UIPodApp {
                     OwnedRight::None,
                 )];
                 self.render_list(ui, self.tr("Downloads", "Завантаження"), &items, sel);
+            }
+
+            Screen::VideosList { sel } => {
+                let items = vec![(
+                    "Cyberia_2000_Reel_4x3.mp4".to_string(),
+                    FileIconKind::Video("MP4".into()),
+                    OwnedRight::Value("1:34".into()),
+                )];
+                self.render_list(ui, self.tr("Videos", "Відео"), &items, sel);
+            }
+
+            Screen::VideoPlayer {
+                playing,
+                pos_ms,
+                dur_ms,
+            } => {
+                let mut hdr = self.header_state("Cyberia_2000_Reel_4x3.mp4");
+                hdr.play_mode = if playing {
+                    PlayMode::Play
+                } else {
+                    PlayMode::Pause
+                };
+                ui.plugin_begin(self.theme, self.theme.bg_rgb, Some(&hdr));
+
+                // 4-shade video frame viewport (`#10724` Video Player)
+                let aspect_w = match self.video_aspect_idx {
+                    1 => 960.0f32,
+                    2 => 720.0f32,
+                    _ => 840.0f32,
+                };
+                let vx = (1024.0 - aspect_w) * 0.5;
+                let vy = 148.0f32;
+                let vh = 460.0f32;
+                ui.plugin_stroke_rect(vx, vy, aspect_w, vh, 12.0, 4.0, self.theme.fg1_rgb);
+                let phase = (pos_ms as f32 / 1000.0) * 1.4;
+                for i in 0..5 {
+                    let r = 34.0 + ((phase + i as f32 * 0.6).fract()) * 160.0;
+                    ui.plugin_stroke_rect(
+                        512.0 - r * 1.3,
+                        vy + vh * 0.5 - r * 0.72,
+                        r * 2.6,
+                        r * 1.44,
+                        16.0,
+                        3.0,
+                        if i % 2 == 0 {
+                            self.theme.fg2_rgb
+                        } else {
+                            self.theme.fg1_rgb
+                        },
+                    );
+                }
+                ui.plugin_draw_text(
+                    512.0,
+                    vy + vh * 0.5,
+                    "CYBERIA // 4:3 VIDEO",
+                    34.0,
+                    3,
+                    1,
+                    self.theme.fg_rgb,
+                );
+
+                // Bottom OSD pill
+                let prog = (pos_ms as f32 / dur_ms.max(1) as f32).clamp(0.0, 1.0);
+                ui.plugin_draw_progress_bar(self.theme, 48.0, 646.0, 928.0, 22.0, prog);
+                let elapsed = fmt_ms(pos_ms);
+                let rem = format!("-{}", fmt_ms(dur_ms.saturating_sub(pos_ms)));
+                ui.plugin_draw_text(48.0, 698.0, &elapsed, 28.0, 2, 0, self.theme.fg_rgb);
+                ui.plugin_draw_text(
+                    512.0,
+                    698.0,
+                    self.tr("Hold A / Menu: Video Settings", "Утрим. A / Menu: Параметри відео"),
+                    24.0,
+                    1,
+                    1,
+                    self.theme.fg2_rgb,
+                );
+                ui.plugin_draw_text(976.0, 698.0, &rem, 28.0, 2, 2, self.theme.fg_rgb);
+            }
+
+            Screen::VideoContextMenu { sel } => {
+                // Exact 3 rows from `apps/uipod_video.c` (`#11301` — `Video Settings`)
+                let aspect_lbl = match self.video_aspect_idx {
+                    1 => self.tr("Fill (4:3)", "На весь екран (4:3)"),
+                    2 => self.tr("Original", "Оригінал"),
+                    _ => self.tr("Fit", "Вписати"),
+                };
+                let sync_lbl = if self.video_audio_sync_ms > 0 {
+                    format!("+{} ms", self.video_audio_sync_ms)
+                } else {
+                    format!("{} ms", self.video_audio_sync_ms)
+                };
+                let items = vec![
+                    (
+                        self.tr("Aspect Ratio", "Пропорції").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::CycleValue(aspect_lbl.to_string()),
+                    ),
+                    (
+                        self.tr("Brightness", "Яскравість").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::CycleValue(format!("{}%", self.brightness_pct)),
+                    ),
+                    (
+                        self.tr("Audio Sync", "Синхронізація звуку").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::CycleValue(sync_lbl),
+                    ),
+                ];
+                self.render_list(
+                    ui,
+                    self.tr("Video Settings", "Параметри відео"),
+                    &items,
+                    sel,
+                );
+            }
+
+            Screen::TrackContextMenu { track_idx, sel } => {
+                let title = self
+                    .tracks
+                    .get(track_idx)
+                    .map(|t| t.title.as_str())
+                    .unwrap_or("Context Menu");
+                let items = vec![
+                    (
+                        self.tr("Play Now", "Відтворити зараз").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ),
+                    (
+                        self.tr("Play Next", "Відтворити наступним").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ),
+                    (
+                        self.tr("Add to Playlist", "Додати у плейлист").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ),
+                    (
+                        self.tr("Shuffle All", "Перемішати все").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ),
+                    (
+                        self.tr("Now Playing", "Програється").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Chevron,
+                    ),
+                ];
+                self.render_list(ui, title, &items, sel);
             }
 
             Screen::EmptySection {
@@ -2254,22 +3519,10 @@ impl UIPodApp {
                     let elapsed = fmt_ms(self.pos_ms);
                     let rem_ms = self.dur_ms.saturating_sub(self.pos_ms);
                     let remaining = format!("-{}", fmt_ms(rem_ms));
-                    let (progress, center_status) = if self.volume_toast_t > 0.0 {
-                        (
-                            self.volume_step as f32 / 40.0,
-                            format!(
-                                "{}  {} dB",
-                                self.tr("Volume", "Гучність"),
-                                self.volume_db()
-                            ),
-                        )
+                    let progress = if self.dur_ms > 0 {
+                        (self.pos_ms as f32 / self.dur_ms as f32).clamp(0.0, 1.0)
                     } else {
-                        let p = if self.dur_ms > 0 {
-                            (self.pos_ms as f32 / self.dur_ms as f32).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        (p, String::new())
+                        0.0
                     };
                     let state = NowPlayingState {
                         theme: self.theme,
@@ -2285,7 +3538,7 @@ impl UIPodApp {
                         progress,
                         elapsed_label: &elapsed,
                         remaining_label: &remaining,
-                        center_status_label: &center_status,
+                        center_status_label: "",
                         art_rgb24: t.art_rgb24.as_deref(),
                         mono_album_art: self.mono_album_art,
                         alt_layout: self.alt_now_playing,
@@ -2307,6 +3560,7 @@ impl UIPodApp {
                 };
                 let items = vec![
                     (pause_lbl.to_string(), FileIconKind::None, OwnedRight::None),
+                    (self.tr("Effects", "Ефекти").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.fx_enabled)),
                     (self.tr("Shuffle", "Перемішати").to_string(), FileIconKind::None, OwnedRight::None),
                     (self.tr("Repeat", "Повтор").to_string(), FileIconKind::None, OwnedRight::CycleValue(rep.to_string())),
                     (self.tr("Sleep Timer", "Таймер сну").to_string(), FileIconKind::None, OwnedRight::CycleValue(SLEEP_TIMERS[self.sleep_idx].to_string())),
@@ -2324,6 +3578,7 @@ impl UIPodApp {
                     (self.tr("Sound", "Звук").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Offline Mode", "Офлайн-режим").to_string(), FileIconKind::None, OwnedRight::Toggle(self.offline_mode)),
                     (self.tr("Sources", "Джерела").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Accounts", "Акаунти").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Library", "Бібліотека").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Visualizers", "Візуалізатори").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Power", "Живлення").to_string(), FileIconKind::None, OwnedRight::Chevron),
@@ -2395,24 +3650,47 @@ impl UIPodApp {
                 self.render_list(ui, self.tr("Main menu", "Головне меню"), &items, sel);
             }
 
-            Screen::KeyboardHex {
-                text, row, col, ..
+            Screen::Keyboard {
+                target,
+                text,
+                row,
+                col,
+                caps,
+                sym_mode,
+                allow_symbols,
             } => {
-                let raw_rows = Self::qwerty_rows();
-                let mut rows: [Vec<KeyboardKey<'_>>; 5] = Default::default();
-                for (r_idx, r) in raw_rows.iter().enumerate() {
-                    rows[r_idx] = r
-                        .iter()
-                        .enumerate()
-                        .map(|(c_idx, &lbl)| KeyboardKey {
-                            label: lbl,
-                            selected: r_idx == row && c_idx == col,
-                            is_modifier: lbl.len() > 1,
-                            is_active_toggle: lbl == "DONE",
+                let mut key_labels: [Vec<String>; 5] = Default::default();
+                for r_idx in 0..5 {
+                    let n = Self::kbd_row_len(allow_symbols, sym_mode, r_idx);
+                    key_labels[r_idx] = (0..n)
+                        .map(|c_idx| {
+                            Self::kbd_key_label(allow_symbols, caps, sym_mode, r_idx, c_idx)
                         })
                         .collect();
                 }
-                let display = format!("#{text}");
+                let mut rows: [Vec<KeyboardKey<'_>>; 5] = Default::default();
+                for r_idx in 0..5 {
+                    rows[r_idx] = key_labels[r_idx]
+                        .iter()
+                        .enumerate()
+                        .map(|(c_idx, lbl)| KeyboardKey {
+                            label: lbl.as_str(),
+                            selected: r_idx == row && c_idx == col,
+                            is_modifier: r_idx == 4,
+                            is_active_toggle: r_idx == 4
+                                && ((c_idx == 0 && caps)
+                                    || (allow_symbols && c_idx == 1 && sym_mode)),
+                        })
+                        .collect();
+                }
+                let is_hex = matches!(
+                    target,
+                    KbdTarget::HexBackground
+                        | KbdTarget::HexForeground
+                        | KbdTarget::HexShade1
+                        | KbdTarget::HexShade2
+                );
+                let display = if is_hex { format!("#{text}") } else { text };
                 let state = KeyboardState {
                     theme: self.theme,
                     text: &display,
@@ -2435,23 +3713,35 @@ impl UIPodApp {
             }
 
             Screen::EqualizerMenu { sel } => {
-                let pc = self.dsp.eq_precut_tenth_db;
-                let pc_str = if pc == 0 {
-                    "0.0 dB".to_string()
-                } else {
-                    format!("-{}.{} dB", pc / 10, pc % 10)
-                };
                 let items = vec![
                     (self.tr("Enable EQ", "Увімкнути EQ").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.eq_enabled)),
+                    (self.tr("Graphic Equalizer", "Графічний еквалайзер").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     ("AutoEQ".to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Browse EQ Presets", "Пресети EQ").to_string(), FileIconKind::None, OwnedRight::Chevron),
-                    ("Precut".to_string(), FileIconKind::None, OwnedRight::CycleValue(pc_str)),
-                    (self.tr("Simple EQ Settings", "Простий EQ").to_string(), FileIconKind::None, OwnedRight::Chevron),
-                    (self.tr("Advanced EQ Settings", "Розширений EQ").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Save EQ Preset", "Зберегти пресет EQ").to_string(), FileIconKind::None, OwnedRight::None),
                     (self.tr("Reset EQ", "Скинути EQ").to_string(), FileIconKind::None, OwnedRight::None),
                 ];
                 self.render_list(ui, self.tr("Equalizer", "Еквалайзер"), &items, sel);
+            }
+
+            Screen::GraphicEq { sel } => {
+                let a_held = (self.held_buttons & btn::A) != 0;
+                let x_held = (self.held_buttons & btn::X) != 0;
+                let title = if x_held {
+                    self.tr("Bypass", "Байпас")
+                } else {
+                    self.tr("Graphic Equalizer", "Графічний еквалайзер")
+                };
+                let state = GraphicEqState {
+                    theme: self.theme,
+                    header: self.header_state(title),
+                    preamp_tenths_db: self.dsp.eq_preamp_tenths_db,
+                    band_gains_tenths_db: self.dsp.eq_bands_tenths_db,
+                    selected_col: sel,
+                    adjusting: a_held,
+                    bypassed: x_held,
+                };
+                ui.render_graphic_eq_to_fbo(&state);
             }
 
             Screen::AutoEqList { sel } => {
@@ -2472,8 +3762,13 @@ impl UIPodApp {
 
             Screen::EffectsMenu { sel } => {
                 let items = vec![
+                    (self.tr("Enable Effects", "Увімкнути ефекти").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.fx_enabled)),
                     (self.tr("Speed", "Швидкість").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.speed_pct))),
                     (self.tr("Tape Mode", "Режим касети").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Reverb", "Реверберація").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Delay", "Ділей").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Chorus", "Хорус").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Flanger", "Фленжер").to_string(), FileIconKind::None, OwnedRight::Chevron),
                 ];
                 self.render_list(ui, self.tr("Effects", "Ефекти"), &items, sel);
             }
@@ -2490,6 +3785,51 @@ impl UIPodApp {
                     (self.tr("Seek Motor Sound", "Звук перемотки").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.tape_ff_sound)),
                 ];
                 self.render_list(ui, self.tr("Tape Mode", "Режим касети"), &items, sel);
+            }
+
+            Screen::ReverbMenu { sel } => {
+                let items = vec![
+                    (self.tr("Reverb", "Реверберація").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.reverb_enabled)),
+                    (self.tr("Room Size", "Розмір кімнати").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.reverb_size))),
+                    (self.tr("Damping", "Демпфування").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.reverb_damp))),
+                    (self.tr("Pre-Delay", "Передзатримка").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{} ms", self.dsp.reverb_predelay_ms))),
+                    (self.tr("Stereo Width", "Ширина стерео").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.reverb_width))),
+                    (self.tr("Mix", "Мікс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.reverb_mix))),
+                ];
+                self.render_list(ui, self.tr("Reverb", "Реверберація"), &items, sel);
+            }
+
+            Screen::DelayMenu { sel } => {
+                let items = vec![
+                    (self.tr("Delay", "Ділей").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.delay_enabled)),
+                    (self.tr("Delay Time", "Час затримки").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{} ms", self.dsp.delay_time_ms))),
+                    (self.tr("Feedback", "Зворотний зв'язок").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.delay_feedback))),
+                    (self.tr("Tone", "Тон").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.delay_tone))),
+                    (self.tr("Ping-Pong", "Пінг-понг").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.delay_pingpong)),
+                    (self.tr("Mix", "Мікс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.delay_mix))),
+                ];
+                self.render_list(ui, self.tr("Delay", "Ділей"), &items, sel);
+            }
+
+            Screen::ChorusMenu { sel } => {
+                let items = vec![
+                    (self.tr("Chorus", "Хорус").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.chorus_enabled)),
+                    (self.tr("Rate", "Частота").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.chorus_rate))),
+                    (self.tr("Depth", "Глибина").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.chorus_depth))),
+                    (self.tr("Mix", "Мікс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.chorus_mix))),
+                ];
+                self.render_list(ui, self.tr("Chorus", "Хорус"), &items, sel);
+            }
+
+            Screen::FlangerMenu { sel } => {
+                let items = vec![
+                    (self.tr("Flanger", "Фленжер").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.flanger_enabled)),
+                    (self.tr("Rate", "Частота").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.flanger_rate))),
+                    (self.tr("Depth", "Глибина").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.flanger_depth))),
+                    (self.tr("Feedback", "Зворотний зв'язок").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.flanger_feedback))),
+                    (self.tr("Mix", "Мікс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.flanger_mix))),
+                ];
+                self.render_list(ui, self.tr("Flanger", "Фленжер"), &items, sel);
             }
 
             Screen::ReplayGainMenu { sel } => {
@@ -2512,13 +3852,201 @@ impl UIPodApp {
 
             Screen::SourceServerInfo { is_jellyfin, sel } => {
                 let title = if is_jellyfin { "Jellyfin" } else { "Navidrome" };
+                let not_set = self.tr("Not set", "Не задано").to_string();
+                let url_val = if is_jellyfin {
+                    &self.jellyfin_url
+                } else {
+                    &self.navidrome_url
+                };
+                let usr_val = if is_jellyfin {
+                    &self.jellyfin_user
+                } else {
+                    &self.navidrome_user
+                };
                 let items = vec![
-                    ("Server URL".to_string(), FileIconKind::None, OwnedRight::Value("Not set".into())),
-                    ("Username".to_string(), FileIconKind::None, OwnedRight::Value("Not set".into())),
-                    ("Audio Quality".to_string(), FileIconKind::None, OwnedRight::Value("Original".into())),
-                    ("Connect & Sync".to_string(), FileIconKind::None, OwnedRight::None),
+                    (
+                        "Server URL".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(if url_val.is_empty() {
+                            not_set.clone()
+                        } else {
+                            url_val.clone()
+                        }),
+                    ),
+                    (
+                        "Username".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(if usr_val.is_empty() {
+                            not_set
+                        } else {
+                            usr_val.clone()
+                        }),
+                    ),
+                    (
+                        "Audio Quality".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value("Original".into()),
+                    ),
+                    (
+                        "Connect & Sync".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ),
                 ];
                 self.render_list(ui, title, &items, sel);
+            }
+
+            Screen::AccountsMenu { sel } => {
+                let items = vec![(
+                    "Last.fm".to_string(),
+                    FileIconKind::None,
+                    OwnedRight::Chevron,
+                )];
+                self.render_list(ui, self.tr("Accounts", "Акаунти"), &items, sel);
+            }
+
+            Screen::LastFmMenu { sel } => {
+                let not_set = self.tr("Not set", "Не задано").to_string();
+                let key_lbl = if self.lfm_api_key.is_empty() {
+                    not_set.clone()
+                } else {
+                    self.lfm_api_key.clone()
+                };
+                let sec_lbl = if self.lfm_api_secret.is_empty() {
+                    not_set
+                } else {
+                    "••••••••".to_string()
+                };
+                let items = vec![
+                    (
+                        self.tr("Scrobbling", "Скроблінг").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.lfm_enabled),
+                    ),
+                    (
+                        self.tr("Account", "Акаунт").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(self.tr("Not signed in", "Не здійснено вхід").into()),
+                    ),
+                    (
+                        self.tr("Sign In via QR / Browser", "Вхід за QR / браузером").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Chevron,
+                    ),
+                    (
+                        self.tr("Sign In with Password", "Вхід за логіном і паролем").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Chevron,
+                    ),
+                    (
+                        self.tr("Scrobble Streaming", "Скроблити стрімінг").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.lfm_streaming),
+                    ),
+                    (
+                        self.tr("Sync Cached Scrobbles", "Відправити кеш скроблів").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value("0".into()),
+                    ),
+                    (
+                        self.tr("Clear Cached Scrobbles", "Очистити кеш скроблів").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value("0".into()),
+                    ),
+                    ("API Key".to_string(), FileIconKind::None, OwnedRight::Value(key_lbl)),
+                    ("API Secret".to_string(), FileIconKind::None, OwnedRight::Value(sec_lbl)),
+                ];
+                self.render_list(ui, "Last.fm", &items, sel);
+            }
+
+            Screen::LastFmQrAuth => {
+                // Exact 4-shade `Last.fm Sign In` QR Auth screen (`#3725`)
+                let hdr = self.header_state(self.tr("Last.fm Sign In", "Вхід у Last.fm"));
+                ui.plugin_begin(self.theme, self.theme.bg_rgb, Some(&hdr));
+
+                let qx = 96.0f32;
+                let qy = 196.0f32;
+                let qs = 360.0f32;
+                ui.plugin_stroke_rect(qx, qy, qs, qs, 18.0, 4.0, self.theme.fg1_rgb);
+                let n = 21usize;
+                let pad = 24.0f32;
+                let m_sz = (qs - pad * 2.0) / (n as f32);
+                for r in 0..n {
+                    for c in 0..n {
+                        let finder = (r < 7 && c < 7)
+                            || (r < 7 && c + 7 >= n)
+                            || (r + 7 >= n && c < 7);
+                        let on = if finder {
+                            let lr = if r + 7 >= n { r - (n - 7) } else { r };
+                            let lc = if c + 7 >= n { c - (n - 7) } else { c };
+                            lr == 0
+                                || lr == 6
+                                || lc == 0
+                                || lc == 6
+                                || ((2..=4).contains(&lr) && (2..=4).contains(&lc))
+                        } else {
+                            ((r * 17 + c * 31 + (r ^ c) * 7) % 5) < 2
+                        };
+                        if on {
+                            ui.plugin_fill_rect(
+                                qx + pad + (c as f32) * m_sz,
+                                qy + pad + (r as f32) * m_sz,
+                                m_sz - 1.0,
+                                m_sz - 1.0,
+                                1.5,
+                                self.theme.fg_rgb,
+                            );
+                        }
+                    }
+                }
+
+                let tx = 500.0f32;
+                ui.plugin_draw_text(
+                    tx,
+                    244.0,
+                    self.tr("Scan with your phone", "Зіскануйте телефоном"),
+                    34.0,
+                    3,
+                    0,
+                    self.theme.fg_rgb,
+                );
+                ui.plugin_draw_text(
+                    tx,
+                    308.0,
+                    "last.fm/api/auth",
+                    28.0,
+                    2,
+                    0,
+                    self.theme.fg2_rgb,
+                );
+                ui.plugin_draw_text(
+                    tx,
+                    382.0,
+                    self.tr("Approve UIPod in browser,", "Підтвердіть UIPod у браузері,"),
+                    24.0,
+                    1,
+                    0,
+                    self.theme.fg2_rgb,
+                );
+                ui.plugin_draw_text(
+                    tx,
+                    420.0,
+                    self.tr("then press A to finish.", "потім натисніть A."),
+                    24.0,
+                    1,
+                    0,
+                    self.theme.fg2_rgb,
+                );
+                ui.plugin_fill_rect(tx, 488.0, 428.0, 68.0, 14.0, self.theme.fg_rgb);
+                ui.plugin_draw_text(
+                    tx + 214.0,
+                    522.0,
+                    self.tr("A: Complete   •   B: Cancel", "A: Завершити   •   B: Скасувати"),
+                    24.0,
+                    2,
+                    1,
+                    self.theme.bg_rgb,
+                );
             }
 
             Screen::LibraryMenu { sel } => {
@@ -2600,7 +4128,7 @@ impl UIPodApp {
             Some(Screen::NowPlaying) => "now_playing",
             Some(Screen::VisualizerActive) => "visualizer",
             Some(Screen::ThemeList { .. } | Screen::CustomizeThemeMenu { .. }) => "themes",
-            Some(Screen::KeyboardHex { .. }) => "keyboard",
+            Some(Screen::Keyboard { .. }) => "keyboard",
             Some(Screen::PluginActive) => {
                 if matches!(self.active_plugin, Some(ActivePlugin::MusicQuiz(_))) {
                     "music_quiz"

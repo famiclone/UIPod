@@ -6,6 +6,9 @@ on:
     paths:
       - 'web/**'
       - 'crates/uipod-ui/**'
+      - 'crates/uipod-plugin-sdk/**'
+      - 'plugins/**'
+      - 'assets/fonts/**'
       - 'pak/uipod/about.txt'
       - '.github/workflows/pages.yml'
   workflow_dispatch:

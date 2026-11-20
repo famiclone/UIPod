@@ -11,8 +11,8 @@ use crate::layout::LogicalMetrics;
 use crate::renderer::{HEADER_BAND_ROWS, HEIGHT, WIDTH};
 use crate::viz_gl::{VizEngine, VIZ_PRESETS};
 use crate::{
-    FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
-    ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
+    FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState,
+    ListRow, ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
 };
 
 // Safety: UiEngine is accessed exclusively from the serialized Rockbox thread holding the SDL GL context.
@@ -40,7 +40,7 @@ pub struct UIPodRsHeader {
     pub is_charging: bool,
     pub is_hold: bool,
     pub is_downloading: bool,
-    /// `0=None`, `1=MicroSd`, `2=Navidrome`, `3=Jellyfin`
+    /// Bits `0..6`: `0=None`, `1=MicroSd`, `2=Navidrome`, `3=Jellyfin`; bit `7` (`0x80`): `is_fx`
     pub source_icon: u8,
     pub download_done: u32,
     pub download_total: u32,
@@ -115,6 +115,20 @@ pub struct UIPodRsKeyboard {
     pub keys: *const UIPodRsKeyboardKey,
 }
 
+#[repr(C)]
+pub struct UIPodRsGraphicEq {
+    pub bg_rgb: u32,
+    pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
+    pub header: UIPodRsHeader,
+    pub preamp_tenths_db: i16,
+    pub band_gains_tenths_db: [i16; 10],
+    pub selected_col: usize,
+    pub adjusting: bool,
+    pub bypassed: bool,
+}
+
 #[inline]
 unsafe fn cstr_lossy<'a>(ptr: *const c_char) -> Cow<'a, str> {
     if ptr.is_null() {
@@ -137,12 +151,17 @@ fn decode_play_mode(raw: u32) -> PlayMode {
 
 #[inline]
 fn decode_source_icon(raw: u8) -> HeaderSourceIcon {
-    match raw {
+    match raw & 0x7F {
         1 => HeaderSourceIcon::MicroSd,
         2 => HeaderSourceIcon::Navidrome,
         3 => HeaderSourceIcon::Jellyfin,
         _ => HeaderSourceIcon::None,
     }
+}
+
+#[inline]
+const fn decode_is_fx(raw: u8) -> bool {
+    (raw & 0x80) != 0
 }
 
 /// Initializes the global Rust GPU UI engine on the active OpenGL ES 3.0 context.
@@ -226,6 +245,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_header(
         battery_percent: h.battery_percent,
         is_charging: h.is_charging,
         is_hold: h.is_hold,
+        is_fx: decode_is_fx(h.source_icon),
         is_downloading: h.is_downloading,
         download_done: h.download_done,
         download_total: h.download_total,
@@ -310,6 +330,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list(
             battery_percent: sc.header.battery_percent,
             is_charging: sc.header.is_charging,
             is_hold: sc.header.is_hold,
+            is_fx: decode_is_fx(sc.header.source_icon),
             is_downloading: sc.header.is_downloading,
             download_done: sc.header.download_done,
             download_total: sc.header.download_total,
@@ -377,6 +398,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
             battery_percent: n.header.battery_percent,
             is_charging: n.header.is_charging,
             is_hold: n.header.is_hold,
+            is_fx: decode_is_fx(n.header.source_icon),
             is_downloading: n.header.is_downloading,
             download_done: n.header.download_done,
             download_total: n.header.download_total,
@@ -506,6 +528,7 @@ pub unsafe extern "C" fn uipod_rs_ui_plugin_begin(
             battery_percent: h.battery_percent,
             is_charging: h.is_charging,
             is_hold: h.is_hold,
+            is_fx: decode_is_fx(h.source_icon),
             is_downloading: h.is_downloading,
             download_done: h.download_done,
             download_total: h.download_total,
@@ -780,6 +803,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_header_gpu(
         battery_percent: h.battery_percent,
         is_charging: h.is_charging,
         is_hold: h.is_hold,
+        is_fx: decode_is_fx(h.source_icon),
         is_downloading: h.is_downloading,
         download_done: h.download_done,
         download_total: h.download_total,
@@ -864,6 +888,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list_gpu(
             battery_percent: sc.header.battery_percent,
             is_charging: sc.header.is_charging,
             is_hold: sc.header.is_hold,
+            is_fx: decode_is_fx(sc.header.source_icon),
             is_downloading: sc.header.is_downloading,
             download_done: sc.header.download_done,
             download_total: sc.header.download_total,
@@ -930,6 +955,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing_gpu(
             battery_percent: n.header.battery_percent,
             is_charging: n.header.is_charging,
             is_hold: n.header.is_hold,
+            is_fx: decode_is_fx(n.header.source_icon),
             is_downloading: n.header.is_downloading,
             download_done: n.header.download_done,
             download_total: n.header.download_total,
@@ -1015,6 +1041,108 @@ pub unsafe extern "C" fn uipod_rs_ui_render_keyboard_gpu(
     };
 
     wrap.0.render_keyboard_to_fbo_sized(&state, win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_graphic_eq(
+    eq: *const UIPodRsGraphicEq,
+    fb_bgr: *mut u8,
+) -> bool {
+    if eq.is_null() || fb_bgr.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let e = &*eq;
+    let h_title = cstr_lossy(e.header.title);
+    let h_legend = cstr_lossy(e.header.legend);
+    let state = GraphicEqState {
+        theme: ThemeColors {
+            bg_rgb: e.bg_rgb,
+            fg_rgb: e.fg_rgb,
+            fg1_rgb: e.fg1_rgb,
+            fg2_rgb: e.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &h_title,
+            legend: &h_legend,
+            play_mode: decode_play_mode(e.header.play_mode),
+            battery_percent: e.header.battery_percent,
+            is_charging: e.header.is_charging,
+            is_hold: e.header.is_hold,
+            is_fx: decode_is_fx(e.header.source_icon),
+            is_downloading: e.header.is_downloading,
+            download_done: e.header.download_done,
+            download_total: e.header.download_total,
+            source_icon: decode_source_icon(e.header.source_icon),
+        },
+        preamp_tenths_db: e.preamp_tenths_db,
+        band_gains_tenths_db: e.band_gains_tenths_db,
+        selected_col: e.selected_col,
+        adjusting: e.adjusting,
+        bypassed: e.bypassed,
+    };
+
+    let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
+    wrap.0.render_graphic_eq_into_bgr(&state, fb_slice);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_graphic_eq_gpu(
+    eq: *const UIPodRsGraphicEq,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if eq.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let e = &*eq;
+    let h_title = cstr_lossy(e.header.title);
+    let h_legend = cstr_lossy(e.header.legend);
+    let state = GraphicEqState {
+        theme: ThemeColors {
+            bg_rgb: e.bg_rgb,
+            fg_rgb: e.fg_rgb,
+            fg1_rgb: e.fg1_rgb,
+            fg2_rgb: e.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &h_title,
+            legend: &h_legend,
+            play_mode: decode_play_mode(e.header.play_mode),
+            battery_percent: e.header.battery_percent,
+            is_charging: e.header.is_charging,
+            is_hold: e.header.is_hold,
+            is_fx: decode_is_fx(e.header.source_icon),
+            is_downloading: e.header.is_downloading,
+            download_done: e.header.download_done,
+            download_total: e.header.download_total,
+            source_icon: decode_source_icon(e.header.source_icon),
+        },
+        preamp_tenths_db: e.preamp_tenths_db,
+        band_gains_tenths_db: e.band_gains_tenths_db,
+        selected_col: e.selected_col,
+        adjusting: e.adjusting,
+        bypassed: e.bypassed,
+    };
+
+    wrap.0.render_graphic_eq_to_fbo_sized(&state, win_w, win_h);
     true
 }
 
@@ -1113,6 +1241,7 @@ pub unsafe extern "C" fn uipod_rs_ui_plugin_begin_ex(
             battery_percent: h.battery_percent,
             is_charging: h.is_charging,
             is_hold: h.is_hold,
+            is_fx: decode_is_fx(h.source_icon),
             is_downloading: h.is_downloading,
             download_done: h.download_done,
             download_total: h.download_total,
@@ -1129,6 +1258,64 @@ pub unsafe extern "C" fn uipod_rs_ui_plugin_begin_ex(
         *out_logical_h = lh;
     }
     true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_trigger_volume_popup(level_norm: f32, now_ms: u64) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.trigger_volume_popup(level_norm, now_ms);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_set_volume_popup_clock(now_ms: u64) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.set_volume_popup_clock(now_ms);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_is_volume_popup_animating(now_ms: u64) -> bool {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.is_volume_popup_animating(now_ms);
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_render_volume_popup_over_screen(
+    win_w: u32,
+    win_h: u32,
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    now_ms: u64,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0.render_volume_popup_over_screen(
+        win_w,
+        win_h,
+        ThemeColors {
+            bg_rgb,
+            fg_rgb,
+            fg1_rgb,
+            fg2_rgb,
+        },
+        now_ms,
+    )
 }
 
 // ---- 4-Shade Audio-Reactive Visualizer C ABI (`uipod_rs_viz_*`) ------------

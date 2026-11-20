@@ -44,6 +44,10 @@ mod macos_gl {
 
     impl HeadlessGl {
         pub unsafe fn init() -> Result<Self, String> {
+            const K_CGL_PFA_RENDERER_ID: u32 = 70;
+            const K_CGL_RENDERER_GENERIC_FLOAT_ID: u32 = 0x0002_0400;
+
+            let force_sw = std::env::var_os("UIPOD_SW_GL").is_some();
             let attribs_hw = [
                 K_CGL_PFA_OPENGL_PROFILE,
                 K_CGL_OGLP_VERSION_3_2_CORE,
@@ -51,11 +55,21 @@ mod macos_gl {
                 K_CGL_PFA_ALLOW_OFFLINE_RENDERERS,
                 0,
             ];
-            let attribs_sw = [K_CGL_PFA_OPENGL_PROFILE, K_CGL_OGLP_VERSION_3_2_CORE, 0];
+            let attribs_sw = [
+                K_CGL_PFA_OPENGL_PROFILE,
+                K_CGL_OGLP_VERSION_3_2_CORE,
+                K_CGL_PFA_RENDERER_ID,
+                K_CGL_RENDERER_GENERIC_FLOAT_ID,
+                0,
+            ];
 
             let mut pix: CGLPixelFormatObj = ptr::null_mut();
             let mut npix: c_int = 0;
-            let mut err = CGLChoosePixelFormat(attribs_hw.as_ptr(), &mut pix, &mut npix);
+            let mut err = if force_sw {
+                CGLChoosePixelFormat(attribs_sw.as_ptr(), &mut pix, &mut npix)
+            } else {
+                CGLChoosePixelFormat(attribs_hw.as_ptr(), &mut pix, &mut npix)
+            };
             if err != 0 || pix.is_null() {
                 err = CGLChoosePixelFormat(attribs_sw.as_ptr(), &mut pix, &mut npix);
             }
@@ -180,6 +194,7 @@ fn main() {
                 battery_percent: 69,
                 is_charging: true,
                 is_hold: false,
+                is_fx: true,
                 is_downloading: true,
                 download_done: 3,
                 download_total: 12,
@@ -374,6 +389,51 @@ fn main() {
         let rgba_np = engine.render_now_playing_rgba(&np_state);
         let np_path = out_dir.join("preview_now_playing.png");
         write_png(&np_path, &rgba_np);
+
+        // 4. Volume Popup screen (exact ui.figcraft [10977] / [3214])
+        let rgba_vp = engine.render_volume_popup_rgba(&np_state, 220.0 / 352.0);
+        write_png(&out_dir.join("code_volume_popup.png"), &rgba_vp);
+
+        // 5. Context Menu - Video Player (exact ui.figcraft [11301])
+        let vid_ctx_rows = vec![
+            ListRow {
+                label: "Aspect Fit",
+                file_icon: FileIconKind::None,
+                selected: true,
+                right: RightAccessory::CycleValue("Fit"),
+            },
+            ListRow {
+                label: "Audio Track",
+                file_icon: FileIconKind::None,
+                selected: false,
+                right: RightAccessory::CycleValue("Track 1 (EN)"),
+            },
+            ListRow {
+                label: "Subtitles",
+                file_icon: FileIconKind::None,
+                selected: false,
+                right: RightAccessory::CycleValue("Off"),
+            },
+        ];
+        let vid_ctx_state = ListScreenState {
+            theme: ThemeColors::default(),
+            header: HeaderState {
+                title: "Video Settings",
+                legend: "",
+                play_mode: PlayMode::Play,
+                battery_percent: 54,
+                is_charging: false,
+                is_hold: false,
+                source_icon: HeaderSourceIcon::None,
+                ..Default::default()
+            },
+            rows: vid_ctx_rows,
+            total_items: 3,
+            start_item: 0,
+            visible_items: 8,
+        };
+        let rgba_vctx = engine.render_list_rgba(&vid_ctx_state);
+        write_png(&out_dir.join("code_video_context_menu.png"), &rgba_vctx);
 
         let qwerty_rows: [&[&str]; 5] = [
             &["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],

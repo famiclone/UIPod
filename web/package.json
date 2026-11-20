@@ -7,7 +7,9 @@
     "build:wasm": "cd uipod-wasm && wasm-pack build --target web --no-opt --out-dir ../src/wasm-pkg",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "./deploy.sh",
+    "deploy:gh-pages": "./deploy.sh --gh-pages"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
