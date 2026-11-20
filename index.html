@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0b0d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>UIPod v0.6.0 — TrimUI Brick &amp; Android Handheld Media Player</title>
+    <meta
+      name="description"
+      content="Try UIPod v0.6.0 directly in your browser via WebAssembly + WebGL2. iPod Mini-inspired offline, Navidrome & Jellyfin media player for TrimUI Brick and Android retro handhelds."
+    />
+    <script type="module" crossorigin src="./assets/index-DthoTZNe.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DTtyHEWX.css">
+  </head>
+  <body>
+    <div class="ambient-field" aria-hidden="true"></div>
+    <div class="grid-overlay" aria-hidden="true"></div>
+
+    <!-- Top Navigation Bar -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a href="#simulator" class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <span class="dot"></span>
+          </span>
+          <span class="brand-name">UIPOD</span>
+          <span class="brand-ver">v0.6.0</span>
+          <span class="status-pill" id="wasm-status">
+            <span class="status-dot"></span>
+            <span data-i18n="hero_badge_wasm">WASM · WEBGL2</span>
+          </span>
+        </a>
+
+        <nav class="nav-links" aria-label="Main navigation">
+          <a href="#simulator" data-i18n="nav_sim">Try in Browser</a>
+          <a href="#features" data-i18n="nav_features">Features</a>
+          <a href="#controls" data-i18n="nav_controls">Controls</a>
+          <a href="#install" data-i18n="nav_install">Install</a>
+        </nav>
+
+        <div class="topbar-actions">
+          <div class="lang-toggle" role="group" aria-label="Language">
+            <button type="button" class="lang-btn active" data-lang="en">EN</button>
+            <button type="button" class="lang-btn" data-lang="uk">UA</button>
+          </div>
+          <a
+            class="btn-ghost"
+            href="https://github.com/famiclone/UIPod"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.08 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58A12.01 12.01 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            <span data-i18n="nav_github">GitHub</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- HERO + INTERACTIVE TRIMUI BRICK SIMULATOR -->
+      <section id="simulator" class="hero-section">
+        <div class="container">
+          <div class="hero-header">
+            <div class="eyebrow" data-i18n="hero_eyebrow">
+              TRIMUI BRICK (TG5040) · ANDROID HANDHELDS (ARM64) · NEXTUI
+            </div>
+            <h1 class="hero-title" data-i18n="hero_title">
+              UIPod for Retro Handhelds
+            </h1>
+            <p class="hero-sub" data-i18n="hero_sub">
+              An iPod Mini-inspired offline, Navidrome, and Jellyfin media player for TrimUI Brick
+              (NextUI) and Android retro handhelds (Retroid, Odin, Anbernic, Ayaneo). Built on a
+              customized Rockbox core with a pure-Rust GPU interface — try the WebAssembly build
+              directly in your browser.
+            </p>
+          </div>
+
+          <div class="workbench">
+            <!-- LEFT: REAL TRIMUI BRICK HARDWARE PHOTO + INTERACTIVE OVERLAY -->
+            <div class="device-stage" id="device-stage">
+              <div class="device-toolbar">
+                <div class="toolbar-left">
+                  <button type="button" class="btn-fs-exit" id="btn-fs-exit" aria-label="Exit fullscreen">
+                    ✕ <span data-i18n="btn_exit_fs">Exit</span>
+                  </button>
+                  <span class="telemetry-chip" id="fps-badge">60 FPS · 1024×768</span>
+                </div>
+                <div class="shoulders-inline">
+                  <button type="button" class="hw-shoulder" data-btn="L2" title="L2 (1) — Prev Visualizer / Seek -15s">L2</button>
+                  <button type="button" class="hw-shoulder" data-btn="L1" title="L1 (Q) — Prev Track / Page Up">L1</button>
+                  <button type="button" class="hw-shoulder" data-btn="R1" title="R1 (E) — Next Track / Page Down">R1</button>
+                  <button type="button" class="hw-shoulder" data-btn="R2" title="R2 (2) — Next Visualizer / Seek +15s">R2</button>
+                  <button type="button" class="hw-shoulder fs-only-btn" id="btn-fs-vol-down" title="Volume Down">V−</button>
+                  <button type="button" class="hw-shoulder fs-only-btn" id="btn-fs-vol-up" title="Volume Up">V+</button>
+                  <button type="button" class="hw-shoulder fs-only-btn" id="btn-fs-hold" title="Hold Lock">HOLD</button>
+                  <button type="button" class="btn-fullscreen" id="btn-fullscreen" title="Open Fullscreen Handheld Mode">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                      <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                    </svg>
+                    <span data-i18n="btn_fullscreen">Fullscreen</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Real TrimUI Brick Device Cutout -->
+              <div class="brick-device" id="brick-device">
+                <!-- Left Side Volume Rocker -->
+                <div class="side-vol">
+                  <button type="button" class="hw-side-btn" id="btn-vol-up" title="Volume Up (=)">+</button>
+                  <button type="button" class="hw-side-btn" id="btn-vol-down" title="Volume Down (-)">−</button>
+                </div>
+
+                <!-- Right Side Hold Switch -->
+                <button
+                  type="button"
+                  class="side-hold"
+                  id="btn-hold-switch"
+                  title="Side Hold Switch (H) — Lock Controls"
+                  aria-pressed="false"
+                >
+                  <span class="hold-nub"></span>
+                  <span class="hold-lbl">HOLD</span>
+                </button>
+
+                <!-- Transparent TrimUI Brick Cutout Image -->
+                <img
+                  src="./trimui-brick.png"
+                  alt="TrimUI Brick running UIPod"
+                  class="brick-photo"
+                  draggable="false"
+                />
+
+                <!-- Exact 4:3 WebGL2 Screen Positioned on Device Display -->
+                <div class="brick-screen">
+                  <canvas id="uipod-canvas" width="1024" height="768"></canvas>
+                  <div class="screen-loader" id="screen-loader">
+                    <div class="loader-ring"></div>
+                    <span>Booting UIPod WASM…</span>
+                  </div>
+                </div>
+
+                <!-- Pixel-Aligned Interactive Hitboxes on Real TrimUI Brick Buttons -->
+                <div class="hw-hitboxes">
+                  <!-- D-Pad -->
+                  <button type="button" class="hit hit-dpad hit-up" data-btn="UP" title="Up (ArrowUp / W)" aria-label="D-Pad Up"></button>
+                  <button type="button" class="hit hit-dpad hit-down" data-btn="DOWN" title="Down (ArrowDown / S)" aria-label="D-Pad Down"></button>
+                  <button type="button" class="hit hit-dpad hit-left" data-btn="LEFT" title="Left (ArrowLeft / A)" aria-label="D-Pad Left"></button>
+                  <button type="button" class="hit hit-dpad hit-right" data-btn="RIGHT" title="Right (ArrowRight / D)" aria-label="D-Pad Right"></button>
+
+                  <!-- ABXY -->
+                  <button type="button" class="hit hit-round hit-x" data-btn="X" title="X (C) — Large Cover / Viz Grain" aria-label="X"></button>
+                  <button type="button" class="hit hit-round hit-y" data-btn="Y" title="Y (V)" aria-label="Y"></button>
+                  <button type="button" class="hit hit-round hit-a" data-btn="A" title="A (Enter / Z) — Select (Hold = Options)" aria-label="A"></button>
+                  <button type="button" class="hit hit-round hit-b" data-btn="B" title="B (Esc / X) — Back (Hold = Home)" aria-label="B"></button>
+
+                  <!-- Bottom Function Buttons (MENU / SELECT / START) -->
+                  <button type="button" class="hit hit-fn hit-menu" data-btn="MENU" title="MENU (M) — Context / Settings" aria-label="Menu"></button>
+                  <button type="button" class="hit hit-fn hit-select" data-btn="SELECT" title="SELECT" aria-label="Select"></button>
+                  <button type="button" class="hit hit-fn hit-start" data-btn="START" title="START (Space) — Play / Pause" aria-label="Start"></button>
+                </div>
+              </div>
+
+              <p class="device-hint" data-i18n="hero_hint">
+                Click the device buttons, use Arrow keys + Enter/Esc, or connect a gamepad.
+              </p>
+            </div>
+
+            <!-- RIGHT: UIPOD STUDIO COMPANION DECK -->
+            <aside class="studio-deck">
+              <div class="deck-card deck-transport">
+                <div class="transport-row">
+                  <button type="button" class="play-fab" id="studio-play-btn" title="Play / Pause (Space)">
+                    <svg id="icon-play" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    <svg id="icon-pause" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+                      <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+                    </svg>
+                  </button>
+                  <div class="now-meta">
+                    <div class="now-title" id="hud-track-title">AquaBIOS 2000</div>
+                    <div class="now-sub">
+                      <span id="hud-track-artist">Cyberia 99</span>
+                      <span class="sep">·</span>
+                      <span id="hud-theme-name">UIPod Classic</span>
+                    </div>
+                  </div>
+                  <div class="palette-dots" id="hud-palette-dots" title="Active 4-Shade Palette">
+                    <span data-shade="bg"></span>
+                    <span data-shade="fg1"></span>
+                    <span data-shade="fg2"></span>
+                    <span data-shade="fg"></span>
+                  </div>
+                </div>
+
+                <div class="quick-jump">
+                  <button type="button" class="jump-btn" data-jump="main" data-i18n="quick_main">Main Menu</button>
+                  <button type="button" class="jump-btn" data-jump="now_playing" data-i18n="quick_np">Now Playing</button>
+                  <button type="button" class="jump-btn" data-jump="visualizer" data-i18n="quick_viz">Visualizers</button>
+                  <button type="button" class="jump-btn" data-jump="plugin:sound_racer" data-i18n="quick_games">Sound Racer</button>
+                  <button type="button" class="jump-btn" data-jump="keyboard" data-i18n="quick_kbd">Keyboard</button>
+                  <button type="button" class="jump-btn" data-jump="plugin:about" data-i18n="quick_manual">Manual</button>
+                </div>
+              </div>
+
+              <!-- Drag & Drop Local Music Importer -->
+              <div class="dropzone" id="audio-dropzone">
+                <input type="file" id="audio-file-input" accept="audio/*" multiple hidden />
+                <div class="dropzone-copy">
+                  <strong data-i18n="drop_title">Drop your music here</strong>
+                  <span data-i18n="drop_sub">MP3, FLAC, WAV, OGG, M4A — plays locally in browser with EQ, Tape Mode &amp; visualizers</span>
+                </div>
+                <button type="button" class="btn-outline-sm" id="btn-pick-audio" data-i18n="drop_btn">
+                  Load Audio
+                </button>
+              </div>
+
+              <!-- Modular Studio Tabs -->
+              <div class="deck-card studio-panel">
+                <div class="studio-tabs" role="tablist">
+                  <button type="button" class="studio-tab active" data-tab="themes" role="tab" data-i18n="tab_themes">
+                    Themes
+                  </button>
+                  <button type="button" class="studio-tab" data-tab="viz" role="tab" data-i18n="tab_viz">
+                    Visualizers
+                  </button>
+                  <button type="button" class="studio-tab" data-tab="sound" role="tab" data-i18n="tab_sound">
+                    Sound &amp; Tape
+                  </button>
+                  <button type="button" class="studio-tab" data-tab="plugins" role="tab" data-i18n="tab_plugins">
+                    Plugins
+                  </button>
+                </div>
+
+                <!-- TAB 1: THEMES -->
+                <div class="tab-pane active" id="pane-themes">
+                  <div class="theme-presets-grid" id="theme-presets-grid"></div>
+
+                  <div class="divider"></div>
+
+                  <div class="sub-header">
+                    <span data-i18n="theme_custom">Custom 4-Shade Palette</span>
+                    <button type="button" class="btn-micro" id="btn-copy-cfg" data-i18n="theme_copy">
+                      Copy config.cfg
+                    </button>
+                  </div>
+
+                  <div class="color-slots">
+                    <label class="color-slot">
+                      <span>BG</span>
+                      <input type="color" id="pick-bg" value="#D6D8D5" />
+                      <code id="hex-bg">#D6D8D5</code>
+                    </label>
+                    <label class="color-slot">
+                      <span>FG1</span>
+                      <input type="color" id="pick-fg1" value="#A8A8A8" />
+                      <code id="hex-fg1">#A8A8A8</code>
+                    </label>
+                    <label class="color-slot">
+                      <span>FG2</span>
+                      <input type="color" id="pick-fg2" value="#595959" />
+                      <code id="hex-fg2">#595959</code>
+                    </label>
+                    <label class="color-slot">
+                      <span>FG</span>
+                      <input type="color" id="pick-fg" value="#3C3637" />
+                      <code id="hex-fg">#3C3637</code>
+                    </label>
+                  </div>
+
+                  <div class="studio-row">
+                    <label class="check-row">
+                      <input type="checkbox" id="chk-auto-derive" checked />
+                      <span data-i18n="theme_auto">Auto-derive Secondary 1 &amp; 2 (30% / 78%)</span>
+                    </label>
+                    <label class="check-row">
+                      <input type="checkbox" id="chk-mono-art" checked />
+                      <span data-i18n="theme_mono">Monochrome album art</span>
+                    </label>
+                  </div>
+
+                  <div class="studio-row compact">
+                    <label class="select-row">
+                      <span data-i18n="theme_trans">Screen Transition</span>
+                      <select id="sel-transition">
+                        <option value="1" selected>Slide</option>
+                        <option value="2">Cover</option>
+                        <option value="3">Fade</option>
+                        <option value="4">Pixels</option>
+                        <option value="5">Blinds</option>
+                        <option value="0">Off</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- TAB 2: VISUALIZERS -->
+                <div class="tab-pane" id="pane-viz">
+                  <div class="viz-actions-top">
+                    <button type="button" class="btn-primary-sm" id="btn-launch-viz" data-i18n="viz_launch">
+                      Open Visualizer Fullscreen
+                    </button>
+                    <label class="toggle-chip">
+                      <input type="checkbox" id="chk-viz-fine" />
+                      <span id="lbl-viz-grain">4×4</span>
+                    </label>
+                  </div>
+
+                  <div class="viz-presets-grid" id="viz-presets-grid"></div>
+
+                  <div class="divider"></div>
+
+                  <div class="sub-header">
+                    <span data-i18n="viz_shader_title">GLSL Fragment Shader Editor</span>
+                    <div class="shader-btns">
+                      <button type="button" class="btn-micro" id="btn-reset-shader" data-i18n="viz_reset">Reset Preset</button>
+                      <button type="button" class="btn-micro accent" id="btn-compile-shader" data-i18n="viz_compile">Compile &amp; Run</button>
+                    </div>
+                  </div>
+                  <textarea
+                    id="glsl-editor"
+                    class="glsl-editor"
+                    spellcheck="false"
+                    rows="8"
+                    aria-label="GLSL Fragment Shader Editor"
+                  ></textarea>
+                  <div class="shader-status" id="shader-status">
+                    Uniforms: u_time, u_bands, u_att, u_beat, u_vu, u_transport, wave_mono(x), spec_sample(x), prev_scene(uv)
+                  </div>
+                </div>
+
+                <!-- TAB 3: SOUND & TAPE -->
+                <div class="tab-pane" id="pane-sound">
+                  <div class="studio-row">
+                    <label class="check-row">
+                      <input type="checkbox" id="chk-eq" checked />
+                      <span data-i18n="sound_eq">Equalizer</span>
+                    </label>
+                    <label class="check-row">
+                      <input type="checkbox" id="chk-click" checked />
+                      <span data-i18n="sound_click">Menu Click</span>
+                    </label>
+                  </div>
+
+                  <div class="studio-row compact">
+                    <label class="select-row">
+                      <span data-i18n="sound_autoeq">AutoEQ Preset</span>
+                      <select id="sel-autoeq"></select>
+                    </label>
+                  </div>
+
+                  <div class="divider"></div>
+
+                  <div class="studio-row">
+                    <label class="check-row strong">
+                      <input type="checkbox" id="chk-tape" />
+                      <span data-i18n="sound_tape">Tape Mode</span>
+                    </label>
+                    <label class="check-row">
+                      <input type="checkbox" id="chk-motor" checked />
+                      <span data-i18n="sound_motor">Stop / Start FX</span>
+                    </label>
+                  </div>
+
+                  <div class="sliders-grid">
+                    <label class="slider-item">
+                      <div class="slider-head">
+                        <span data-i18n="sound_wow">Wow &amp; Flutter</span>
+                        <code id="val-wow">35%</code>
+                      </div>
+                      <input type="range" id="rng-wow" min="0" max="100" value="35" />
+                    </label>
+                    <label class="slider-item">
+                      <div class="slider-head">
+                        <span data-i18n="sound_hiss">Tape Hiss</span>
+                        <code id="val-hiss">22%</code>
+                      </div>
+                      <input type="range" id="rng-hiss" min="0" max="100" value="22" />
+                    </label>
+                    <label class="slider-item">
+                      <div class="slider-head">
+                        <span data-i18n="sound_sat">Saturation</span>
+                        <code id="val-sat">30%</code>
+                      </div>
+                      <input type="range" id="rng-sat" min="0" max="100" value="30" />
+                    </label>
+                    <label class="slider-item">
+                      <div class="slider-head">
+                        <span data-i18n="sound_hf">HF Roll-Off</span>
+                        <code id="val-hf">40%</code>
+                      </div>
+                      <input type="range" id="rng-hf" min="0" max="100" value="40" />
+                    </label>
+                    <label class="slider-item full">
+                      <div class="slider-head">
+                        <span data-i18n="sound_speed">Speed</span>
+                        <code id="val-speed">1.00×</code>
+                      </div>
+                      <input type="range" id="rng-speed" min="50" max="150" step="5" value="100" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- TAB 4: PLUGINS -->
+                <div class="tab-pane" id="pane-plugins">
+                  <p class="pane-note" data-i18n="plugins_note">
+                    Runs on UIPod’s 1024×768 GPU canvas. Press B to exit back to menus.
+                  </p>
+                  <div class="plugins-grid">
+                    <button type="button" class="plugin-card" data-jump="plugin:sound_racer">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>Sound Racer</strong>
+                      <span>3D Rhythm Highway</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:music_quiz">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>Music Quiz</strong>
+                      <span>Name That Tune</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:tetris">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>Tetris</strong>
+                      <span>7-bag · Ghost · SRS</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:snake">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>Snake</strong>
+                      <span>Classic &amp; Wrap</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:2048">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>2048</strong>
+                      <span>Tile Puzzle</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:brick_breaker">
+                      <span class="plugin-tag">GAME</span>
+                      <strong>Brick Breaker</strong>
+                      <span>Arcade Paddle</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:stopwatch">
+                      <span class="plugin-tag">APP</span>
+                      <strong>Stopwatch</strong>
+                      <span>Lap Timer</span>
+                    </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:about">
+                      <span class="plugin-tag">VIEWER</span>
+                      <strong>Text Viewer</strong>
+                      <span>about.txt Manual</span>
+                    </button>
+                  </div>
+
+                  <div class="sdk-callout">
+                    <strong data-i18n="plugins_sdk_title">UIPod Plugin SDK v5</strong>
+                    <p data-i18n="plugins_sdk_desc">
+                      Prepared for browser-based .uipod plugin testing, custom shader presets, and
+                      theme bundles.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURES -->
+      <section id="features" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2 data-i18n="sec_arch_title">Features</h2>
+          </div>
+
+          <div class="bento-grid">
+            <article class="bento-card">
+              <div class="bento-tag">uipod-ui · OpenGL ES 3.0 / WebGL2</div>
+              <h3 data-i18n="f_ui_title">1024×768 Rust Vector UI</h3>
+              <p data-i18n="f_ui_desc">
+                Rendered in pure Rust with taffy layouts, femtovg vector graphics, Geologica
+                typography, 38 four-shade themes, 6 screen transitions, and Bayer-dithered
+                monochrome album art — running identically on TrimUI Brick, Android OpenGL ES 3.0,
+                and WebAssembly.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">Android 8.0+ · arm64-v8a APK</div>
+              <h3 data-i18n="f_android_title">Android Handheld Port (arm64-v8a)</h3>
+              <p data-i18n="f_android_desc">
+                Native APK for Android 8.0+ retro handhelds (Retroid, Odin, Anbernic, Ayaneo). Exact
+                centered 4:3 OLED frame, background foreground-service playback with screen off,
+                hardware MediaPlayer video for Movies/Jellyfin, and physical gamepad + volume rocker
+                sync.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">viz_gl · 10 GLSL Shaders</div>
+              <h3 data-i18n="f_viz_title">10 Bayer-Dithered Visualizers</h3>
+              <p data-i18n="f_viz_desc">
+                Two-pass ping-pong FBO feedback shaders driven by a 1024-pt FFT: Cassette Deck
+                (spinning reels + 28-segment LED meter), centered Analog Stereo VU Meter, Sonic
+                Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate,
+                Star Warp, and LCD Plasma.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">Local · Navidrome · Jellyfin · Last.fm</div>
+              <h3 data-i18n="f_lib_title">Unified Library, Subtitles &amp; Last.fm</h3>
+              <p data-i18n="f_lib_desc">
+                Browse file manager (Delete, Rename, Copy, Move, Info), deduplicated SQLite library
+                across Local, Navidrome, and Jellyfin with offline downloads, video .srt subtitles +
+                audio track switching, and Last.fm QR Sign-In with offline scrobble cache.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">DSP · Graphic EQ · Stereo FX</div>
+              <h3 data-i18n="f_dsp_title">Graphic EQ, Tape Mode &amp; Stereo FX</h3>
+              <p data-i18n="f_dsp_desc">
+                Rockbox 32-bit DSP core with GPU 10-band Graphic EQ, offline AutoEQ database,
+                granular Speed stretching (1/16×–1.5×), Walkman Tape Mode, and stereo Reverb,
+                Ping-Pong Delay, Chorus, and Flanger.
+              </p>
+            </article>
+
+            <article class="bento-card">
+              <div class="bento-tag">uipod-plugin-sdk · .uipod</div>
+              <h3 data-i18n="f_plg_title">Native Rust Plugins (.uipod)</h3>
+              <p data-i18n="f_plg_desc">
+                Versioned C-ABI plugin runtime powering Music Quiz, Sound Racer (with .nsf / chiptune
+                support &amp; cached song maps), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD
+                Plasma, and Text Viewer.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- CONTROLS -->
+      <section id="controls" class="section section-alt">
+        <div class="container">
+          <div class="section-head">
+            <h2 data-i18n="sec_ctrl_title">Controls</h2>
+          </div>
+
+          <div class="controls-table-wrap">
+            <table class="controls-table">
+              <thead>
+                <tr>
+                  <th>TrimUI Brick</th>
+                  <th>Keyboard</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><kbd>D-Pad</kbd></td>
+                  <td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> / <kbd>WASD</kbd></td>
+                  <td>Navigate lists, adjust inline settings, prev/next on Now Playing</td>
+                </tr>
+                <tr>
+                  <td><kbd>A</kbd> / <kbd>Hold A</kbd></td>
+                  <td><kbd>Enter</kbd> / <kbd>Z</kbd></td>
+                  <td>Select / Open / Play-Pause on Now Playing; Hold for context menu</td>
+                </tr>
+                <tr>
+                  <td><kbd>B</kbd> / <kbd>Hold B</kbd></td>
+                  <td><kbd>Esc</kbd> / <kbd>Backspace</kbd> / <kbd>X</kbd></td>
+                  <td>Back one screen; Hold to return directly to Main Menu</td>
+                </tr>
+                <tr>
+                  <td><kbd>START</kbd></td>
+                  <td><kbd>Space</kbd></td>
+                  <td>Play / Pause music globally (or Pause inside games)</td>
+                </tr>
+                <tr>
+                  <td><kbd>MENU</kbd></td>
+                  <td><kbd>M</kbd></td>
+                  <td>Context menu; opens Settings from Main Menu</td>
+                </tr>
+                <tr>
+                  <td><kbd>X</kbd></td>
+                  <td><kbd>C</kbd></td>
+                  <td>Toggle Large Album Art / Toggle 4×4 vs 2×2 Visualizer pixel grain</td>
+                </tr>
+                <tr>
+                  <td><kbd>L1</kbd> / <kbd>R1</kbd></td>
+                  <td><kbd>Q</kbd> / <kbd>E</kbd></td>
+                  <td>Previous / Next track; Page Up / Page Down in lists</td>
+                </tr>
+                <tr>
+                  <td><kbd>L2</kbd> / <kbd>R2</kbd></td>
+                  <td><kbd>1</kbd> / <kbd>2</kbd></td>
+                  <td>Switch Visualizer preset / Seek ±15 s</td>
+                </tr>
+                <tr>
+                  <td><kbd>VOL+</kbd> / <kbd>VOL−</kbd> &amp; <kbd>HOLD</kbd></td>
+                  <td><kbd>=</kbd> / <kbd>−</kbd> &amp; <kbd>H</kbd></td>
+                  <td>40-step volume control &amp; side Hold lock switch</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- INSTALL & WEB STUDIO -->
+      <section id="install" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2 data-i18n="sec_inst_title">Installation</h2>
+          </div>
+
+          <div class="install-platforms">
+            <article class="platform-card">
+              <div class="bento-tag">TG5040 · UIPod.pak.zip</div>
+              <h3 data-i18n="inst_brick_title">TrimUI Brick / Hammer (NextUI)</h3>
+              <ol class="install-steps">
+                <li data-i18n="inst_brick_1">
+                  Download UIPod.pak.zip from GitHub Releases or install via NextUI Pak Store.
+                </li>
+                <li data-i18n="inst_brick_2">
+                  Extract UIPod.pak to /mnt/SDCARD/Tools/tg5040/UIPod.pak.
+                </li>
+                <li data-i18n="inst_brick_3">
+                  Open Tools → UIPod. Plug in USB-C anytime for MTP file transfer without stopping
+                  playback.
+                </li>
+              </ol>
+            </article>
+
+            <article class="platform-card">
+              <div class="bento-tag">Android 8.0+ · arm64-v8a APK</div>
+              <h3 data-i18n="inst_android_title">Android Handhelds (arm64-v8a)</h3>
+              <ol class="install-steps">
+                <li data-i18n="inst_android_1">
+                  Download UIPod-v0.6.0-android-arm64.apk from GitHub Releases (Android 8.0+ / API
+                  26+).
+                </li>
+                <li data-i18n="inst_android_2">
+                  Install the APK on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped
+                  device.
+                </li>
+                <li data-i18n="inst_android_3">
+                  Grant media storage access to scan local folders, or configure Navidrome /
+                  Jellyfin in Settings → Sources.
+                </li>
+              </ol>
+            </article>
+          </div>
+
+          <div class="install-footer-row">
+            <div class="cta-row">
+              <a
+                class="btn-primary"
+                href="https://github.com/famiclone/UIPod/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-i18n="inst_btn_release"
+              >
+                Download Release
+              </a>
+              <a
+                class="btn-ghost"
+                href="https://github.com/famiclone/UIPod"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-i18n="inst_btn_repo"
+              >
+                GitHub Repository
+              </a>
+            </div>
+
+            <div class="roadmap-box">
+              <h3 data-i18n="roadmap_title">Web Studio</h3>
+              <ul class="roadmap-list">
+                <li class="done">
+                  <span class="r-badge">LIVE</span>
+                  <div>
+                    <strong>WebAssembly UIPod Simulator (v0.6.0)</strong>
+                    <p>Rust <code>uipod-ui</code> + <code>VizEngine</code> compiled to WASM/WebGL2 with Web Audio DSP.</p>
+                  </div>
+                </li>
+                <li class="done">
+                  <span class="r-badge">LIVE</span>
+                  <div>
+                    <strong>Theme Editor &amp; GLSL Shader Sandbox</strong>
+                    <p>Live 4-shade HEX palette editor with <code>config.cfg</code> export and hot-compiled GLSL shaders.</p>
+                  </div>
+                </li>
+                <li class="next">
+                  <span class="r-badge">NEXT</span>
+                  <div>
+                    <strong>Theme Packs, Visualizers &amp; Plugin Workbench</strong>
+                    <p>Import/export community theme presets, visualizer packs, and test custom <code>.uipod</code> plugins in the browser.</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <span data-i18n="footer_credit">
+          GPL-2.0 · UIPod for TrimUI Brick &amp; Android Handhelds · Built with Rust, Rockbox &amp; WebAssembly
+        </span>
+        <a href="https://github.com/famiclone/UIPod" target="_blank" rel="noopener noreferrer">
+          github.com/famiclone/UIPod
+        </a>
+      </div>
+    </footer>
+
+  </body>
+</html>
