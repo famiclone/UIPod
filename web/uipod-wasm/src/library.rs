@@ -4,6 +4,11 @@ use uipod_ui::image_decode::decode_image_rgb24;
 #[allow(dead_code)]
 pub struct Track {
     pub id: usize,
+    pub uri: Option<String>,
+    pub subtrack_index: Option<u16>,
+    pub is_sfx: bool,
+    pub chip_flags: u8,
+    pub loop_point_ms: Option<u32>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -172,6 +177,11 @@ pub fn built_in_demo_tracks() -> Vec<Track> {
     vec![
         Track {
             id: 0,
+            uri: None,
+            subtrack_index: None,
+            is_sfx: false,
+            chip_flags: 0,
+            loop_point_ms: None,
             title: "AquaBIOS 2000".to_string(),
             artist: "Cyberia 99".to_string(),
             album: "Y2K System Disc".to_string(),
@@ -185,6 +195,11 @@ pub fn built_in_demo_tracks() -> Vec<Track> {
         },
         Track {
             id: 1,
+            uri: None,
+            subtrack_index: None,
+            is_sfx: false,
+            chip_flags: 0,
+            loop_point_ms: None,
             title: "Chrome Breakbeat (Y2K Mix)".to_string(),
             artist: "NetRunner 2000".to_string(),
             album: "Liquid Millennium".to_string(),
@@ -198,6 +213,11 @@ pub fn built_in_demo_tracks() -> Vec<Track> {
         },
         Track {
             id: 2,
+            uri: None,
+            subtrack_index: None,
+            is_sfx: false,
+            chip_flags: 0,
+            loop_point_ms: None,
             title: "No Other Possibility (2000)".to_string(),
             artist: "Vector 99".to_string(),
             album: "Hypertext OS".to_string(),
@@ -211,6 +231,11 @@ pub fn built_in_demo_tracks() -> Vec<Track> {
         },
         Track {
             id: 3,
+            uri: None,
+            subtrack_index: None,
+            is_sfx: false,
+            chip_flags: 0,
+            loop_point_ms: None,
             title: "distortedspaceship".to_string(),
             artist: "subplaid".to_string(),
             album: "Deep Space (2010)".to_string(),

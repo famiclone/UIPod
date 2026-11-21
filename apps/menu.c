@@ -154,6 +154,13 @@ static const char* get_menu_item_name(int selected_item,
      * row name (e.g. the Pause/Play toggle), left-aligned like an action row. */
     if (menu->flags & MENU_VALUE_ITEM)
     {
+        if (menu->flags & MENU_DYNAMIC_DESC)
+        {
+            return menu->menu_get_name_and_icon->list_get_name(
+                selected_item,
+                menu->menu_get_name_and_icon->list_get_name_data,
+                buffer, buffer_len);
+        }
         const char *d = P2STR(menu->callback_and_desc->desc);
         if (!d || !d[0])
         {
@@ -213,6 +220,11 @@ static const char *menu_get_indicator(int selected_item, void *data)
 
     if (menu->flags & MENU_VALUE_ITEM)
     {
+        if (menu->flags & MENU_DYNAMIC_DESC)
+        {
+            const struct menu_value_cb *vc = menu->function_param->param;
+            return vc->get(vc->ctx, buf, sizeof buf);
+        }
         const char *d = P2STR(menu->callback_and_desc->desc);
         if (!d || !d[0])
             return NULL;   /* label-only value row (Pause/Play): no right value */

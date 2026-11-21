@@ -272,6 +272,7 @@ for pl_so in "$ROOT/target/aarch64-linux-android/release/libbrick_breaker.so" \
              "$ROOT/target/aarch64-linux-android/release/libsnake.so" \
              "$ROOT/target/aarch64-linux-android/release/libtetris.so" \
              "$ROOT/target/aarch64-linux-android/release/libsound_racer.so" \
+             "$ROOT/target/aarch64-linux-android/release/libpulsar_vanguard.so" \
              "$ROOT/target/aarch64-linux-android/release/libmusic_quiz.so" \
              "$ROOT/target/aarch64-linux-android/release/libstopwatch.so" \
              "$ROOT/target/aarch64-linux-android/release/libtext_viewer.so" \

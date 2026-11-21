@@ -158,9 +158,24 @@ MENUITEM_SETTING(replaygain_preamp,
 MAKE_MENU(replaygain_settings_menu, ID2P(LANG_REPLAYGAIN), 0, Icon_NOICON,
           &replaygain_type, &replaygain_noclip, &replaygain_preamp);
 
+/* Crossfade & Auto-DJ submenu */
+MENUITEM_SETTING(dj_mode,    &global_settings.dj_crossfade_mode,     NULL);
+MENUITEM_SETTING(dj_len,     &global_settings.dj_transition_len,     NULL);
+MENUITEM_SETTING(dj_stretch, &global_settings.dj_max_stretch,        NULL);
+MENUITEM_SETTING(dj_gapless, &global_settings.dj_keep_album_gapless, NULL);
+MENUITEM_SETTING(dj_qcut,    &global_settings.dj_quick_cut_next,     NULL);
+
+MAKE_MENU(dj_crossfade_menu, ID2P(LANG_UIPOD_DJ_CROSSFADE), NULL, Icon_NOICON,
+          &dj_mode,
+          &dj_len,
+          &dj_stretch,
+          &dj_gapless,
+          &dj_qcut);
+
 MAKE_MENU(sound_settings, ID2P(LANG_UIPOD_SOUND), NULL, Icon_Audio,
           &equalizer_menu,
           &sound_effects_menu,
+          &dj_crossfade_menu,
           &replaygain_settings_menu,
           &balance,
           &channel_config,

@@ -50,7 +50,9 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_downloads.h"
+#include "uipod_library.h"
 #include "uipod_playlists.h"
+#include "uipod_midi.h"
 #include "uipod_svg.h"
 
 #define PL_MAX        256
@@ -691,11 +693,30 @@ bool uipod_queue_begin(struct uipod_queue *q, int position)
     return true;
 }
 
-bool uipod_queue_add_path(const char *path, void *q)
+static bool is_bare_nsf_container(const char *path)
+{
+    if (!path || strchr(path, '#') != NULL)
+        return false;
+    const char *dot = strrchr(path, '.');
+    if (!dot)
+        return false;
+    return strcasecmp(dot, ".nsf") == 0 || strcasecmp(dot, ".nsfe") == 0;
+}
+
+static bool queue_add_raw_uri(const char *uri, void *q)
 {
     struct uipod_queue *b = q;
     yield();                                   /* keep the codec fed */
-    return playlist_insert_context_add(&b->ctx, path) >= 0;
+    return playlist_insert_context_add(&b->ctx, uri) >= 0;
+}
+
+bool uipod_queue_add_path(const char *path, void *q)
+{
+    if (!path || !path[0])
+        return false;
+    if (is_bare_nsf_container(path))
+        return uipod_library_expand_nsf_music(path, true, queue_add_raw_uri, q) > 0;
+    return queue_add_raw_uri(path, q);
 }
 
 /* (Re)start the current playlist at its first track, shuffled first if
@@ -886,6 +907,24 @@ bool uipod_play_single_at_ms(const char *path, unsigned long start_ms)
     return true;
 }
 
+struct counted_queue_ctx
+{
+    struct uipod_queue *q;
+    int                 added;
+    int                 limit;
+};
+
+static bool queue_add_counted_cb(const char *uri, void *ctx)
+{
+    struct counted_queue_ctx *c = ctx;
+    if (c->added >= c->limit)
+        return false;
+    if (!queue_add_raw_uri(uri, c->q))
+        return false;
+    c->added++;
+    return c->added < c->limit;
+}
+
 bool uipod_play_tracks_at(char *const *paths, int count, int start_idx)
 {
     if (!paths || count <= 0)
@@ -899,8 +938,12 @@ bool uipod_play_tracks_at(char *const *paths, int count, int start_idx)
 
     /* Only shortcut to Now Playing without rebuilding if the live queue
      * already matches this track list size and is playing `start_path`! */
-    if (playlist_amount() == count && uipod_resume_if_current(start_path))
+    if (!is_bare_nsf_container(start_path) &&
+        playlist_amount() == count &&
+        uipod_resume_if_current(start_path))
+    {
         return true;
+    }
 
     struct uipod_queue q;
     if (!uipod_queue_begin(&q, PLAYLIST_REPLACE))
@@ -920,21 +963,44 @@ bool uipod_play_tracks_at(char *const *paths, int count, int start_idx)
         slice_end = slice_begin + UIPOD_MAX_FILES_IN_PLAYLIST;
     }
 
-    int inserted = 0;
-    int target_pl_idx = 0;
+    int bare_nsf_total = 0;
     for (int i = slice_begin; i < slice_end; i++)
     {
-        if (!paths[i] || !paths[i][0])
+        if (paths[i] && is_bare_nsf_container(paths[i]))
+            bare_nsf_total++;
+    }
+
+    struct counted_queue_ctx cctx = {
+        .q     = &q,
+        .added = 0,
+        .limit = UIPOD_MAX_FILES_IN_PLAYLIST,
+    };
+    int target_pl_idx = 0;
+    for (int i = slice_begin; i < slice_end && cctx.added < cctx.limit; i++)
+    {
+        const char *p = paths[i];
+        if (!p || !p[0])
             continue;
-        if (!uipod_queue_add_path(paths[i], &q))
-            break;
         if (i == start_idx)
-            target_pl_idx = inserted;
-        inserted++;
+            target_pl_idx = cctx.added;
+
+        if (is_bare_nsf_container(p))
+        {
+            if (bare_nsf_total <= 8 || i == start_idx)
+                uipod_library_expand_nsf_music(p, i == start_idx,
+                                               queue_add_counted_cb, &cctx);
+            else
+                uipod_library_expand_nsf_fast(p, false,
+                                              queue_add_counted_cb, &cctx);
+        }
+        else if (!queue_add_counted_cb(p, &cctx))
+        {
+            break;
+        }
     }
 
     playlist_insert_context_release(&q.ctx);
-    if (!q.fresh || playlist_amount() <= 0 || inserted <= 0)
+    if (!q.fresh || playlist_amount() <= 0 || cctx.added <= 0)
         return false;
 
     global_settings.playlist_shuffle = false;
@@ -954,6 +1020,63 @@ static int first_audio_cb(char *name, void *found)
     (void)name;
     *(bool *)found = true;
     return -1;
+}
+
+#define UNINDEXED_DIR_SHUFFLE_FILE_CAP 512
+#define UNINDEXED_DIR_LINEAR_FILE_CAP  2048
+
+struct dir_file_sample_ctx
+{
+    char    **files;
+    int       count;
+    int       cap;
+    bool      reservoir_mode;
+    uint64_t  seen;
+    uint32_t  rng;
+};
+
+static uint32_t xorshift32_step(uint32_t *state)
+{
+    uint32_t x = *state ? *state : 0x9E3779B9u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    return x;
+}
+
+static int dir_sample_file_cb(char *filename, void *ctx)
+{
+    struct dir_file_sample_ctx *s = ctx;
+    if ((s->seen & 31u) == 0)
+        yield();
+    s->seen++;
+
+    if (s->count < s->cap)
+    {
+        char *dup = strdup(filename);
+        if (!dup)
+            return -1;
+        s->files[s->count++] = dup;
+        if (!s->reservoir_mode && s->count >= s->cap)
+            return -1;
+        return 0;
+    }
+
+    if (!s->reservoir_mode)
+        return -1;
+
+    uint64_t pick = (uint64_t)xorshift32_step(&s->rng) % s->seen;
+    if (pick < (uint64_t)s->cap)
+    {
+        char *dup = strdup(filename);
+        if (dup)
+        {
+            free(s->files[pick]);
+            s->files[pick] = dup;
+        }
+    }
+    return 0;
 }
 
 bool uipod_queue_add(const char *path, int attr, int position, bool shuffle)
@@ -976,9 +1099,75 @@ bool uipod_queue_add(const char *path, int attr, int position, bool shuffle)
     if (!uipod_queue_begin(&q, position))
         return false;
     if (attr & ATTR_DIRECTORY)
-        playlist_insert_directory(NULL, path, q.pos, false, true, &q.ctx);
+    {
+        if (!uipod_library_folder_music_paths(path, shuffle,
+                                              queue_add_raw_uri, &q))
+        {
+            /* Unindexed directory walk:
+             * Step 1: Collect/reservoir-sample ONLY file paths via `readdir`
+             *         (zero `open()` syscalls, zero 6502 emulation!).
+             * Step 2: Expand `.nsf` containers via `uipod_library_expand_nsf_music`
+             *         when <= 8 `.nsf` files, or `uipod_library_expand_nsf_fast`
+             *         (128-byte header / NSFE chunk read, zero 6502 emulation!)
+             *         when > 8 `.nsf` files, then `uipod_queue_end` shuffles all
+             *         resulting subtrack URIs in RAM. */
+            int file_cap = shuffle
+                ? UNINDEXED_DIR_SHUFFLE_FILE_CAP
+                : UNINDEXED_DIR_LINEAR_FILE_CAP;
+            char **files = calloc((size_t)file_cap, sizeof(*files));
+            if (files)
+            {
+                struct dir_file_sample_ctx sctx = {
+                    .files          = files,
+                    .count          = 0,
+                    .cap            = file_cap,
+                    .reservoir_mode = shuffle,
+                    .seen           = 0,
+                    .rng            = (uint32_t)current_tick ^ 0xA5A5F00Du,
+                };
+                playlist_directory_tracksearch(path, true, dir_sample_file_cb, &sctx);
+
+                int nsf_boxes = 0;
+                for (int i = 0; i < sctx.count; i++)
+                {
+                    if (is_bare_nsf_container(files[i]))
+                        nsf_boxes++;
+                }
+
+                struct counted_queue_ctx cctx = {
+                    .q     = &q,
+                    .added = 0,
+                    .limit = UIPOD_MAX_FILES_IN_PLAYLIST,
+                };
+                for (int i = 0; i < sctx.count; i++)
+                {
+                    if (cctx.added < cctx.limit)
+                    {
+                        yield();
+                        if (is_bare_nsf_container(files[i]))
+                        {
+                            if (nsf_boxes <= 8)
+                                uipod_library_expand_nsf_music(files[i], false,
+                                                               queue_add_counted_cb, &cctx);
+                            else
+                                uipod_library_expand_nsf_fast(files[i], false,
+                                                              queue_add_counted_cb, &cctx);
+                        }
+                        else
+                        {
+                            (void)queue_add_counted_cb(files[i], &cctx);
+                        }
+                    }
+                    free(files[i]);
+                }
+                free(files);
+            }
+        }
+    }
     else
-        playlist_insert_context_add(&q.ctx, path);
+    {
+        uipod_queue_add_path(path, &q);
+    }
     return uipod_queue_end(&q, shuffle);
 }
 
@@ -1549,28 +1738,37 @@ static void uipod_playlists_pick_tracks(char **paths, int count)
  * the highlighted row; a track has no Play Shuffled.  Everything is handled
  * here; true means a Play started a new queue (the caller -> Now Playing). */
 enum { MUSIC_CTX_PLAY = 0, MUSIC_CTX_SHUFFLED, MUSIC_CTX_PLAY_NEXT,
-       MUSIC_CTX_ADD_QUEUE, MUSIC_CTX_ADD_PL, MUSIC_CTX_DOWNLOAD };
+       MUSIC_CTX_ADD_QUEUE, MUSIC_CTX_ADD_PL, MUSIC_CTX_SOUNDFONT,
+       MUSIC_CTX_DOWNLOAD };
 
 /* The picked MUSIC_CTX_* for a set (folder, artist, album) or a track; -1 on
  * cancel. */
-static int music_ctx_menu(const char *title, bool set, bool can_download)
+static int music_ctx_menu(const char *title, bool set, bool can_download,
+                          bool is_midi)
 {
-    static const char *const set_opts[] =
-        { ID2P(LANG_PLAY), ID2P(LANG_UIPOD_PLAY_SHUFFLED),
-          ID2P(LANG_PLAY_NEXT), ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE),
-          ID2P(LANG_UIPOD_ADD_TO_PLAYLIST), ID2P(LANG_UIPOD_DOWNLOAD) };
-    static const char *const track_opts[] =
-        { ID2P(LANG_PLAY), ID2P(LANG_PLAY_NEXT),
-          ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE),
-          ID2P(LANG_UIPOD_ADD_TO_PLAYLIST), ID2P(LANG_UIPOD_DOWNLOAD) };
+    const char *opts[7];
+    int acts[7];
+    int n = 0;
+
+    opts[n] = ID2P(LANG_PLAY);                    acts[n++] = MUSIC_CTX_PLAY;
     if (set)
     {
-        int n = (int)ARRAYLEN(set_opts) - (can_download ? 0 : 1);
-        return uipod_context_menu(title, set_opts, n);
+        opts[n] = ID2P(LANG_UIPOD_PLAY_SHUFFLED); acts[n++] = MUSIC_CTX_SHUFFLED;
     }
-    int n = (int)ARRAYLEN(track_opts) - (can_download ? 0 : 1);
-    int row = uipod_context_menu(title, track_opts, n);
-    return row > MUSIC_CTX_PLAY ? row + 1 : row;   /* past the missing row */
+    opts[n] = ID2P(LANG_PLAY_NEXT);               acts[n++] = MUSIC_CTX_PLAY_NEXT;
+    opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE); acts[n++] = MUSIC_CTX_ADD_QUEUE;
+    opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAYLIST);   acts[n++] = MUSIC_CTX_ADD_PL;
+    if (is_midi)
+    {
+        opts[n] = ID2P(LANG_UIPOD_SOUNDFONT);     acts[n++] = MUSIC_CTX_SOUNDFONT;
+    }
+    if (can_download)
+    {
+        opts[n] = ID2P(LANG_UIPOD_DOWNLOAD);      acts[n++] = MUSIC_CTX_DOWNLOAD;
+    }
+
+    int row = uipod_context_menu(title, opts, n);
+    return (row >= 0 && row < n) ? acts[row] : -1;
 }
 
 bool uipod_music_context(const char *title, const char *path, int attr)
@@ -1579,10 +1777,13 @@ bool uipod_music_context(const char *title, const char *path, int attr)
     bool is_nav = !dir && uipod_navidrome_is_track_path(path);
     bool is_jf  = !dir && uipod_jellyfin_is_track_path(path);
     bool can_dl = !uipod_offline_mode_get() && (is_nav || is_jf);
-    switch (music_ctx_menu(title, dir, can_dl))
+    bool is_midi = !dir && uipod_midi_is_midi_path(path);
+    bool is_nsf_box = !dir && is_bare_nsf_container(path);
+    switch (music_ctx_menu(title, dir || is_nsf_box, can_dl, is_midi))
     {
         case MUSIC_CTX_PLAY:
-            return dir ? uipod_queue_add(path, attr, PLAYLIST_REPLACE, false)
+            return (dir || is_nsf_box)
+                       ? uipod_queue_add(path, attr, PLAYLIST_REPLACE, false)
                        : uipod_play_track(path);
         case MUSIC_CTX_SHUFFLED:
             return uipod_queue_add(path, attr, PLAYLIST_REPLACE, true);
@@ -1594,6 +1795,9 @@ bool uipod_music_context(const char *title, const char *path, int attr)
             break;
         case MUSIC_CTX_ADD_PL:
             uipod_playlists_pick(path, attr);
+            break;
+        case MUSIC_CTX_SOUNDFONT:
+            uipod_midi_pick_soundfont();
             break;
         case MUSIC_CTX_DOWNLOAD:
             if (is_jf)
@@ -1614,7 +1818,8 @@ bool uipod_music_context_track_in_list(const char *title, char **paths,
     bool is_nav = uipod_navidrome_is_track_path(path);
     bool is_jf  = uipod_jellyfin_is_track_path(path);
     bool can_dl = !uipod_offline_mode_get() && (is_nav || is_jf);
-    switch (music_ctx_menu(title, false, can_dl))
+    bool is_midi = uipod_midi_is_midi_path(path);
+    switch (music_ctx_menu(title, false, can_dl, is_midi))
     {
         case MUSIC_CTX_PLAY:
             return uipod_play_tracks_at(paths, count, sel);
@@ -1626,6 +1831,9 @@ bool uipod_music_context_track_in_list(const char *title, char **paths,
             break;
         case MUSIC_CTX_ADD_PL:
             uipod_playlists_pick(path, FILE_ATTR_AUDIO);
+            break;
+        case MUSIC_CTX_SOUNDFONT:
+            uipod_midi_pick_soundfont();
             break;
         case MUSIC_CTX_DOWNLOAD:
             if (is_jf)
@@ -1642,7 +1850,7 @@ bool uipod_music_context_tracks(const char *title, char **paths, int count)
     if (count <= 0)
         return false;
     bool can_dl = has_downloadable_tracks(paths, count);
-    switch (music_ctx_menu(title, true, can_dl))
+    switch (music_ctx_menu(title, true, can_dl, false))
     {
         case MUSIC_CTX_PLAY:
             return queue_add_tracks(paths, count, PLAYLIST_REPLACE, false);

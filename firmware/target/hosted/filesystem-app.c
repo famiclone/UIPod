@@ -154,6 +154,31 @@ const char * handle_special_dirs(const char *dir, unsigned flags,
     return dir;
 }
 
+static bool strip_virtual_nsf_uri(const char *fpath, char *out, size_t cap)
+{
+    if (!fpath)
+        return false;
+    const char *hash = strrchr(fpath, '#');
+    if (!hash || hash == fpath || hash[1] < '0' || hash[1] > '9')
+        return false;
+    for (const char *p = hash + 1; *p; p++)
+    {
+        if (*p < '0' || *p > '9')
+            return false;
+    }
+    size_t base_len = (size_t)(hash - fpath);
+    if (base_len >= cap)
+        return false;
+    if ((base_len > 4 && strncasecmp(hash - 4, ".nsf", 4) == 0) ||
+        (base_len > 5 && strncasecmp(hash - 5, ".nsfe", 5) == 0))
+    {
+        memcpy(out, fpath, base_len);
+        out[base_len] = '\0';
+        return true;
+    }
+    return false;
+}
+
 int app_open(const char *path, int oflag, ...)
 {
     int flags = IS_FILE;
@@ -167,7 +192,14 @@ int app_open(const char *path, int oflag, ...)
         FILE_ERROR_RETURN(ENAMETOOLONG, -1);
 
     oflag |= O_CLOEXEC;
-    return os_open(fpath, oflag __OPEN_MODE_ARG);
+    int fd = os_open(fpath, oflag __OPEN_MODE_ARG);
+    if (fd < 0 && !(flags & NEED_WRITE))
+    {
+        char base_nsf[MAX_PATH];
+        if (strip_virtual_nsf_uri(fpath, base_nsf, sizeof(base_nsf)))
+            fd = os_open(base_nsf, oflag __OPEN_MODE_ARG);
+    }
+    return fd;
 }
 
 int app_creat(const char *path, mode_t mode)
@@ -233,7 +265,13 @@ bool app_file_exists(const char *path)
     if (!fpath)
         FILE_ERROR_RETURN(ENAMETOOLONG, false);
 
-    return os_file_exists(fpath);
+    if (os_file_exists(fpath))
+        return true;
+
+    char base_nsf[MAX_PATH];
+    if (strip_virtual_nsf_uri(fpath, base_nsf, sizeof(base_nsf)))
+        return os_file_exists(base_nsf);
+    return false;
 }
 
 /* need to wrap around DIR* because we need to save the parent's directory

@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 6u
+#define UIPOD_PLUGIN_API_VERSION 7u
 
 enum uipod_plugin_category
 {
@@ -51,6 +51,27 @@ struct UIPodPluginMenuItem
     const char *label;
     const char *value;
     bool        has_chevron;
+};
+
+struct UIPodPluginChannelState
+{
+    uint8_t active;
+    uint8_t muted;
+    uint8_t onset_trigger;
+    uint8_t duty_or_mode;
+    float   volume;
+    float   freq_hz;
+};
+
+struct UIPodPluginApuTelemetry
+{
+    uint8_t                        has_apu_telemetry;
+    uint8_t                        channel_count;
+    uint8_t                        chip_flags;
+    uint8_t                        reserved;
+    uint16_t                       mute_mask;
+    uint16_t                       pad;
+    struct UIPodPluginChannelState channels[8];
 };
 
 struct UIPodPluginApi
@@ -128,6 +149,9 @@ struct UIPodPluginApi
                                         float *out_w,
                                         float *out_h);
     void     (*get_responsive_size)(float *out_w, float *out_h);
+
+    /* Hardware APU Channel Telemetry Extension (v7+) */
+    bool     (*audio_get_apu_telemetry)(struct UIPodPluginApuTelemetry *out);
 };
 
 struct UIPodPluginInfoC

@@ -1,0 +1,7 @@
+[package]
+name = "uipod-dj"
+version = "0.1.0"
+edition = "2021"
+description = "Dual-Deck Smart DJ Crossfade engine (Beatmatch WSOLA, Vinyl Sync, Butterworth Bass Swap & Filter Wash)"
+
+[dependencies]

@@ -127,7 +127,13 @@ fn mix64(mut x: u64) -> u64 {
 }
 
 fn path_ext_ascii_lower(path: &str) -> Option<&str> {
-    let base = path.rsplit('/').next().unwrap_or(path);
+    let clean = match path.rfind('#') {
+        Some(h) if !path[h + 1..].is_empty() && path[h + 1..].bytes().all(|b| b.is_ascii_digit()) => {
+            &path[..h]
+        }
+        _ => path,
+    };
+    let base = clean.rsplit('/').next().unwrap_or(clean);
     let dot = base.rfind('.')?;
     if dot == 0 || dot + 1 >= base.len() {
         None
@@ -139,13 +145,12 @@ fn path_ext_ascii_lower(path: &str) -> Option<&str> {
 /// Multi-subtune chiptune formats where Rockbox's GME/SID codecs report
 /// `id3->elapsed = subtune_idx * 1000` (frozen during playback) and
 /// `id3->length = subtune_count * 1000` rather than song duration in ms.
+/// Note: native Rust `.nsf`/`.nsfe` (`file.nsf#idx`) reports true finite `duration_ms` & monotonic `elapsed_ms`!
 fn is_subtune_chiptune(path: &str) -> bool {
     let Some(ext) = path_ext_ascii_lower(path) else {
         return false;
     };
-    ext.eq_ignore_ascii_case("nsf")
-        || ext.eq_ignore_ascii_case("nsfe")
-        || ext.eq_ignore_ascii_case("gbs")
+    ext.eq_ignore_ascii_case("gbs")
         || ext.eq_ignore_ascii_case("sid")
         || ext.eq_ignore_ascii_case("hes")
         || ext.eq_ignore_ascii_case("ay")
@@ -164,7 +169,15 @@ fn is_chiptune_or_module(path: &str) -> bool {
     let Some(ext) = path_ext_ascii_lower(path) else {
         return false;
     };
-    ext.eq_ignore_ascii_case("spc")
+    ext.eq_ignore_ascii_case("nsf")
+        || ext.eq_ignore_ascii_case("nsfe")
+        || ext.eq_ignore_ascii_case("spc")
+        || ext.eq_ignore_ascii_case("gsf")
+        || ext.eq_ignore_ascii_case("minigsf")
+        || ext.eq_ignore_ascii_case("mid")
+        || ext.eq_ignore_ascii_case("midi")
+        || ext.eq_ignore_ascii_case("kar")
+        || ext.eq_ignore_ascii_case("rmi")
         || ext.eq_ignore_ascii_case("vgm")
         || ext.eq_ignore_ascii_case("vgz")
         || ext.eq_ignore_ascii_case("mod")
@@ -1049,7 +1062,18 @@ impl RacerState {
                     n_frames = ctx.audio_read_pcm(0, pcm_scratch);
                 }
                 if n_frames >= 64 {
-                    let feat = analyze_stereo_window(pcm_scratch, n_frames);
+                    let mut feat = analyze_stereo_window(pcm_scratch, n_frames);
+                    let apu = ctx.audio_apu_telemetry();
+                    if apu.is_available() {
+                        let bass = apu.bass_trigger();
+                        let lead = apu.lead_trigger();
+                        let perc = apu.percussion_trigger();
+                        feat.low = feat.low.max(bass * 0.85 + perc * 0.45);
+                        feat.mid = feat.mid.max(lead * 0.85);
+                        feat.high = feat.high.max(perc * 0.90);
+                        feat.rms = feat.rms.max((bass * 0.35 + lead * 0.40 + perc * 0.35).min(1.0));
+                        feat.pan = (feat.pan * 0.5 + (lead - bass) * 0.5).clamp(-1.0, 1.0);
+                    }
                     if s < self.map.slots.len() {
                         self.map.slots[s] = TrackSlot::from_features(feat);
                         if !self.free_clock {
@@ -1931,8 +1955,30 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
             }
             state.scroll_phase = (state.scroll_phase + 0.05 + state.intensity * 0.07).fract();
 
+            let apu = ctx.audio_apu_telemetry();
             let n_live = ctx.audio_read_pcm(0, &mut pcm_live);
-            if n_live >= 32 {
+            if apu.is_available() {
+                let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
+                let lf_low = if n_live >= 32 {
+                    analyze_stereo_window(&pcm_live, n_live).low * 1.35
+                } else {
+                    0.0
+                };
+                state.live_kick = (state.live_kick * 0.70).max(kick_hw.max(lf_low).clamp(0.0, 1.0));
+                let n_ch = (apu.channel_count as usize).clamp(1, 8);
+                for (i, dst) in state.live_bars.iter_mut().enumerate() {
+                    let ch_idx = (i * n_ch) / 16;
+                    let mut src = apu.audible_volume(ch_idx);
+                    if apu.audible_onset(ch_idx) {
+                        src = (src + 0.35).min(1.0);
+                    }
+                    *dst = if src > *dst {
+                        *dst * 0.30 + src * 0.70
+                    } else {
+                        *dst * 0.80 + src * 0.20
+                    };
+                }
+            } else if n_live >= 32 {
                 let lf = analyze_stereo_window(&pcm_live, n_live);
                 state.live_kick = (state.live_kick * 0.72).max((lf.low * 1.35).clamp(0.0, 1.0));
                 for (dst, &src) in state.live_bars.iter_mut().zip(lf.bars.iter()) {
@@ -2276,8 +2322,11 @@ mod tests {
 
     #[test]
     fn detects_nsf_and_chiptune_formats_for_1x_clock() {
-        assert!(is_subtune_chiptune("/mnt/SDCARD/Music/Castlevania.NSF"));
-        assert!(is_chiptune_or_module("/mnt/SDCARD/Music/Castlevania.NSF"));
+        // Native Rust `.nsf#idx` / `.nsfe#idx` subtracks are first-class finite tracks
+        // (1x real-time APU telemetry, finite progress & per-subtrack Hi-Scores)
+        assert!(!is_subtune_chiptune("/mnt/SDCARD/Music/Castlevania.NSF#3"));
+        assert!(is_chiptune_or_module("/mnt/SDCARD/Music/Castlevania.NSF#3"));
+        assert!(is_subtune_chiptune("/mnt/SDCARD/Music/LinkAwakening.gbs"));
         assert!(is_chiptune_or_module("/mnt/SDCARD/Music/ChronoTrigger.spc"));
         assert!(is_chiptune_or_module("/mnt/SDCARD/Music/SpaceDebris.mod"));
         assert!(!is_chiptune_or_module("/mnt/SDCARD/Music/DaftPunk.flac"));

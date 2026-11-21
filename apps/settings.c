@@ -50,6 +50,7 @@
 #include "system.h"
 #include "general.h"
 #include "uipod_keyboard.h"
+#include "uipod_dj.h"
 #include "misc.h"
 #include "icons.h"
 #include "font.h"
@@ -895,6 +896,7 @@ void settings_apply(bool read_disk)
     dsp_pbe_precut(global_settings.pbe_precut);
     dsp_pbe_enable(global_settings.pbe);
     uipod_tape_fx_apply();
+    uipod_dj_apply_settings();
     dsp_set_compressor(&global_settings.compressor_settings);
 
 

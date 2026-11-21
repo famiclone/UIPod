@@ -1126,49 +1126,137 @@ pub fn draw_seekbar_track_h<R: Renderer>(
     }
 }
 
-/// Draws `icon_note_16` (`16x16` component `[404]`/`[398]`) at `(x, y)`.
-pub fn draw_icon_note_16<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
-    // Group 1 [398] transform inside 16x16: (1.620755, 1.0)
-    let gx = x + 1.620_754_7;
-    let gy = y + 1.0;
+/// Draws horizontal `Seekbar` track with an optional 4-shade chiptune `loop_point_ms` marker tick.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_seekbar_track_h_with_loop<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    progress: f32,
+    loop_progress: Option<f32>,
+    border_color: Color,
+    fill_color: Color,
+    tick_color: Color,
+) {
+    draw_seekbar_track_h(canvas, x, y, w, h, progress, border_color, fill_color);
+    if let Some(lp) = loop_progress {
+        let lp_clamped = lp.clamp(0.02, 0.98);
+        let inset = 4.0;
+        let inner_w_max = (w - inset * 2.0).max(0.0);
+        let tick_cx = (x + inset + inner_w_max * lp_clamped).round();
+        let tw = crate::layout::nsf_now_playing_spec::LOOP_TICK_W;
+        let over = crate::layout::nsf_now_playing_spec::LOOP_TICK_OVERHANG_Y;
+        let cap_w = crate::layout::nsf_now_playing_spec::LOOP_TICK_CAP_W;
+        let cap_h = crate::layout::nsf_now_playing_spec::LOOP_TICK_CAP_H;
+
+        let mut p = Path::new();
+        p.rect(tick_cx - tw * 0.5, y - over, tw, h + over * 2.0);
+        p.rect(tick_cx - cap_w * 0.5, y - over, cap_w, cap_h);
+        p.rect(
+            tick_cx - cap_w * 0.5,
+            y + h + over - cap_h,
+            cap_w,
+            cap_h,
+        );
+        canvas.fill_path(&p, &Paint::color(tick_color));
+    }
+}
+
+/// Draws a crisp 4-shade `[∞]` Endless Loop indicator badge at `(x, y, w, h)`.
+pub fn draw_infinity_badge<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    border_color: Color,
+    ink_color: Color,
+) {
+    use crate::layout::nsf_now_playing_spec as spec;
+    stroke_rounded_rect_inside(
+        canvas,
+        x,
+        y,
+        w,
+        h,
+        spec::ENDLESS_BADGE_RADIUS,
+        spec::ENDLESS_BADGE_STROKE,
+        border_color,
+    );
+
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let dx = spec::INFINITY_LOBE_DX;
+    let r = spec::INFINITY_LOBE_R;
+    let mut inf = Path::new();
+    // Smooth figure-eight lemniscate built from two tangent cubic loops meeting at `(cx, cy)`
+    inf.move_to(cx, cy);
+    inf.bezier_to(cx + dx * 0.65, cy - r * 1.45, cx + dx + r, cy - r * 1.35, cx + dx + r, cy);
+    inf.bezier_to(cx + dx + r, cy + r * 1.35, cx + dx * 0.65, cy + r * 1.45, cx, cy);
+    inf.bezier_to(cx - dx * 0.65, cy - r * 1.45, cx - dx - r, cy - r * 1.35, cx - dx - r, cy);
+    inf.bezier_to(cx - dx - r, cy + r * 1.35, cx - dx * 0.65, cy + r * 1.45, cx, cy);
+    let mut p = Paint::color(ink_color);
+    p.set_line_width(spec::INFINITY_STROKE_W);
+    p.set_line_cap(LineCap::Round);
+    canvas.stroke_path(&inf, &p);
+}
+
+/// Draws `icon_note_16` (`[404]`/`[398]`) uniformly scaled to `(size x size)` at `(x, y)`.
+pub fn draw_icon_note_scaled<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: Color,
+) {
+    let s = (size / 16.0).max(0.25);
+    let gx = x + 1.620_754_7 * s;
+    let gy = y + 1.0 * s;
     let paint = Paint::color(color);
 
     let mut path = Path::new();
-    // Left notehead ellipse [399]: (0.0, 8.9811, w=4.966, h=5.0189)
     path.ellipse(
-        gx + 2.483_018_9,
-        gy + 8.981_132 + 2.509_434,
-        2.483_018_9,
-        2.509_434,
+        gx + 2.483_018_9 * s,
+        gy + (8.981_132 + 2.509_434) * s,
+        2.483_018_9 * s,
+        2.509_434 * s,
     );
-    // Left stem [400]: (3.7245, 2.1925, w=1.2679, h=9.2981)
-    path.rect(gx + 3.724_528_3, gy + 2.192_452_9, 1.267_924_5, 9.298_113);
-    // Right notehead ellipse [401]: (7.7660, 7.3434, w=4.966, h=5.0189)
+    path.rect(
+        gx + 3.724_528_3 * s,
+        gy + 2.192_452_9 * s,
+        1.267_924_5 * s,
+        9.298_113 * s,
+    );
     path.ellipse(
-        gx + 7.766_038 + 2.483_018_9,
-        gy + 7.343_396 + 2.509_434,
-        2.483_018_9,
-        2.509_434,
+        gx + (7.766_038 + 2.483_018_9) * s,
+        gy + (7.343_396 + 2.509_434) * s,
+        2.483_018_9 * s,
+        2.509_434 * s,
     );
-    // Right stem [402]: (11.4906, 0.6604, w=1.2679, h=9.2981)
-    path.move_to(gx + 11.490_566, gy + 0.660_377_4 + 9.298_113);
-    path.line_to(gx + 11.490_566, gy + 0.660_377_4 + 0.475_471_7);
-    path.line_to(gx + 11.490_566 + 1.267_924_5, gy + 0.660_377_4);
+    path.move_to(gx + 11.490_566 * s, gy + (0.660_377_4 + 9.298_113) * s);
+    path.line_to(gx + 11.490_566 * s, gy + (0.660_377_4 + 0.475_471_7) * s);
+    path.line_to(gx + (11.490_566 + 1.267_924_5) * s, gy + 0.660_377_4 * s);
     path.line_to(
-        gx + 11.490_566 + 1.267_924_5,
-        gy + 0.660_377_4 + 9.298_113,
+        gx + (11.490_566 + 1.267_924_5) * s,
+        gy + (0.660_377_4 + 9.298_113) * s,
     );
     path.close();
-    // Slanted top beam [403]: transform (3.7245, 0.0)
-    let bx = gx + 3.724_528_3;
+    let bx = gx + 3.724_528_3 * s;
     let by = gy;
-    path.move_to(bx, by + 2.192_452_9);
-    path.line_to(bx + 9.007_547, by);
-    path.line_to(bx + 9.007_547, by + 3.328_302);
-    path.line_to(bx, by + 5.415_094_4);
+    path.move_to(bx, by + 2.192_452_9 * s);
+    path.line_to(bx + 9.007_547 * s, by);
+    path.line_to(bx + 9.007_547 * s, by + 3.328_302 * s);
+    path.line_to(bx, by + 5.415_094_4 * s);
     path.close();
 
     canvas.fill_path(&path, &paint);
+}
+
+/// Draws `icon_note_16` (`16x16` component `[404]`/`[398]`) at `(x, y)`.
+pub fn draw_icon_note_16<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, color: Color) {
+    draw_icon_note_scaled(canvas, x, y, 16.0, color);
 }
 
 /// Draws `icon_play_16` (`16x16` component `[449]`/`[450]`) at `(x, y)`.

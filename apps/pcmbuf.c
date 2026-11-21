@@ -36,6 +36,7 @@
 #include "logf.h"
 #include "settings.h"
 #include "audio.h"
+#include "uipod_dj.h"
 
 /* 2 channels * 2 bytes/sample, interleaved */
 #define PCMBUF_SAMPLE_SIZE   (2 * 2)
@@ -496,7 +497,7 @@ void * pcmbuf_request_buffer(int *count)
         trigger_cpu_boost();
 
         /* If pre-buffered to the watermark, start playback */
-        if (!pcmbuf_data_critical())
+        if (low_latency_mode ? (remaining >= data_level(1)) : !pcmbuf_data_critical())
             start_audio_playback();
     }
 
@@ -541,13 +542,20 @@ void pcmbuf_write_complete(int count, unsigned long elapsed, off_t offset)
 
     /* Revert to position updates by PCM */
     pcmbuf_sync_position = false;
+
+    if (low_latency_mode &&
+        mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) == CHANNEL_STOPPED &&
+        pcmbuf_unplayed_bytes() >= data_level(1))
+    {
+        start_audio_playback();
+    }
 }
 
 
 /** Init */
 static unsigned int get_next_required_pcmbuf_chunks(void)
 {
-    size_t size = MIN_BUFFER_SIZE;
+    size_t size = MAX((size_t)MIN_BUFFER_SIZE, (size_t)(BYTERATE * 5));
 
 #ifdef HAVE_CROSSFADE
     if (crossfade_enable_request != CROSSFADE_ENABLE_OFF)
@@ -710,6 +718,7 @@ void pcmbuf_start_track_change(enum pcm_track_change_type type)
 
     if (type == TRACK_CHANGE_END_OF_DATA)
     {
+        uipod_dj_on_end_of_data();
         crossfade_cancel();
 
         /* Fill might not have been above watermark */
@@ -774,12 +783,14 @@ void pcmbuf_start_track_change(enum pcm_track_change_type type)
             crossfade_status = CROSSFADE_CONTINUE;
 #endif
 
-        pcmbuf_monitor_track_change(true);
+        if (!uipod_dj_on_auto_track_change())
+            pcmbuf_monitor_track_change(true);
     }
     else
     {
         /* Discard old data; caller needs no transition notification */
         logf("manual track change");
+        uipod_dj_on_manual_skip();
         pcmbuf_play_stop();
     }
 }
@@ -1436,7 +1447,8 @@ bool pcmbuf_is_lowdata(void)
         return false;
 #endif
 
-    return pcmbuf_data_critical();
+    return low_latency_mode ? (pcmbuf_unplayed_bytes() < data_level(1))
+                            : pcmbuf_data_critical();
 }
 
 void pcmbuf_set_low_latency(bool state)

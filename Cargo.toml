@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/uipod-ui",
+    "crates/uipod-codecs",
+    "crates/uipod-nsf",
+    "crates/uipod-dj",
     "crates/uipod-navidrome",
     "crates/uipod-jellyfin",
     "crates/uipod-lastfm",
@@ -13,6 +16,7 @@ members = [
     "plugins/snake",
     "plugins/tetris",
     "plugins/sound-racer",
+    "plugins/pulsar-vanguard",
     "plugins/music-quiz",
     "plugins/stopwatch",
     "plugins/text-viewer",

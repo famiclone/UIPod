@@ -45,6 +45,7 @@
 #include "menus/eq_menu.h"
 #include "statusbar.h"
 #include "tape_deck_fx.h"
+#include "uipod_dj.h"
 
 #include "misc.h" /* current activity */
 
@@ -386,6 +387,18 @@ static void fx_speed_cb(int val)
     if (val != 1000)
         global_settings.fx_enabled = true;
     uipod_tape_fx_apply();
+}
+
+static void dj_int_cb(int val)
+{
+    (void)val;
+    uipod_dj_apply_settings();
+}
+
+static void dj_bool_cb(bool val)
+{
+    (void)val;
+    uipod_dj_apply_settings();
 }
 
 static void tape_bool_cb(bool val)
@@ -1254,6 +1267,29 @@ const struct settings_list settings[] = {
                        "fx flanger feedback", UNIT_PERCENT, -90, 90, 5, NULL, tape_int_cb),
     INT_SETTING_NOWRAP(F_SOUNDSETTING, fx_flanger_mix, LANG_UIPOD_FX_MIX, 45,
                        "fx flanger mix", UNIT_PERCENT, 0, 100, 5, NULL, tape_int_cb),
+    CHOICE_SETTING(F_SOUNDSETTING, dj_crossfade_mode, LANG_UIPOD_DJ_MODE, 0,
+                   "dj crossfade mode", "off,classic,vinyl,master",
+                   dj_int_cb, 4,
+                   ID2P(LANG_OFF),
+                   ID2P(LANG_UIPOD_DJ_MODE_CLASSIC),
+                   ID2P(LANG_UIPOD_DJ_MODE_VINYL),
+                   ID2P(LANG_UIPOD_DJ_MODE_MASTER)),
+    CHOICE_SETTING(F_SOUNDSETTING, dj_transition_len, LANG_UIPOD_DJ_LENGTH, 1,
+                   "dj transition len", "4bars,8bars,12s",
+                   dj_int_cb, 3,
+                   ID2P(LANG_UIPOD_DJ_LEN_4B),
+                   ID2P(LANG_UIPOD_DJ_LEN_8B),
+                   ID2P(LANG_UIPOD_DJ_LEN_12S)),
+    CHOICE_SETTING(F_SOUNDSETTING, dj_max_stretch, LANG_UIPOD_DJ_MAX_STRETCH, 1,
+                   "dj max stretch", "6pct,10pct,12pct",
+                   dj_int_cb, 3,
+                   ID2P(LANG_UIPOD_DJ_STRETCH_6),
+                   ID2P(LANG_UIPOD_DJ_STRETCH_10),
+                   ID2P(LANG_UIPOD_DJ_STRETCH_12)),
+    OFFON_SETTING(F_SOUNDSETTING, dj_keep_album_gapless, LANG_UIPOD_DJ_KEEP_GAPLESS, true,
+                  "dj keep album gapless", dj_bool_cb),
+    OFFON_SETTING(F_SOUNDSETTING, dj_quick_cut_next, LANG_UIPOD_DJ_QUICK_CUT, true,
+                  "dj quick cut next", dj_bool_cb),
 
 };
 

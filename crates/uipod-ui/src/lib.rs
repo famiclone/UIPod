@@ -111,10 +111,14 @@ impl FileIconKind {
             "ADD" | "ADD_DIR" | "ADD_FOLDER" | "PLUS" => Self::AddFolder,
             "MP3" | "FLAC" | "WAV" | "AAC" | "M4A" | "M4B" | "OGG" | "OGA" | "OPUS" | "ALAC"
             | "AIFF" | "AIF" | "WMA" | "APE" | "WV" | "MPC" | "DSF" | "DFF" | "SPX" | "M3U"
-            | "M3U8" | "PLS" => {
+            | "M3U8" | "PLS" | "NSF" | "NSFE" | "GSF" | "MINIGSF" | "MID" | "MIDI" | "KAR"
+            | "RMI" | "SF2" => {
                 let short = match upper.as_str() {
                     "M3U8" => "M3U",
                     "AIFF" => "AIF",
+                    "NSFE" => "NSF",
+                    "MINIGSF" => "GSF",
+                    "MIDI" => "MID",
                     other => other,
                 };
                 Self::Audio(short.to_string())
@@ -157,6 +161,8 @@ pub enum RightAccessory<'a> {
     CycleValue(&'a str),
     /// Plain right-aligned text value (`Type=Active5` `[2035]` without `< >` arrows).
     Value(&'a str),
+    /// Right-aligned summary value followed by submenu chevron `>` (e.g. `"3/5 ON ›"`).
+    ValueChevron(&'a str),
 }
 
 /// State of the shared `Header` component (`960x80` + `4px` bottom border).
@@ -201,8 +207,44 @@ pub struct ListScreenState<'a> {
     pub visible_items: usize,
 }
 
+/// Compact hardware sound channel chip shown on the Now Playing APU strip (`P1 P2 TR NS DP ...`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NsfApuPill<'a> {
+    pub short_code: &'a str,
+    pub active: bool,
+    pub muted: bool,
+    pub volume: f32,
+}
+
+/// Single interactive hardware channel row in the `Now Playing -> Channels` toggle submenu.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NsfChannelRow<'a> {
+    pub short_code: &'a str,
+    pub display_name: &'a str,
+    pub enabled: bool,
+    pub soloed: bool,
+    pub active: bool,
+    pub volume: f32,
+    pub selected: bool,
+}
+
+/// Complete state of the `Now Playing -> Channels` live APU channel toggle screen (`1024x768`).
+#[derive(Debug, Clone)]
+pub struct NsfChannelsState<'a> {
+    pub theme: ThemeColors,
+    pub header: HeaderState<'a>,
+    pub channels: &'a [NsfChannelRow<'a>],
+    /// Label of the bottom convenience row (e.g. `"Enable All Channels"`).
+    pub enable_all_label: &'a str,
+    pub enable_all_selected: bool,
+    /// Optional compact footer legend (e.g. `"A: Toggle  ·  Hold A: Solo  ·  X: All ON"`).
+    pub footer_hint: &'a str,
+    pub start_item: usize,
+    pub visible_items: usize,
+}
+
 /// Complete state of the `Now Playing` (`WPS`) screen (`[233]` and `[1805] Now Playing (Alt)`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NowPlayingState<'a> {
     pub theme: ThemeColors,
     pub header: HeaderState<'a>,
@@ -212,7 +254,7 @@ pub struct NowPlayingState<'a> {
     pub title: &'a str,
     pub artist: &'a str,
     pub album: &'a str,
-    /// e.g. `"FLAC"`, `"MP3"`, `"AAC"`, `"OPUS"`
+    /// e.g. `"FLAC"`, `"MP3"`, `"AAC"`, `"OPUS"`, `"NSF"`
     pub codec_label: &'a str,
     /// e.g. `"24bit"`, `"16bit"` (empty for lossy codecs if N/A)
     pub bitdepth_label: &'a str,
@@ -232,6 +274,22 @@ pub struct NowPlayingState<'a> {
     pub mono_album_art: bool,
     /// When `true`, renders `Now Playing (Alt)` (`[1805]`: centered `534x534` cover + bottom seekbar).
     pub alt_layout: bool,
+    /// `true` when playing a native `.nsf`/`.nsfe` chiptune subtrack (enables procedural Famicom HVC cartridge art).
+    pub is_nsf: bool,
+    /// Expansion chip badge (`"2A03"`, `"VRC6"`, `"MMC5"`, `"FDS"`, `"N163"`, `"5B"`, `"VRC7"`).
+    pub nsf_chip_badge: &'a str,
+    /// Optional `0.0..=1.0` loop marker position along the seekbar when `loop_point_ms` is known.
+    pub nsf_loop_progress: Option<f32>,
+    /// `true` when `Endless Loop` (`[∞]`) is active on Now Playing.
+    pub nsf_endless_loop: bool,
+    /// Hardware APU channel states rendered in the compact 4-shade strip when `!alt_layout`.
+    pub nsf_channels: &'a [NsfApuPill<'a>],
+    /// Live Smart DJ transition badge text (`"DJ SYNC · 124→126 BPM"` / `"DJ WASH › NEXT"`, empty when idle).
+    pub dj_status_label: &'a str,
+    /// Normalized DJ transition progress `0.0..=1.0` when `dj_status_label` is non-empty.
+    pub dj_progress: f32,
+    /// `true` right at the `p = 0.50` Bass Swap downbeat (inverts the 4-shade pill briefly).
+    pub dj_bass_swap_flash: bool,
 }
 
 /// Single keycap in the on-screen QWERTY keyboard.

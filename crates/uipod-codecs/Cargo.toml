@@ -1,0 +1,15 @@
+[package]
+name = "uipod-codecs"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust audio & chiptune/PSF codecs for UIPod (GSF / MiniGSF and extensible game formats)"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_codecs"
+crate-type = ["rlib"]
+
+[dependencies]
+crc32fast = "1.5"
+flate2 = "1.1"
+uipod-nsf = { path = "../uipod-nsf" }

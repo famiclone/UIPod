@@ -15,8 +15,9 @@ use rgb::RGBA8;
 
 use crate::icons::{
     draw_arrow_down_64, draw_arrow_s, draw_battery, draw_chevron_left_s, draw_chevron_s,
-    draw_filetype_icon, draw_fx_64, draw_header_source_icon, draw_hold_lock, draw_play_mode_icon,
-    draw_scrollbar_v, draw_seekbar_track_h, draw_toggle, draw_volume_popup, fill_rounded_rect,
+    draw_filetype_icon, draw_fx_64, draw_header_source_icon, draw_hold_lock, draw_icon_note_scaled,
+    draw_infinity_badge, draw_play_mode_icon, draw_scrollbar_v, draw_seekbar_track_h,
+    draw_seekbar_track_h_with_loop, draw_toggle, draw_volume_popup, fill_rounded_rect,
     stroke_rounded_rect_inside,
 };
 use crate::layout::{
@@ -26,7 +27,7 @@ use crate::layout::{
 };
 use crate::{
     FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardState, ListRow,
-    ListScreenState, NowPlayingState, RightAccessory, ThemeColors,
+    ListScreenState, NowPlayingState, NsfApuPill, NsfChannelsState, RightAccessory, ThemeColors,
 };
 
 pub const WIDTH: usize = 1024;
@@ -817,6 +818,39 @@ impl UiEngine {
                 let trimmed = val.trim();
                 if trimmed.is_empty() {
                     inner_right
+                } else if let Some(prefix) = trimmed
+                    .strip_suffix(" ♪]")
+                    .or_else(|| trimmed.strip_suffix(" \u{266A}]"))
+                {
+                    // Vector `[24 ♪]` chiptune count badge using ui.figcraft `icon_note_16` [404]
+                    let mut vp = Paint::color(text_ink);
+                    vp.set_font(&medium);
+                    vp.set_font_size(36.0);
+                    vp.set_text_align(Align::Right);
+                    vp.set_text_baseline(Baseline::Alphabetic);
+                    let base_y = Self::text_row_baseline(bx.center_y(), 36.0);
+
+                    let rbracket = "]";
+                    let rb_w = self
+                        .canvas
+                        .measure_text(0.0, 0.0, rbracket, &vp)
+                        .map(|m| m.width())
+                        .unwrap_or(12.0);
+                    let _ = self.canvas.fill_text(inner_right, base_y, rbracket, &vp);
+
+                    let note_sz = 25.0;
+                    let note_x = inner_right - rb_w - 4.0 - note_sz;
+                    let note_y = bx.center_y() - note_sz * 0.5;
+                    draw_icon_note_scaled(&mut self.canvas, note_x, note_y, note_sz, text_ink);
+
+                    let prefix_x = note_x - 6.0;
+                    let prefix_w = self
+                        .canvas
+                        .measure_text(0.0, 0.0, prefix, &vp)
+                        .map(|m| m.width())
+                        .unwrap_or(48.0);
+                    let _ = self.canvas.fill_text(prefix_x, base_y, prefix, &vp);
+                    (prefix_x - prefix_w - 24.0).max(text_x)
                 } else {
                     let mut vp = Paint::color(text_ink);
                     vp.set_font(&medium);
@@ -833,6 +867,33 @@ impl UiEngine {
                         .unwrap_or(0.0);
                     let _ = self.canvas.fill_text(inner_right, base_y, &val_fitted, &vp);
                     (inner_right - val_w - 24.0).max(text_x)
+                }
+            }
+            RightAccessory::ValueChevron(val) => {
+                let cx = inner_right - 32.0;
+                let cy = bx.y + (bx.h - 32.0) * 0.5;
+                let chev_ink = if row.selected { pal.bg } else { pal.fg2 };
+                draw_arrow_s(&mut self.canvas, cx, cy, chev_ink);
+                let val_right = cx - 12.0;
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    val_right - 4.0
+                } else {
+                    let mut vp = Paint::color(text_ink);
+                    vp.set_font(&medium);
+                    vp.set_font_size(36.0);
+                    vp.set_text_align(Align::Right);
+                    vp.set_text_baseline(Baseline::Alphabetic);
+                    let base_y = Self::text_row_baseline(bx.center_y(), 36.0);
+                    let max_val_w = (bx.w * 0.42).max(80.0);
+                    let val_fitted = self.truncate_ellipsis(trimmed, max_val_w, &vp);
+                    let val_w = self
+                        .canvas
+                        .measure_text(0.0, 0.0, &val_fitted, &vp)
+                        .map(|m| m.width())
+                        .unwrap_or(0.0);
+                    let _ = self.canvas.fill_text(val_right, base_y, &val_fitted, &vp);
+                    (val_right - val_w - 20.0).max(text_x)
                 }
             }
         };
@@ -915,6 +976,358 @@ impl UiEngine {
         self.canvas.fill_path(&spindle, &Paint::color(pal.fg));
     }
 
+    /// Draws procedural 4-shade vector Famicom HVC cartridge artwork (`famicom_cart_spec`)
+    /// inside `(x, y, w, h)` with top grip ribs, molded triangle arrow, stepped 60-pin skirt,
+    /// recessed front sticker label, scissor-clipped `Geologica` Game Title + Artist, and
+    /// high-contrast corner chip badge (`2A03` / `VRC6` / `MMC5` / `FDS` / `N163` / `5B` / `VRC7`).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_famicom_cartridge(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        game_title: &str,
+        artist: &str,
+        chip_badge: &str,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::famicom_cart_spec as fc;
+
+        let s = (w.min(h) / fc::REF_SIZE).max(0.25);
+        let ox = x + (w - fc::REF_SIZE * s) * 0.5;
+        let oy = y + (h - fc::REF_SIZE * s) * 0.5;
+
+        // Outer album cover frame (`fg1` inside stroke matching `[1400]`)
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            x,
+            y,
+            w,
+            h,
+            fc::FRAME_RADIUS,
+            fc::FRAME_STROKE,
+            pal.fg1,
+        );
+
+        // 1. Stepped bottom 60-pin connector skirt (`fg2` fill, `fg` stroke, `fg1` gold-finger pins)
+        let sk_x = ox + fc::SKIRT_X * s;
+        let sk_y = oy + fc::SKIRT_Y * s;
+        let sk_w = fc::SKIRT_W * s;
+        let sk_h = fc::SKIRT_H * s;
+        fill_rounded_rect(
+            &mut self.canvas,
+            sk_x,
+            sk_y,
+            sk_w,
+            sk_h,
+            fc::SKIRT_RADIUS * s,
+            pal.fg2,
+        );
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            sk_x,
+            sk_y,
+            sk_w,
+            sk_h,
+            fc::SKIRT_RADIUS * s,
+            (fc::CART_STROKE * s).max(1.5),
+            pal.fg,
+        );
+
+        let pins_total_w = (fc::PIN_COUNT as f32) * fc::PIN_W * s
+            + ((fc::PIN_COUNT - 1) as f32) * fc::PIN_GAP * s;
+        let pin_start_x = sk_x + (sk_w - pins_total_w) * 0.5;
+        let pin_y = sk_y + fc::PIN_TOP_INSET * s;
+        let mut pins_path = VgPath::new();
+        for i in 0..fc::PIN_COUNT {
+            let px = pin_start_x + (i as f32) * (fc::PIN_W + fc::PIN_GAP) * s;
+            pins_path.rect(px, pin_y, fc::PIN_W * s, fc::PIN_H * s);
+        }
+        self.canvas.fill_path(&pins_path, &Paint::color(pal.fg1));
+
+        // 2. Main horizontal HVC cassette shell (`fg2` fill + crisp `fg` border)
+        let cx = ox + fc::CART_X * s;
+        let cy = oy + fc::CART_Y * s;
+        let cw = fc::CART_W * s;
+        let ch = fc::CART_H * s;
+        fill_rounded_rect(
+            &mut self.canvas,
+            cx,
+            cy,
+            cw,
+            ch,
+            fc::CART_RADIUS * s,
+            pal.fg2,
+        );
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            cx,
+            cy,
+            cw,
+            ch,
+            fc::CART_RADIUS * s,
+            (fc::CART_STROKE * s).max(1.5),
+            pal.fg,
+        );
+
+        // 3. Top grip ribs (`fg1`) + molded downward insertion triangle (`fg1`)
+        let mut ribs = VgPath::new();
+        for r in 0..fc::GRIP_RIB_COUNT {
+            let ry = oy + (fc::GRIP_Y0 + (r as f32) * fc::GRIP_RIB_STEP) * s;
+            ribs.rounded_rect(
+                ox + fc::GRIP_X * s,
+                ry,
+                fc::GRIP_W * s,
+                fc::GRIP_RIB_H * s,
+                1.5 * s,
+            );
+        }
+        let acx = ox + fc::ARROW_CX * s;
+        let ay0 = oy + fc::ARROW_TOP_Y * s;
+        ribs.move_to(acx - fc::ARROW_HALF_W * s, ay0);
+        ribs.line_to(acx + fc::ARROW_HALF_W * s, ay0);
+        ribs.line_to(acx, ay0 + fc::ARROW_H * s);
+        ribs.close();
+        self.canvas.fill_path(&ribs, &Paint::color(pal.fg1));
+
+        // 4. Recessed front sticker label (`bg` fill, `fg1` header band, `fg` border)
+        let lx = ox + fc::LABEL_X * s;
+        let ly = oy + fc::LABEL_Y * s;
+        let lw = fc::LABEL_W * s;
+        let lh = fc::LABEL_H * s;
+        let lr = fc::LABEL_RADIUS * s;
+        fill_rounded_rect(&mut self.canvas, lx, ly, lw, lh, lr, pal.bg);
+
+        let band_h = fc::LABEL_BAND_H * s;
+        self.canvas.scissor(lx, ly, lw, band_h);
+        fill_rounded_rect(&mut self.canvas, lx, ly, lw, band_h + lr, lr, pal.fg1);
+        self.canvas.reset_scissor();
+
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            lx,
+            ly,
+            lw,
+            lh,
+            lr,
+            (fc::LABEL_STROKE * s).max(1.5),
+            pal.fg,
+        );
+
+        let bold = self.fonts_bold.clone();
+        let semibold = self.fonts_semibold.clone();
+        let regular = self.fonts_regular.clone();
+
+        // Top-left HVC cassette stamp + top-right expansion chip badge (`2A03`, `VRC6`, `MMC5`, `FDS`, ...)
+        let badge_txt = if chip_badge.trim().is_empty() {
+            "2A03"
+        } else {
+            chip_badge.trim()
+        };
+        let badge_fs = (fc::BADGE_FONT_SIZE * s).max(10.0);
+        let mut bp = Paint::color(pal.bg);
+        bp.set_font(&bold);
+        bp.set_font_size(badge_fs);
+        bp.set_text_align(Align::Center);
+        bp.set_text_baseline(Baseline::Alphabetic);
+        let btw = self
+            .canvas
+            .measure_text(0.0, 0.0, badge_txt, &bp)
+            .map(|m| m.width())
+            .unwrap_or(36.0 * s);
+        let bw = (btw + fc::BADGE_PAD_X * 2.0 * s).max(40.0 * s);
+        let bh = fc::BADGE_H * s;
+        let bx = lx + lw - fc::BADGE_MARGIN_R * s - bw;
+        let by = ly + (band_h - bh) * 0.5;
+        fill_rounded_rect(
+            &mut self.canvas,
+            bx,
+            by,
+            bw,
+            bh,
+            fc::BADGE_RADIUS * s,
+            pal.fg,
+        );
+        let badge_base_y = Self::cap_centered_baseline(by + bh * 0.5, badge_fs);
+        let _ = self
+            .canvas
+            .fill_text(bx + bw * 0.5, badge_base_y, badge_txt, &bp);
+
+        let hdr_fs = (fc::HEADER_FONT_SIZE * s).max(9.0);
+        let mut hp = Paint::color(pal.fg);
+        hp.set_font(&semibold);
+        hp.set_font_size(hdr_fs);
+        hp.set_text_align(Align::Left);
+        hp.set_text_baseline(Baseline::Alphabetic);
+        let hdr_base_y = Self::cap_centered_baseline(ly + band_h * 0.5, hdr_fs);
+        let hdr_avail = (bx - (lx + fc::LABEL_PAD_X * s) - 6.0 * s).max(0.0);
+        if hdr_avail > 20.0 * s {
+            let hdr_txt = self.truncate_ellipsis("FAMICOM HVC", hdr_avail, &hp);
+            let _ = self
+                .canvas
+                .fill_text(lx + fc::LABEL_PAD_X * s, hdr_base_y, &hdr_txt, &hp);
+        }
+
+        // 5. Scissor-clipped Game Title + Artist inside label body (guarantees zero text bleed!)
+        let pad_x = fc::LABEL_PAD_X * s;
+        let inner_x = lx + pad_x;
+        let inner_w = (lw - pad_x * 2.0).max(16.0);
+        self.canvas
+            .scissor(lx + 3.0 * s, ly + band_h, lw - 6.0 * s, lh - band_h - 3.0 * s);
+
+        let game = if game_title.trim().is_empty() {
+            "NSF Cartridge"
+        } else {
+            game_title.trim()
+        };
+        let title_fs = (fc::TITLE_FONT_SIZE * s).max(12.0);
+        let mut tp = Paint::color(pal.fg);
+        tp.set_font(&semibold);
+        tp.set_font_size(title_fs);
+        tp.set_text_align(Align::Left);
+        tp.set_text_baseline(Baseline::Alphabetic);
+        let fitted_game = self.truncate_ellipsis(game, inner_w, &tp);
+        let title_base_y = Self::text_row_baseline(oy + fc::TITLE_CENTER_Y * s, title_fs);
+        let _ = self
+            .canvas
+            .fill_text(inner_x, title_base_y, &fitted_game, &tp);
+
+        let art_str = if artist.trim().is_empty() {
+            "2A03 Sound Engine"
+        } else {
+            artist.trim()
+        };
+        let artist_fs = (fc::ARTIST_FONT_SIZE * s).max(10.0);
+        let mut ap = Paint::color(pal.fg2);
+        ap.set_font(&regular);
+        ap.set_font_size(artist_fs);
+        ap.set_text_align(Align::Left);
+        ap.set_text_baseline(Baseline::Alphabetic);
+        let fitted_artist = self.truncate_ellipsis(art_str, inner_w, &ap);
+        let artist_base_y = Self::text_row_baseline(oy + fc::ARTIST_CENTER_Y * s, artist_fs);
+        let _ = self
+            .canvas
+            .fill_text(inner_x, artist_base_y, &fitted_artist, &ap);
+
+        let mut rule = VgPath::new();
+        rule.rect(
+            inner_x,
+            oy + fc::ACCENT_RULE_Y * s,
+            inner_w,
+            (fc::ACCENT_RULE_H * s).max(1.0),
+        );
+        self.canvas.fill_path(&rule, &Paint::color(pal.fg1));
+
+        self.canvas.reset_scissor();
+    }
+
+    /// Draws the compact 4-shade hardware APU channel strip (`P1 P2 TR NS DP` + expansion chips)
+    /// when `Large Art` (`alt_layout`) is off and an `.nsf` track is playing.
+    /// Muted channels are dimmed and crossed-out in Shade 1 (`fg1`).
+    fn draw_nsf_apu_strip(
+        &mut self,
+        x: f32,
+        y: f32,
+        max_w: f32,
+        channels: &[NsfApuPill],
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::nsf_now_playing_spec as spec;
+
+        if channels.is_empty() || max_w < 80.0 {
+            return;
+        }
+        let semibold = self.fonts_semibold.clone();
+        let mut cursor_x = x;
+        let right_edge = x + max_w;
+
+        for ch in channels {
+            let code = ch.short_code.trim();
+            if code.is_empty() {
+                continue;
+            }
+
+            let mut tp = Paint::color(if ch.muted {
+                pal.fg1
+            } else if ch.active {
+                pal.fg
+            } else {
+                pal.fg2
+            });
+            tp.set_font(&semibold);
+            tp.set_font_size(spec::CHIP_FONT_SIZE);
+            tp.set_text_align(Align::Center);
+            tp.set_text_baseline(Baseline::Alphabetic);
+
+            let tw = self
+                .canvas
+                .measure_text(0.0, 0.0, code, &tp)
+                .map(|m| m.width())
+                .unwrap_or(28.0);
+            let chip_w = (tw + spec::CHIP_PAD_X * 2.0)
+                .max(spec::CHIP_MIN_W)
+                .round();
+            if cursor_x + chip_w > right_edge {
+                break;
+            }
+
+            let border_col = if ch.muted {
+                pal.fg1
+            } else if ch.active {
+                pal.fg
+            } else {
+                pal.fg2
+            };
+            stroke_rounded_rect_inside(
+                &mut self.canvas,
+                cursor_x,
+                y,
+                chip_w,
+                spec::CHIP_H,
+                spec::CHIP_RADIUS,
+                spec::CHIP_STROKE,
+                border_col,
+            );
+
+            let text_cy = if !ch.muted && ch.active {
+                y + spec::CHIP_H * 0.45
+            } else {
+                y + spec::CHIP_H * 0.5
+            };
+            let base_y = Self::cap_centered_baseline(text_cy, spec::CHIP_FONT_SIZE);
+            let _ = self
+                .canvas
+                .fill_text(cursor_x + chip_w * 0.5, base_y, code, &tp);
+
+            if ch.muted {
+                // Dimmed & crossed-out in Shade 1 (`fg1`) so muted channels are unmistakable
+                let mut strike = VgPath::new();
+                strike.rect(
+                    cursor_x + 6.0,
+                    y + (spec::CHIP_H - spec::MUTED_STRIKE_H) * 0.5,
+                    (chip_w - 12.0).max(4.0),
+                    spec::MUTED_STRIKE_H,
+                );
+                self.canvas.fill_path(&strike, &Paint::color(pal.fg1));
+            } else if ch.active || ch.volume > 0.02 {
+                let meter_max_w = (chip_w - spec::CHIP_METER_INSET_X * 2.0).max(4.0);
+                let fill_w = (meter_max_w * ch.volume.clamp(0.15, 1.0)).round();
+                fill_rounded_rect(
+                    &mut self.canvas,
+                    cursor_x + spec::CHIP_METER_INSET_X,
+                    y + spec::CHIP_H - spec::CHIP_METER_BOTTOM_INSET - spec::CHIP_METER_H,
+                    fill_w,
+                    spec::CHIP_METER_H,
+                    2.0,
+                    pal.fg2,
+                );
+            }
+
+            cursor_x += chip_w + spec::CHIP_GAP_X;
+        }
+    }
+
     fn draw_list_screen_sized(&mut self, state: &ListScreenState, m: LogicalMetrics) {
         self.last_theme = state.theme;
         let pal = resolve_theme(state.theme);
@@ -956,6 +1369,83 @@ impl UiEngine {
         self.draw_list_screen_sized(state, m);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn draw_dj_status_pill_right(
+        &mut self,
+        right_x: f32,
+        top_y: f32,
+        label: &str,
+        progress: f32,
+        bass_swap_flash: bool,
+        centered: bool,
+        center_x: f32,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::dj_status_spec as djs;
+
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let semibold = self.fonts_semibold.clone();
+        let mut tp = Paint::color(if bass_swap_flash { pal.bg } else { pal.fg });
+        tp.set_font(&semibold);
+        tp.set_font_size(djs::FONT_SIZE);
+        tp.set_text_align(Align::Center);
+        tp.set_text_baseline(Baseline::Alphabetic);
+
+        let tw = self
+            .canvas
+            .measure_text(0.0, 0.0, trimmed, &tp)
+            .map(|m| m.width())
+            .unwrap_or(180.0);
+        let pw = (tw + djs::PILL_PAD_X * 2.0).round();
+        let ph = djs::PILL_H;
+        let px = if centered {
+            (center_x - pw * 0.5).round()
+        } else {
+            (right_x - pw).round()
+        };
+        let py = top_y.round();
+
+        if bass_swap_flash {
+            fill_rounded_rect(&mut self.canvas, px, py, pw, ph, djs::PILL_RADIUS, pal.fg);
+        } else {
+            stroke_rounded_rect_inside(
+                &mut self.canvas,
+                px,
+                py,
+                pw,
+                ph,
+                djs::PILL_RADIUS,
+                djs::PILL_STROKE,
+                pal.fg2,
+            );
+        }
+
+        let prog = progress.clamp(0.0, 1.0);
+        if prog > 0.01 {
+            let max_bw = (pw - djs::PROGRESS_INSET_X * 2.0).max(0.0);
+            let bw = (max_bw * prog).round();
+            if bw >= 2.0 {
+                let by = py + ph - djs::PROGRESS_BOTTOM_INSET - djs::PROGRESS_BAR_H;
+                let bar_col = if bass_swap_flash { pal.fg1 } else { pal.fg1 };
+                fill_rounded_rect(
+                    &mut self.canvas,
+                    px + djs::PROGRESS_INSET_X,
+                    by,
+                    bw,
+                    djs::PROGRESS_BAR_H,
+                    1.5,
+                    bar_col,
+                );
+            }
+        }
+
+        let base_y = Self::cap_centered_baseline(py + ph * 0.5 - 1.0, djs::FONT_SIZE);
+        let _ = self.canvas.fill_text(px + pw * 0.5, base_y, trimmed, &tp);
+    }
+
     fn draw_now_playing_screen_sized(&mut self, state: &NowPlayingState, m: LogicalMetrics) {
         self.last_theme = state.theme;
         let pal = resolve_theme(state.theme);
@@ -995,25 +1485,54 @@ impl UiEngine {
                 false
             };
             if !art_drawn {
-                self.draw_album_art_placeholder(
-                    alt.art_box.x,
-                    alt.art_box.y,
-                    alt.art_box.w,
-                    alt.art_box.h,
-                    pal,
-                );
+                if state.is_nsf {
+                    self.draw_famicom_cartridge(
+                        alt.art_box.x,
+                        alt.art_box.y,
+                        alt.art_box.w,
+                        alt.art_box.h,
+                        state.album,
+                        state.artist,
+                        state.nsf_chip_badge,
+                        pal,
+                    );
+                } else {
+                    self.draw_album_art_placeholder(
+                        alt.art_box.x,
+                        alt.art_box.y,
+                        alt.art_box.w,
+                        alt.art_box.h,
+                        pal,
+                    );
+                }
             }
 
-            draw_seekbar_track_h(
+            draw_seekbar_track_h_with_loop(
                 &mut self.canvas,
                 alt.seekbar_track.x,
                 alt.seekbar_track.y,
                 alt.seekbar_track.w,
                 alt.seekbar_track.h,
                 state.progress,
+                state.nsf_loop_progress,
                 pal.fg1,
                 pal.fg2,
+                pal.fg,
             );
+
+            if !state.dj_status_label.trim().is_empty() {
+                use crate::layout::dj_status_spec as djs;
+                self.draw_dj_status_pill_right(
+                    (m.screen_w + 320.0) * 0.5,
+                    djs::ALT_TOP_Y,
+                    state.dj_status_label,
+                    state.dj_progress,
+                    state.dj_bass_swap_flash,
+                    true,
+                    m.screen_w * 0.5,
+                    pal,
+                );
+            }
 
             let label_base_y = Self::cap_centered_baseline(alt.seekbar_labels.center_y(), 32.0);
             let mut lp = Paint::color(pal.fg);
@@ -1039,14 +1558,27 @@ impl UiEngine {
                         &lp,
                     );
                 }
+                let mut rem_right = alt.seekbar_labels.x + alt.seekbar_labels.w;
+                if state.nsf_endless_loop {
+                    use crate::layout::nsf_now_playing_spec as spec;
+                    let bx = rem_right - spec::ENDLESS_BADGE_W;
+                    let by = alt.seekbar_labels.center_y() - spec::ENDLESS_BADGE_H * 0.5;
+                    draw_infinity_badge(
+                        &mut self.canvas,
+                        bx,
+                        by,
+                        spec::ENDLESS_BADGE_W,
+                        spec::ENDLESS_BADGE_H,
+                        pal.fg2,
+                        pal.fg,
+                    );
+                    rem_right = bx - spec::ENDLESS_BADGE_GAP_X;
+                }
                 if !state.remaining_label.is_empty() {
                     lp.set_text_align(Align::Right);
-                    let _ = self.canvas.fill_text(
-                        alt.seekbar_labels.x + alt.seekbar_labels.w,
-                        label_base_y,
-                        state.remaining_label,
-                        &lp,
-                    );
+                    let _ = self
+                        .canvas
+                        .fill_text(rem_right, label_base_y, state.remaining_label, &lp);
                 }
             }
             return;
@@ -1072,11 +1604,12 @@ impl UiEngine {
                 .fill_text(np.subheader_row.x, base_y, state.track_pos_label, &pp);
         }
 
+        let mut sub_right = np.subheader_row.x + np.subheader_row.w;
         if state.eq_enabled {
             // [249]: 55x34 at right edge (x = 937, y = 147), r=4, stroke=2 inside
             let eq_w = 55.0;
             let eq_h = 34.0;
-            let eq_x = np.subheader_row.x + np.subheader_row.w - eq_w;
+            let eq_x = sub_right - eq_w;
             let eq_y = np.subheader_row.y + (np.subheader_row.h - eq_h) * 0.5;
             stroke_rounded_rect_inside(
                 &mut self.canvas,
@@ -1098,6 +1631,22 @@ impl UiEngine {
             let _ = self
                 .canvas
                 .fill_text(eq_x + eq_w * 0.5, base_y, "EQ", &eqp);
+            sub_right = eq_x - crate::layout::dj_status_spec::PILL_GAP_X;
+        }
+
+        if !state.dj_status_label.trim().is_empty() {
+            use crate::layout::dj_status_spec as djs;
+            let py = np.subheader_row.y + (np.subheader_row.h - djs::PILL_H) * 0.5;
+            self.draw_dj_status_pill_right(
+                sub_right,
+                py,
+                state.dj_status_label,
+                state.dj_progress,
+                state.dj_bass_swap_flash,
+                false,
+                0.0,
+                pal,
+            );
         }
 
         // 2. Album Art [252] (32, 256, 256, 256): r=8 image without stroke (placeholder keeps 4px border)
@@ -1125,13 +1674,26 @@ impl UiEngine {
             false
         };
         if !art_drawn {
-            self.draw_album_art_placeholder(
-                np.art_box.x,
-                np.art_box.y,
-                np.art_box.w,
-                np.art_box.h,
-                pal,
-            );
+            if state.is_nsf {
+                self.draw_famicom_cartridge(
+                    np.art_box.x,
+                    np.art_box.y,
+                    np.art_box.w,
+                    np.art_box.h,
+                    state.album,
+                    state.artist,
+                    state.nsf_chip_badge,
+                    pal,
+                );
+            } else {
+                self.draw_album_art_placeholder(
+                    np.art_box.x,
+                    np.art_box.y,
+                    np.art_box.w,
+                    np.art_box.h,
+                    pal,
+                );
+            }
         }
 
         // 3. Metadata column [253]: Title (SemiBold 48), Artist (Regular 36 ls=2%), Album (Regular 36 ls=2%), Specs row
@@ -1233,16 +1795,35 @@ impl UiEngine {
             let _ = self.canvas.fill_text(cursor_x, specs_base_y, srate, &sp);
         }
 
-        // 4. Seekbar [640] (32, 594, 960, 84): horizontal track 960x24 (`fg1` border, `fg2` fill) + labels
-        draw_seekbar_track_h(
+        // 3b. Compact 4-shade hardware APU channel strip (`P1 P2 TR NS DP ...`) when Large Art is off
+        if state.is_nsf && !state.nsf_channels.is_empty() {
+            use crate::layout::nsf_now_playing_spec as spec;
+            let strip_bottom_max = (np.seekbar_track.y - 14.0).max(0.0);
+            let strip_y = (np.art_box.y + np.art_box.h + spec::STRIP_TOP_OFFSET_FROM_ART)
+                .min(strip_bottom_max - spec::CHIP_H);
+            if strip_y > np.art_box.y + np.art_box.h + 4.0 {
+                self.draw_nsf_apu_strip(
+                    np.seekbar_track.x,
+                    strip_y,
+                    np.seekbar_track.w,
+                    state.nsf_channels,
+                    pal,
+                );
+            }
+        }
+
+        // 4. Seekbar [640] (32, 594, 960, 84): horizontal track 960x24 (`fg1` border, `fg2` fill, optional loop tick)
+        draw_seekbar_track_h_with_loop(
             &mut self.canvas,
             np.seekbar_track.x,
             np.seekbar_track.y,
             np.seekbar_track.w,
             np.seekbar_track.h,
             state.progress,
+            state.nsf_loop_progress,
             pal.fg1,
             pal.fg2,
+            pal.fg,
         );
 
         let label_base_y = Self::cap_centered_baseline(np.seekbar_labels.center_y(), 32.0);
@@ -1266,14 +1847,27 @@ impl UiEngine {
                     .canvas
                     .fill_text(np.seekbar_labels.x, label_base_y, state.elapsed_label, &lp);
             }
+            let mut rem_right = np.seekbar_labels.x + np.seekbar_labels.w;
+            if state.nsf_endless_loop {
+                use crate::layout::nsf_now_playing_spec as spec;
+                let bx = rem_right - spec::ENDLESS_BADGE_W;
+                let by = np.seekbar_labels.center_y() - spec::ENDLESS_BADGE_H * 0.5;
+                draw_infinity_badge(
+                    &mut self.canvas,
+                    bx,
+                    by,
+                    spec::ENDLESS_BADGE_W,
+                    spec::ENDLESS_BADGE_H,
+                    pal.fg2,
+                    pal.fg,
+                );
+                rem_right = bx - spec::ENDLESS_BADGE_GAP_X;
+            }
             if !state.remaining_label.is_empty() {
                 lp.set_text_align(Align::Right);
-                let _ = self.canvas.fill_text(
-                    np.seekbar_labels.x + np.seekbar_labels.w,
-                    label_base_y,
-                    state.remaining_label,
-                    &lp,
-                );
+                let _ = self
+                    .canvas
+                    .fill_text(rem_right, label_base_y, state.remaining_label, &lp);
             }
         }
     }
@@ -1545,6 +2139,296 @@ impl UiEngine {
         self.draw_graphic_eq_screen_sized(state, m);
     }
 
+    /// Draws the interactive `Now Playing -> Channels` live APU channel toggle screen (`1024x768`).
+    fn draw_nsf_channels_screen_sized(&mut self, state: &NsfChannelsState, m: LogicalMetrics) {
+        use crate::layout::nsf_channels_spec as cs;
+
+        self.last_theme = state.theme;
+        let pal = resolve_theme(state.theme);
+        self.begin_offscreen_sized(m, m.screen_h, pal.bg);
+
+        let has_enable_all = !state.enable_all_label.trim().is_empty();
+        let total_items = state.channels.len() + usize::from(has_enable_all);
+
+        let has_footer = !state.footer_hint.trim().is_empty();
+        let avail_list_h = (m.screen_h - 144.0 - 32.0 - if has_footer { cs::FOOTER_H + 12.0 } else { 0.0 })
+            .max(240.0);
+        let auto_vis = (((avail_list_h + cs::ROW_GAP) / (cs::ROW_HEIGHT + cs::ROW_GAP)).floor()
+            as usize)
+            .clamp(5, 16);
+        let vis = if state.visible_items > 0 {
+            state.visible_items.min(auto_vis)
+        } else {
+            auto_vis
+        };
+
+        let show_scrollbar = total_items > vis;
+        let hdr = compute_header_layout_sized(m.screen_w, m.screen_h);
+        self.draw_header_component(&hdr, &state.header, pal);
+
+        let mx = horizontal_margin(m.screen_w);
+        let content_w = (m.screen_w - mx * 2.0).max(320.0);
+        let list_w = if show_scrollbar {
+            content_w - 32.0
+        } else {
+            content_w
+        };
+        let list_top_y = 144.0;
+
+        let max_start = total_items.saturating_sub(vis);
+        let start = state.start_item.min(max_start);
+        let end = (start + vis).min(total_items);
+
+        let bold = self.fonts_bold.clone();
+        let semibold = self.fonts_semibold.clone();
+        let medium = self.fonts_medium.clone();
+        let regular = self.fonts_regular.clone();
+
+        for (slot, item_idx) in (start..end).enumerate() {
+            let rx = mx;
+            let ry = list_top_y + (slot as f32) * (cs::ROW_HEIGHT + cs::ROW_GAP);
+            let rw = list_w;
+            let rh = cs::ROW_HEIGHT;
+
+            if item_idx < state.channels.len() {
+                let ch = &state.channels[item_idx];
+                let row_ink = if ch.selected {
+                    fill_rounded_rect(&mut self.canvas, rx, ry, rw, rh, cs::ROW_RADIUS, pal.fg);
+                    pal.bg
+                } else if ch.enabled {
+                    pal.fg
+                } else {
+                    pal.fg2
+                };
+
+                // 1. Left hardware short-code badge (`P1`, `TR`, `SAW`, ...)
+                let bx = rx + cs::ROW_PAD_X;
+                let by = ry + (rh - cs::CODE_BADGE_H) * 0.5;
+                let badge_border = if ch.selected {
+                    pal.bg
+                } else if ch.enabled {
+                    pal.fg2
+                } else {
+                    pal.fg1
+                };
+                stroke_rounded_rect_inside(
+                    &mut self.canvas,
+                    bx,
+                    by,
+                    cs::CODE_BADGE_W,
+                    cs::CODE_BADGE_H,
+                    cs::CODE_BADGE_RADIUS,
+                    cs::CODE_BADGE_STROKE,
+                    badge_border,
+                );
+                let mut cp = Paint::color(if ch.selected {
+                    pal.bg
+                } else if ch.enabled {
+                    pal.fg
+                } else {
+                    pal.fg1
+                });
+                cp.set_font(&bold);
+                cp.set_font_size(cs::CODE_FONT_SIZE);
+                cp.set_text_align(Align::Center);
+                cp.set_text_baseline(Baseline::Alphabetic);
+                let code_base_y =
+                    Self::cap_centered_baseline(by + cs::CODE_BADGE_H * 0.5, cs::CODE_FONT_SIZE);
+                let _ = self.canvas.fill_text(
+                    bx + cs::CODE_BADGE_W * 0.5,
+                    code_base_y,
+                    ch.short_code,
+                    &cp,
+                );
+
+                // 2. Right `[ON]` / `[OFF]` state label + `64x32` 4-shade `toggle` pill switch
+                let inner_right = rx + rw - cs::ROW_PAD_X;
+                let tx = inner_right - cs::TOGGLE_W;
+                let ty = ry + (rh - cs::TOGGLE_H) * 0.5;
+                let (t_ink, t_knob) = if ch.selected {
+                    (pal.bg, pal.fg2)
+                } else {
+                    (pal.fg, pal.fg1)
+                };
+                draw_toggle(&mut self.canvas, tx, ty, ch.enabled, t_ink, t_knob);
+
+                let state_str = if ch.enabled { "[ON]" } else { "[OFF]" };
+                let mut sp = Paint::color(if ch.selected {
+                    pal.bg
+                } else if ch.enabled {
+                    pal.fg
+                } else {
+                    pal.fg1
+                });
+                sp.set_font(&semibold);
+                sp.set_font_size(cs::STATE_TEXT_FONT_SIZE);
+                sp.set_text_align(Align::Right);
+                sp.set_text_baseline(Baseline::Alphabetic);
+                let state_right_x = tx - cs::STATE_TEXT_GAP_X;
+                let state_base_y =
+                    Self::cap_centered_baseline(ry + rh * 0.5, cs::STATE_TEXT_FONT_SIZE);
+                let state_w = self
+                    .canvas
+                    .measure_text(0.0, 0.0, state_str, &sp)
+                    .map(|m| m.width())
+                    .unwrap_or(68.0);
+                let _ = self
+                    .canvas
+                    .fill_text(state_right_x, state_base_y, state_str, &sp);
+
+                // 3. Live `ApuFrameTelemetry` activity meter bar right beside `[ON]`/`[OFF]`
+                let meter_x = state_right_x - state_w - cs::METER_GAP_X - cs::METER_W;
+                let meter_y = ry + (rh - cs::METER_H) * 0.5;
+                let meter_border = if ch.selected {
+                    pal.fg1
+                } else {
+                    pal.fg1
+                };
+                stroke_rounded_rect_inside(
+                    &mut self.canvas,
+                    meter_x,
+                    meter_y,
+                    cs::METER_W,
+                    cs::METER_H,
+                    cs::METER_RADIUS,
+                    cs::METER_STROKE,
+                    meter_border,
+                );
+                let vol = if ch.active {
+                    ch.volume.clamp(0.08, 1.0)
+                } else {
+                    ch.volume.clamp(0.0, 1.0)
+                };
+                let max_fill_w = (cs::METER_W - cs::METER_INSET * 2.0).max(0.0);
+                let fill_w = (max_fill_w * vol).round();
+                if fill_w >= 2.0 {
+                    let fill_col = if !ch.enabled {
+                        pal.fg1
+                    } else if ch.selected {
+                        pal.bg
+                    } else {
+                        pal.fg2
+                    };
+                    fill_rounded_rect(
+                        &mut self.canvas,
+                        meter_x + cs::METER_INSET,
+                        meter_y + cs::METER_INSET,
+                        fill_w,
+                        cs::METER_H - cs::METER_INSET * 2.0,
+                        (cs::METER_H - cs::METER_INSET * 2.0) * 0.5,
+                        fill_col,
+                    );
+                }
+
+                // 4. Channel Display Name + optional `[SOLO]` pill
+                let name_x = bx + cs::CODE_BADGE_W + cs::CODE_GAP_RIGHT;
+                let mut name_right_limit = (meter_x - cs::METER_GAP_X).max(name_x);
+                if ch.soloed {
+                    let mut sol_p = Paint::color(if ch.selected { pal.fg } else { pal.bg });
+                    sol_p.set_font(&bold);
+                    sol_p.set_font_size(cs::SOLO_FONT_SIZE);
+                    sol_p.set_text_align(Align::Center);
+                    sol_p.set_text_baseline(Baseline::Alphabetic);
+                    let stw = self
+                        .canvas
+                        .measure_text(0.0, 0.0, "SOLO", &sol_p)
+                        .map(|m| m.width())
+                        .unwrap_or(52.0);
+                    let sbw = (stw + cs::SOLO_BADGE_PAD_X * 2.0).round();
+                    let sbx = name_right_limit - sbw;
+                    let sby = ry + (rh - cs::SOLO_BADGE_H) * 0.5;
+                    if sbx > name_x + 80.0 {
+                        fill_rounded_rect(
+                            &mut self.canvas,
+                            sbx,
+                            sby,
+                            sbw,
+                            cs::SOLO_BADGE_H,
+                            5.0,
+                            if ch.selected { pal.bg } else { pal.fg },
+                        );
+                        let sol_base_y = Self::cap_centered_baseline(
+                            sby + cs::SOLO_BADGE_H * 0.5,
+                            cs::SOLO_FONT_SIZE,
+                        );
+                        let _ = self.canvas.fill_text(
+                            sbx + sbw * 0.5,
+                            sol_base_y,
+                            "SOLO",
+                            &sol_p,
+                        );
+                        name_right_limit = sbx - cs::SOLO_GAP_X;
+                    }
+                }
+
+                let avail_name_w = (name_right_limit - name_x).max(0.0);
+                if avail_name_w > 12.0 {
+                    let mut np = Paint::color(row_ink);
+                    np.set_font(&medium);
+                    np.set_font_size(cs::NAME_FONT_SIZE);
+                    np.set_text_align(Align::Left);
+                    np.set_text_baseline(Baseline::Alphabetic);
+                    let fitted = self.truncate_ellipsis(ch.display_name, avail_name_w, &np);
+                    let base_y = Self::text_row_baseline(ry + rh * 0.5, cs::NAME_FONT_SIZE);
+                    let _ = self.canvas.fill_text(name_x, base_y, &fitted, &np);
+                }
+            } else {
+                // Bottom convenience row: `Enable All Channels`
+                let action_row = ListRow {
+                    label: state.enable_all_label,
+                    selected: state.enable_all_selected,
+                    file_icon: FileIconKind::None,
+                    right: RightAccessory::None,
+                };
+                self.draw_menu_item(
+                    crate::layout::LayoutBox {
+                        x: rx,
+                        y: ry,
+                        w: rw,
+                        h: rh,
+                    },
+                    &action_row,
+                    pal,
+                );
+            }
+        }
+
+        if show_scrollbar {
+            let sb_h = (vis as f32) * cs::ROW_HEIGHT + ((vis.saturating_sub(1)) as f32) * cs::ROW_GAP;
+            draw_scrollbar_v(
+                &mut self.canvas,
+                mx + content_w - 16.0,
+                list_top_y,
+                16.0,
+                sb_h,
+                total_items,
+                start,
+                vis,
+                pal.fg1,
+                pal.fg,
+            );
+        }
+
+        if has_footer {
+            let fy = m.screen_h - 32.0 - cs::FOOTER_H * 0.5;
+            let mut fp = Paint::color(pal.fg2);
+            fp.set_font(&regular);
+            fp.set_font_size(cs::FOOTER_FONT_SIZE);
+            fp.set_text_align(Align::Center);
+            fp.set_text_baseline(Baseline::Alphabetic);
+            let fitted = self.truncate_ellipsis(state.footer_hint, content_w, &fp);
+            let fbase_y = Self::cap_centered_baseline(fy, cs::FOOTER_FONT_SIZE);
+            let _ = self
+                .canvas
+                .fill_text(m.screen_w * 0.5, fbase_y, &fitted, &fp);
+        }
+    }
+
+    fn draw_nsf_channels_screen(&mut self, state: &NsfChannelsState) {
+        let m = LogicalMetrics::from_physical(WIDTH as u32, HEIGHT as u32);
+        self.draw_nsf_channels_screen_sized(state, m);
+    }
+
     /// Renders only the top `Header` band (`1024x120`) into Rockbox's `{b, g, r}` framebuffer,
     /// leaving rows `120..768` untouched for non-list screens (dialogs, sliders).
     pub fn render_header_into_bgr(
@@ -1587,6 +2471,22 @@ impl UiEngine {
         self.draw_graphic_eq_screen(state);
         self.finish_and_read_top_rows(HEIGHT);
         self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+    }
+
+    /// Renders the full `1024x768` `Channels` live toggle screen into Rockbox's `{b, g, r}` framebuffer.
+    pub fn render_nsf_channels_into_bgr(&mut self, state: &NsfChannelsState, fb_bgr: &mut [u8]) {
+        self.draw_nsf_channels_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
+    }
+
+    /// Renders the full `1024x768` `Channels` live toggle screen and returns top-down `RGBA8` bytes.
+    pub fn render_nsf_channels_rgba(&mut self, state: &NsfChannelsState) -> Vec<u8> {
+        self.draw_nsf_channels_screen(state);
+        self.finish_and_read_top_rows(HEIGHT);
+        let mut out = vec![0u8; WIDTH * HEIGHT * 4];
+        self.unpack_top_rows_to_rgba(HEIGHT, &mut out);
+        out
     }
 
     /// Renders a full `1024x768` list/menu screen and returns top-down `RGBA8` bytes (for PNG previews/tests).
@@ -1788,6 +2688,26 @@ impl UiEngine {
     /// Renders the `Graphic Equalizer` screen directly into `fbo_image` at canonical `1024x768`.
     pub fn render_graphic_eq_to_fbo(&mut self, state: &GraphicEqState) {
         self.render_graphic_eq_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
+    }
+
+    /// Renders the responsive `Channels` live APU toggle screen directly into `fbo_image` at `(win_w, win_h)`.
+    pub fn render_nsf_channels_to_fbo_sized(
+        &mut self,
+        state: &NsfChannelsState,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        self.draw_nsf_channels_screen_sized(state, m);
+        self.canvas.flush();
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.flush();
+        self.restore_gl_state();
+    }
+
+    /// Renders the `Channels` live APU toggle screen directly into `fbo_image` at canonical `1024x768`.
+    pub fn render_nsf_channels_to_fbo(&mut self, state: &NsfChannelsState) {
+        self.render_nsf_channels_to_fbo_sized(state, WIDTH as u32, HEIGHT as u32);
     }
 
     /// Presents `fbo_image` directly to the window backbuffer, optionally blending from the

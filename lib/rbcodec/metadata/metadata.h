@@ -94,6 +94,8 @@ enum
     AFMT_KSS,          /* KSS (MSX computer KSS Music File) */
     AFMT_OPUS,         /* Opus (see http://www.opus-codec.org ) */
     AFMT_AAC_BSF,
+    AFMT_GSF,          /* GSF / MiniGSF (Game Boy Advance Sound Format) */
+    AFMT_MIDI,         /* Standard MIDI File (.mid, .midi, .kar, .rmi) */
 
     /* add new formats at any index above this line to have a sensible order -
        specified array index inits are used */

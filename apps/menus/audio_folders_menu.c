@@ -42,6 +42,8 @@ MENUITEM_FUNCTION(tp_af_movies, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_MOVIE_FOLDERS
                   uipod_movies_settings, NULL, Icon_NOICON);
 MENUITEM_FUNCTION(tp_af_television, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_TELEVISION_FOLDERS),
                   uipod_television_settings, NULL, Icon_NOICON);
+MENUITEM_FUNCTION(tp_af_soundfont, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_SOUNDFONT_FOLDERS),
+                  uipod_soundfont_settings, NULL, Icon_NOICON);
 
 /* Rescan Library: rebuild the SQLite tag index from the source folders, behind
  * the reconcile's own Scanning screen. */
@@ -55,7 +57,7 @@ MENUITEM_FUNCTION(tp_af_rescan, 0, ID2P(LANG_UIPOD_RESCAN),
 
 MAKE_MENU(uipod_audio_folders_menu, ID2P(LANG_UIPOD_LIBRARY), NULL,
           Icon_Submenu_Entered, &tp_af_music, &tp_af_podcast, &tp_af_audiobook,
-          &tp_af_movies, &tp_af_television, &tp_af_rescan);
+          &tp_af_movies, &tp_af_television, &tp_af_soundfont, &tp_af_rescan);
 
 int uipod_audio_folders_page(void)
 {

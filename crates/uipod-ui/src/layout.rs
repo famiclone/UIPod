@@ -39,6 +39,159 @@ pub mod volume_popup_spec {
     pub const HIDDEN_Y: f32 = -(HEIGHT + 8.0);
 }
 
+/// Declarative layout spec (`256x256` normalized coordinates, scaled uniformly to `art_box`)
+/// for procedural 4-shade Famicom HVC cartridge artwork (`Now Playing` & `Now Playing Alt`).
+pub mod famicom_cart_spec {
+    pub const REF_SIZE: f32 = 256.0;
+    pub const FRAME_RADIUS: f32 = 8.0;
+    pub const FRAME_STROKE: f32 = 4.0;
+
+    // Horizontal Famicom HVC cassette body
+    pub const CART_X: f32 = 16.0;
+    pub const CART_Y: f32 = 30.0;
+    pub const CART_W: f32 = 224.0;
+    pub const CART_H: f32 = 168.0;
+    pub const CART_RADIUS: f32 = 10.0;
+    pub const CART_STROKE: f32 = 3.5;
+
+    // Stepped 60-pin bottom connector skirt
+    pub const SKIRT_X: f32 = 34.0;
+    pub const SKIRT_Y: f32 = 194.0;
+    pub const SKIRT_W: f32 = 188.0;
+    pub const SKIRT_H: f32 = 32.0;
+    pub const SKIRT_RADIUS: f32 = 5.0;
+    pub const PIN_COUNT: usize = 11;
+    pub const PIN_W: f32 = 8.0;
+    pub const PIN_H: f32 = 14.0;
+    pub const PIN_GAP: f32 = 6.0;
+    pub const PIN_TOP_INSET: f32 = 11.0;
+
+    // Top grip ribs & molded insertion arrow
+    pub const GRIP_X: f32 = 56.0;
+    pub const GRIP_Y0: f32 = 42.0;
+    pub const GRIP_W: f32 = 166.0;
+    pub const GRIP_RIB_H: f32 = 3.5;
+    pub const GRIP_RIB_STEP: f32 = 7.0;
+    pub const GRIP_RIB_COUNT: usize = 3;
+    pub const ARROW_CX: f32 = 36.0;
+    pub const ARROW_TOP_Y: f32 = 42.0;
+    pub const ARROW_HALF_W: f32 = 9.0;
+    pub const ARROW_H: f32 = 15.0;
+
+    // Front recessed sticker label (`LabelFrame`)
+    pub const LABEL_X: f32 = 28.0;
+    pub const LABEL_Y: f32 = 68.0;
+    pub const LABEL_W: f32 = 200.0;
+    pub const LABEL_H: f32 = 116.0;
+    pub const LABEL_RADIUS: f32 = 6.0;
+    pub const LABEL_STROKE: f32 = 2.5;
+    pub const LABEL_BAND_H: f32 = 28.0;
+    pub const LABEL_PAD_X: f32 = 10.0;
+
+    // Corner expansion chip badge (`2A03` / `VRC6` / `MMC5` / `FDS` / `N163` / `5B` / `VRC7`)
+    pub const BADGE_H: f32 = 20.0;
+    pub const BADGE_PAD_X: f32 = 7.0;
+    pub const BADGE_RADIUS: f32 = 4.0;
+    pub const BADGE_MARGIN_R: f32 = 6.0;
+    pub const BADGE_FONT_SIZE: f32 = 13.5;
+    pub const HEADER_FONT_SIZE: f32 = 12.5;
+
+    // Scissor-clipped Game Title & Artist typography inside `LabelFrame`
+    pub const TITLE_CENTER_Y: f32 = 124.0;
+    pub const TITLE_FONT_SIZE: f32 = 21.0;
+    pub const ARTIST_CENTER_Y: f32 = 156.0;
+    pub const ARTIST_FONT_SIZE: f32 = 14.5;
+    pub const ACCENT_RULE_Y: f32 = 172.0;
+    pub const ACCENT_RULE_H: f32 = 2.0;
+}
+
+/// Declarative layout spec for Now Playing chiptune widgets (`LoopTick`, `EndlessBadge`, `ApuStrip`).
+pub mod nsf_now_playing_spec {
+    // Seekbar loop marker tick (`loop_point_ms`)
+    pub const LOOP_TICK_W: f32 = 4.0;
+    pub const LOOP_TICK_OVERHANG_Y: f32 = 4.0;
+    pub const LOOP_TICK_CAP_W: f32 = 10.0;
+    pub const LOOP_TICK_CAP_H: f32 = 3.0;
+
+    // `[∞]` Endless Loop pill beside remaining timestamp
+    pub const ENDLESS_BADGE_W: f32 = 52.0;
+    pub const ENDLESS_BADGE_H: f32 = 30.0;
+    pub const ENDLESS_BADGE_RADIUS: f32 = 6.0;
+    pub const ENDLESS_BADGE_STROKE: f32 = 2.5;
+    pub const ENDLESS_BADGE_GAP_X: f32 = 14.0;
+    pub const INFINITY_LOBE_R: f32 = 5.8;
+    pub const INFINITY_LOBE_DX: f32 = 6.4;
+    pub const INFINITY_STROKE_W: f32 = 2.8;
+
+    // Compact 4-shade hardware APU channel strip (`y = 532` between `art_box` and `seekbar_box`)
+    pub const STRIP_TOP_OFFSET_FROM_ART: f32 = 20.0;
+    pub const CHIP_H: f32 = 34.0;
+    pub const CHIP_MIN_W: f32 = 54.0;
+    pub const CHIP_PAD_X: f32 = 12.0;
+    pub const CHIP_GAP_X: f32 = 10.0;
+    pub const CHIP_RADIUS: f32 = 6.0;
+    pub const CHIP_STROKE: f32 = 2.0;
+    pub const CHIP_FONT_SIZE: f32 = 22.0;
+    pub const CHIP_METER_H: f32 = 4.0;
+    pub const CHIP_METER_INSET_X: f32 = 6.0;
+    pub const CHIP_METER_BOTTOM_INSET: f32 = 3.0;
+    pub const MUTED_STRIKE_H: f32 = 2.5;
+}
+
+/// Declarative layout spec for the Now Playing 4-shade Smart DJ transition telemetry pill
+/// (`[DJ SYNC · 124→126 BPM]` / `[DJ WASH › NEXT]`).
+pub mod dj_status_spec {
+    pub const PILL_H: f32 = 34.0;
+    pub const PILL_RADIUS: f32 = 4.0;
+    pub const PILL_STROKE: f32 = 2.0;
+    pub const PILL_PAD_X: f32 = 12.0;
+    pub const PILL_GAP_X: f32 = 12.0;
+    pub const FONT_SIZE: f32 = 22.0;
+    pub const PROGRESS_BAR_H: f32 = 3.0;
+    pub const PROGRESS_INSET_X: f32 = 4.0;
+    pub const PROGRESS_BOTTOM_INSET: f32 = 2.0;
+    pub const ALT_TOP_Y: f32 = 18.0;
+}
+
+/// Declarative layout spec for the `Now Playing -> Channels` live APU toggle screen.
+pub mod nsf_channels_spec {
+    pub const ROW_HEIGHT: f32 = 60.0;
+    pub const ROW_GAP: f32 = 12.0;
+    pub const ROW_RADIUS: f32 = 8.0;
+    pub const ROW_PAD_X: f32 = 16.0;
+
+    pub const CODE_BADGE_W: f32 = 72.0;
+    pub const CODE_BADGE_H: f32 = 36.0;
+    pub const CODE_BADGE_RADIUS: f32 = 6.0;
+    pub const CODE_BADGE_STROKE: f32 = 2.0;
+    pub const CODE_FONT_SIZE: f32 = 22.0;
+    pub const CODE_GAP_RIGHT: f32 = 16.0;
+
+    pub const NAME_FONT_SIZE: f32 = 42.0;
+    pub const SOLO_FONT_SIZE: f32 = 20.0;
+    pub const SOLO_BADGE_H: f32 = 28.0;
+    pub const SOLO_BADGE_PAD_X: f32 = 8.0;
+    pub const SOLO_GAP_X: f32 = 12.0;
+
+    // Live `ApuFrameTelemetry` activity meter bar next to channel name
+    pub const METER_W: f32 = 148.0;
+    pub const METER_H: f32 = 18.0;
+    pub const METER_RADIUS: f32 = 9.0;
+    pub const METER_STROKE: f32 = 2.5;
+    pub const METER_INSET: f32 = 3.0;
+    pub const METER_GAP_X: f32 = 20.0;
+
+    // Right-hand `[ON]`/`[OFF]` pill + `toggle` switch (`64x32`)
+    pub const STATE_TEXT_FONT_SIZE: f32 = 28.0;
+    pub const STATE_TEXT_GAP_X: f32 = 12.0;
+    pub const TOGGLE_W: f32 = 64.0;
+    pub const TOGGLE_H: f32 = 32.0;
+
+    pub const FOOTER_H: f32 = 32.0;
+    pub const FOOTER_FONT_SIZE: f32 = 24.0;
+    pub const VISIBLE_ROWS_DEFAULT: usize = 8;
+}
+
 /// Responsive logical canvas metrics derived from physical drawable pixels `(phys_w, phys_h)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LogicalMetrics {
@@ -927,5 +1080,47 @@ mod tests {
         assert!(port.visible_rows >= 16);
         let np_port = compute_now_playing_layout_sized(port.screen_w, port.screen_h);
         assert!(np_port.meta_col.y > np_port.art_box.y + np_port.art_box.h);
+    }
+
+    #[test]
+    fn verify_nsf_phase3_layout_specs_fit_1024x768_without_overlap() {
+        let np = compute_now_playing_layout();
+
+        // 1. Compact APU strip sits cleanly between art/meta and seekbar with >= 18px clearance
+        let art_bottom = np.art_box.y + np.art_box.h;
+        let meta_bottom = np.meta_col.y + np.meta_col.h;
+        let strip_top = art_bottom + nsf_now_playing_spec::STRIP_TOP_OFFSET_FROM_ART;
+        let strip_bottom = strip_top + nsf_now_playing_spec::CHIP_H;
+        assert!(strip_top >= art_bottom + 18.0);
+        assert!(strip_top >= meta_bottom + 18.0);
+        assert!(strip_bottom + 18.0 <= np.seekbar_box.y);
+
+        // 8 expansion pills (`2A03` + `VRC6`/`MMC5`) fit strictly inside 960px content width
+        let eight_pills_w =
+            8.0 * 88.0 + 7.0 * nsf_now_playing_spec::CHIP_GAP_X;
+        assert!(eight_pills_w <= np.seekbar_box.w);
+
+        // 2. Famicom cartridge geometry fits strictly inside the 256x256 reference unit box
+        assert!(famicom_cart_spec::CART_X >= 0.0);
+        assert!(famicom_cart_spec::CART_X + famicom_cart_spec::CART_W <= famicom_cart_spec::REF_SIZE);
+        assert!(famicom_cart_spec::SKIRT_Y + famicom_cart_spec::SKIRT_H <= famicom_cart_spec::REF_SIZE);
+        assert!(famicom_cart_spec::LABEL_X >= famicom_cart_spec::CART_X);
+        assert!(famicom_cart_spec::LABEL_X + famicom_cart_spec::LABEL_W <= famicom_cart_spec::CART_X + famicom_cart_spec::CART_W);
+        assert!(famicom_cart_spec::LABEL_Y + famicom_cart_spec::LABEL_H <= famicom_cart_spec::SKIRT_Y);
+
+        // 3. NSF Channels row controls leave >= 400px unclipped label room even with scrollbar visible
+        let list_with_sb = compute_list_layout(7, true);
+        let row_w = list_with_sb.rows[0].w;
+        let left_cluster_w = nsf_channels_spec::ROW_PAD_X
+            + nsf_channels_spec::CODE_BADGE_W
+            + nsf_channels_spec::CODE_GAP_RIGHT;
+        let right_cluster_w = nsf_channels_spec::ROW_PAD_X
+            + nsf_channels_spec::TOGGLE_W
+            + nsf_channels_spec::STATE_TEXT_GAP_X
+            + 72.0 // "[OFF]" text width upper bound
+            + nsf_channels_spec::METER_GAP_X
+            + nsf_channels_spec::METER_W;
+        let clear_label_w = row_w - left_cluster_w - right_cluster_w;
+        assert!(clear_label_w >= 400.0, "clear_label_w was {clear_label_w}");
     }
 }

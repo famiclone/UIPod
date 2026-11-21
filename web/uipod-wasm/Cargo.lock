@@ -366,6 +366,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "uipod-codecs"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "uipod-nsf",
+]
+
+[[package]]
+name = "uipod-dj"
+version = "0.1.0"
+
+[[package]]
+name = "uipod-nsf"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+]
+
+[[package]]
 name = "uipod-ui"
 version = "0.1.0"
 dependencies = [
@@ -382,8 +402,11 @@ dependencies = [
 
 [[package]]
 name = "uipod-wasm"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
+ "uipod-codecs",
+ "uipod-dj",
+ "uipod-nsf",
  "uipod-ui",
  "wasm-bindgen",
  "web-sys",

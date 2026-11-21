@@ -70,6 +70,8 @@
 #include "uipod_jellyfin.h"
 #include "uipod_plugins.h"
 #include "uipod_rs_ui.h"
+#include "uipod_midi.h"
+#include "uipod_nsf_ui.h"
 #include "uipod_video.h"
 #include "uipod_svg.h"
 #include "uipod_keyboard.h"
@@ -146,6 +148,12 @@ static struct folder_category cat_television = {
     .farm_path = UIPOD_TMP_ROOT "/uipod_television",
     .title_lang = LANG_UIPOD_TELEVISION_FOLDERS,
     .browse_lang = LANG_UIPOD_TELEVISION, .video = true,
+};
+static struct folder_category cat_soundfont = {
+    .store_file = "soundfonts.txt", .default_path = UIPOD_SDCARD_ROOT "/SoundFonts",
+    .farm_path = UIPOD_TMP_ROOT "/uipod_soundfonts",
+    .title_lang = LANG_UIPOD_SOUNDFONT_FOLDERS,
+    .browse_lang = LANG_UIPOD_SOUNDFONT_FOLDERS, .video = true,
 };
 
 /* ---- storage ---------------------------------------------------------- */
@@ -686,7 +694,34 @@ static bool pick_get_chevron(int sel, void *data)
     struct picker_page *p = (struct picker_page *)data;
     if (p && p->dest_mode)
         return sel >= 1 && sel <= pick_count;
-    return sel >= 0 && sel < item_count(p);
+    if (!p || sel < 0 || sel >= item_count(p))
+        return false;
+    if (p->music && !item_isdir(p, sel) &&
+        uipod_nsf_is_container_file(item_name(p, sel)))
+    {
+        return false;
+    }
+    return true;
+}
+
+static const char *pick_get_indicator(int sel, void *data)
+{
+    static char s_nsf_badge[32];
+    struct picker_page *p = (struct picker_page *)data;
+    if (!p || !p->music || p->dest_mode || p->video)
+        return NULL;
+    if (sel < 0 || sel >= item_count(p) || item_isdir(p, sel))
+        return NULL;
+    const char *nm = item_name(p, sel);
+    if (!uipod_nsf_is_container_file(nm))
+        return NULL;
+
+    char full[FPATH_LEN];
+    path_append(full, p->curdir, nm, sizeof(full));
+    int mc = uipod_library_nsf_music_count(full);
+    /* `\xe2\x99\xaa` is UTF-8 `♪`; `uipod-ui` draws the beamed note vector glyph! */
+    snprintf(s_nsf_badge, sizeof(s_nsf_badge), "\x1f[%d \xe2\x99\xaa]", mc);
+    return s_nsf_badge;
 }
 
 static const char *picker_legend(struct uipod_page *self)
@@ -1268,6 +1303,7 @@ enum browse_ctx_act
     BCTX_PLAY_NEXT,
     BCTX_ADD_QUEUE,
     BCTX_ADD_PLAYLIST,
+    BCTX_PICK_SOUNDFONT,
     BCTX_DELETE,
     BCTX_RENAME,
     BCTX_COPY,
@@ -1306,10 +1342,12 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
     path_append(path, p->curdir, chosen, sizeof(path));
     bool isdir = item_isdir(p, sel);
     bool playable_audio = !isdir && is_playable_audio_name(chosen);
+    bool is_midi = !isdir && uipod_midi_is_midi_path(chosen);
+    bool is_nsf_box = !isdir && uipod_nsf_is_container_file(chosen);
     browse_save_pos(p);
 
-    const char *opts[10];
-    enum browse_ctx_act acts[10];
+    const char *opts[11];
+    enum browse_ctx_act acts[11];
     int n = 0;
 
     if (isdir)
@@ -1321,9 +1359,17 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
     else if (playable_audio)
     {
         opts[n] = ID2P(LANG_PLAY);                    acts[n++] = BCTX_PLAY;
+        if (is_nsf_box)
+        {
+            opts[n] = ID2P(LANG_UIPOD_PLAY_SHUFFLED); acts[n++] = BCTX_PLAY_SHUFFLED;
+        }
         opts[n] = ID2P(LANG_PLAY_NEXT);               acts[n++] = BCTX_PLAY_NEXT;
         opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAY_QUEUE); acts[n++] = BCTX_ADD_QUEUE;
         opts[n] = ID2P(LANG_UIPOD_ADD_TO_PLAYLIST);   acts[n++] = BCTX_ADD_PLAYLIST;
+        if (is_midi)
+        {
+            opts[n] = ID2P(LANG_UIPOD_SOUNDFONT);     acts[n++] = BCTX_PICK_SOUNDFONT;
+        }
     }
 
     opts[n] = ID2P(LANG_UIPOD_FILE_DELETE); acts[n++] = BCTX_DELETE;
@@ -1343,10 +1389,11 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
         {
             bool shuf = (acts[pick] == BCTX_PLAY_SHUFFLED);
             bool started = false;
-            if (isdir)
+            if (isdir || is_nsf_box)
             {
                 tree_unlock_cache(p->mctx);
-                started = uipod_queue_add(path, ATTR_DIRECTORY,
+                started = uipod_queue_add(path,
+                                          isdir ? ATTR_DIRECTORY : FILE_ATTR_AUDIO,
                                           PLAYLIST_REPLACE, shuf);
                 tree_lock_cache(p->mctx);
             }
@@ -1380,6 +1427,14 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
             music_load(p);
             break;
 
+        case BCTX_PICK_SOUNDFONT:
+            tree_unlock_cache(p->mctx);
+            uipod_midi_pick_soundfont();
+            tree_lock_cache(p->mctx);
+            strlcpy(pick_reselect, chosen, sizeof(pick_reselect));
+            music_load(p);
+            break;
+
         case BCTX_DELETE:
         {
             if (is_protected_sys_path(path))
@@ -1393,6 +1448,7 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
             {
                 if (delete_path_recursive(path, 0))
                 {
+                    uipod_library_on_path_deleted(path, isdir);
                     uipod_library_mark_stale();
                     pick_reselect[0] = '\0';
                     music_load(p);
@@ -1438,6 +1494,7 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
                 }
                 if (rename(path, newpath) == 0)
                 {
+                    uipod_library_on_path_renamed(path, newpath, isdir);
                     uipod_library_mark_stale();
                     strlcpy(pick_reselect, newname, sizeof(pick_reselect));
                     music_load(p);
@@ -1541,6 +1598,8 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
 
             if (ok)
             {
+                if (is_move)
+                    uipod_library_on_path_renamed(path, dst_path, isdir);
                 uipod_library_mark_stale();
                 if (!is_move && strcmp(dest_dir, p->curdir) == 0)
                     strlcpy(pick_reselect, dst_name, sizeof(pick_reselect));
@@ -1650,6 +1709,27 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                     uipod_transition_arm_back();
                     return UIPOD_PAGE_STAY;
                 }
+                if (uipod_nsf_is_container_file(iname))
+                {
+                    char saved_name[FPATH_LEN];
+                    strlcpy(saved_name, iname, sizeof(saved_name));
+                    tree_unlock_cache(p->mctx);
+                    int r = uipod_nsf_container_screen(path, BROWSE_INFO_FILE);
+                    tree_lock_cache(p->mctx);
+                    if (uipod_home_pending)
+                    {
+                        p->base.home = true;
+                        return UIPOD_PAGE_DONE;
+                    }
+                    if (r == GO_TO_WPS)
+                    {
+                        p->result = GO_TO_WPS;
+                        return UIPOD_PAGE_DONE;
+                    }
+                    strlcpy(pick_reselect, saved_name, sizeof(pick_reselect));
+                    music_load(p);
+                    return UIPOD_PAGE_STAY;
+                }
                 if (folder_play_or_ctx_track(p, sel, iname, false))
                 {
                     p->result = GO_TO_WPS;
@@ -1669,6 +1749,41 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                 pick_reselect[0] = '\0';
                 pick_slide(p, UIPOD_TRANS_FORWARD);
                 browse_save_pos(p);
+            }
+            return UIPOD_PAGE_STAY;
+
+        case ACTION_TP_LIST_PLAY:    /* START: play highlighted .nsf game music / track / folder */
+            if (p->music && !p->dest_mode && !p->video && have_sel)
+            {
+                char chosen[FPATH_LEN];
+                strlcpy(chosen, item_name(p, sel), sizeof(chosen));
+                char path[FPATH_LEN];
+                path_append(path, p->curdir, chosen, sizeof(path));
+                browse_save_pos(p);
+                bool started = false;
+                if (item_isdir(p, sel))
+                {
+                    tree_unlock_cache(p->mctx);
+                    started = uipod_queue_add(path, ATTR_DIRECTORY,
+                                              PLAYLIST_REPLACE, false);
+                    tree_lock_cache(p->mctx);
+                }
+                else if (uipod_nsf_is_container_file(chosen))
+                {
+                    tree_unlock_cache(p->mctx);
+                    started = uipod_queue_add(path, FILE_ATTR_AUDIO,
+                                              PLAYLIST_REPLACE, false);
+                    tree_lock_cache(p->mctx);
+                }
+                else if (is_playable_audio_name(chosen))
+                {
+                    started = folder_play_or_ctx_track(p, sel, chosen, false);
+                }
+                if (started)
+                {
+                    p->result = GO_TO_WPS;
+                    return UIPOD_PAGE_DONE;
+                }
             }
             return UIPOD_PAGE_STAY;
 
@@ -1704,13 +1819,15 @@ static enum uipod_page_result picker_on_action(struct uipod_page *self,
                     char path[FPATH_LEN];
                     path_append(path, p->curdir, chosen, sizeof(path));
                     bool isdir = item_isdir(p, sel);
+                    bool is_nsf_box = !isdir && uipod_nsf_is_container_file(chosen);
                     browse_save_pos(p);   /* before an insert reuses mctx */
                     bool started = false;
-                    if (isdir)
+                    if (isdir || is_nsf_box)
                     {
                         /* Unpin mctx while uipod_music_context may walk subfolders */
                         tree_unlock_cache(p->mctx);
-                        started = uipod_music_context(chosen, path, ATTR_DIRECTORY);
+                        started = uipod_music_context(
+                            chosen, path, isdir ? ATTR_DIRECTORY : FILE_ATTR_AUDIO);
                         tree_lock_cache(p->mctx);
                     }
                     else
@@ -1823,7 +1940,7 @@ static const struct uipod_page_vtable picker_vtable =
 
 /* A (descend/play), B (up/leave), Hold-A (music: context menu / picker: add folder) */
 static const int picker_allowed[] =
-    { ACTION_STD_OK, ACTION_STD_CANCEL, ACTION_STD_CONTEXT, -1 };
+    { ACTION_STD_OK, ACTION_STD_CANCEL, ACTION_STD_CONTEXT, ACTION_TP_LIST_PLAY, -1 };
 
 /* Returns true and fills out[] with the chosen folder if the user picked one. */
 static bool folder_pick(char *out, size_t out_len)
@@ -1841,6 +1958,7 @@ static bool folder_pick(char *out, size_t out_len)
     gui_synclist_init(&p.lists, pick_get_name, &p, false, 1, NULL);
     gui_synclist_set_svg_icon_callback(&p.lists, pick_get_svg_icon);
     gui_synclist_set_chevron_callback(&p.lists, pick_get_chevron);
+    gui_synclist_set_indicator_callback(&p.lists, pick_get_indicator);
     pick_load(&p);
 
     push_current_activity(ACTIVITY_FILEBROWSER);
@@ -2213,6 +2331,7 @@ static bool browse_run(const char *root, const char *start, int title_lang,
     gui_synclist_init(&p.lists, pick_get_name, &p, false, 1, NULL);
     gui_synclist_set_svg_icon_callback(&p.lists, pick_get_svg_icon);
     gui_synclist_set_chevron_callback(&p.lists, pick_get_chevron);
+    gui_synclist_set_indicator_callback(&p.lists, pick_get_indicator);
     (void)title_lang;
     music_load(&p);
 
@@ -2307,8 +2426,22 @@ static int folder_browse(struct folder_category *cat)
 int uipod_music_settings(void)     { return folders_settings(&cat_music); }
 int uipod_podcast_settings(void)   { return folders_settings(&cat_podcast); }
 int uipod_audiobook_settings(void) { return folders_settings(&cat_audiobook); }
-int uipod_movies_settings(void)    { return folders_settings(&cat_movies); }
+int uipod_movies_settings(void)     { return folders_settings(&cat_movies); }
 int uipod_television_settings(void) { return folders_settings(&cat_television); }
+int uipod_soundfont_settings(void)  { return folders_settings(&cat_soundfont); }
+
+int uipod_soundfont_folder_count(void)
+{
+    folders_load(&cat_soundfont);
+    return cat_soundfont.n_folders;
+}
+
+const char *uipod_soundfont_folder_path(int idx)
+{
+    if (idx < 0 || idx >= cat_soundfont.n_folders)
+        return NULL;
+    return cat_soundfont.folders[idx];
+}
 
 int uipod_music_browse(void *param)
 {

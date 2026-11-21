@@ -48,6 +48,9 @@
 #include "general.h"
 #include "rbpaths.h"
 #include "panic.h"
+#include "pcmbuf.h"
+#include "dsp_proc_entry.h"
+#include "uipod_rs_codecs.h"
 
 #define LOGF_ENABLE
 #include "logf.h"
@@ -148,6 +151,104 @@ void *codec_get_buffer_callback(size_t *size)
 /** codec loading and call interface **/
 static void *curr_handle = NULL;
 static struct codec_header *c_hdr = NULL;
+static char curr_rs_codec[32] = "";
+static struct codec_api *curr_rs_api = NULL;
+
+#define RS_PCM_FRAMES 1024
+static int16_t rs_pcm_buf[RS_PCM_FRAMES * 2];
+
+static int rust_codec_run(struct codec_api *api)
+{
+    if (!api || !api->id3 || !curr_rs_codec[0])
+        return CODEC_ERROR;
+
+    struct dsp_replay_gains gains =
+    {
+        .track_gain = api->id3->track_gain,
+        .album_gain = api->id3->album_gain,
+        .track_peak = api->id3->track_peak,
+        .album_peak = api->id3->album_peak,
+    };
+    api->configure(REPLAYGAIN_SET_GAINS, (intptr_t)&gains);
+
+    size_t buf_n = 0;
+    const uint8_t *buf = NULL;
+    if (api->filesize > 0)
+    {
+        api->seek_buffer(0);
+        buf = (const uint8_t *)api->request_buffer(&buf_n, (size_t)api->filesize);
+        if (buf && buf_n < (size_t)api->filesize)
+            buf = NULL;
+    }
+
+    if (uipod_rs_codec_open(curr_rs_codec,
+                            api->id3->path,
+                            buf,
+                            buf ? (size_t)api->filesize : 0) < 0)
+    {
+        logf("Rust codec open failed: %s", api->id3->path);
+        return CODEC_ERROR;
+    }
+
+    uint32_t sr = uipod_rs_codec_sample_rate();
+    api->configure(DSP_SET_SAMPLE_DEPTH, 16);
+    api->configure(DSP_SET_FREQUENCY, (intptr_t)(sr ? sr : 44100));
+    api->configure(DSP_SET_STEREO_MODE, STEREO_INTERLEAVED);
+
+    /* Keep pcmbuf lookahead tight (~250 ms) for interactive synth codecs (`nsf`, `midi`)
+     * so live channel mute toggles, endless-loop toggles, SoundFont swaps, and 60 Hz
+     * `ApuFrameTelemetry` respond in real time. */
+    bool low_lat = (strcasecmp(curr_rs_codec, "nsf") == 0 ||
+                    strcasecmp(curr_rs_codec, "midi") == 0);
+    pcmbuf_set_low_latency(low_lat);
+
+    if (api->id3->elapsed > 0)
+    {
+        uint32_t resume_ms = (uint32_t)api->id3->elapsed;
+        while (uipod_rs_codec_seek_step_ms(resume_ms, 4000) == 0)
+            api->yield();
+        api->set_elapsed(api->id3->elapsed);
+    }
+    else
+    {
+        api->set_elapsed(0);
+    }
+
+    api->yield();
+
+    while (1)
+    {
+        pcmbuf_set_low_latency(low_lat && uipod_rs_dj_get_phase() == 0);
+
+        intptr_t param = 0;
+        long action = api->get_command(&param);
+        if (action == CODEC_ACTION_HALT)
+            break;
+
+        if (action == CODEC_ACTION_SEEK_TIME)
+        {
+            uint32_t target_ms = param > 0 ? (uint32_t)param : 0;
+            while (uipod_rs_codec_seek_step_ms(target_ms, 4000) == 0)
+                api->yield();
+            api->set_elapsed(target_ms);
+            api->seek_complete();
+        }
+
+        int frames = uipod_rs_codec_render_s16(rs_pcm_buf,
+                                               RS_PCM_FRAMES,
+                                               api->loop_track() ? 1 : 0);
+        if (frames <= 0)
+            break;
+
+        api->pcmbuf_insert(rs_pcm_buf, NULL, frames);
+        api->set_elapsed(uipod_rs_codec_elapsed_ms());
+        api->yield();
+    }
+
+    pcmbuf_set_low_latency(false);
+    uipod_rs_codec_close();
+    return CODEC_OK;
+}
 
 static int codec_load_ram(struct codec_api *api)
 {
@@ -190,6 +291,21 @@ int codec_load_file(const char *plugin, struct codec_api *api)
 {
     char path[MAX_PATH];
 
+    if (plugin && uipod_rs_codec_is_builtin(plugin))
+    {
+        strlcpy(curr_rs_codec, plugin, sizeof(curr_rs_codec));
+        curr_rs_api = api;
+        api->configure(DSP_SET_SAMPLE_DEPTH, 16);
+        api->configure(DSP_SET_FREQUENCY, 44100);
+        api->configure(DSP_SET_STEREO_MODE, STEREO_INTERLEAVED);
+        return CODEC_OK;
+    }
+
+    curr_rs_codec[0] = '\0';
+    curr_rs_api = NULL;
+    pcmbuf_set_low_latency(false);
+    uipod_rs_nsf_reset_session();
+
     codec_get_full_path(path, plugin);
 
     curr_handle = lc_open(path, codecbuf, CODEC_SIZE);
@@ -204,6 +320,9 @@ int codec_load_file(const char *plugin, struct codec_api *api)
 
 int codec_run_proc(void)
 {
+    if (curr_rs_codec[0] != '\0')
+        return rust_codec_run(curr_rs_api);
+
     if (curr_handle == NULL) {
         logf("Codec: no codec to run");
         return CODEC_ERROR;
@@ -216,6 +335,15 @@ int codec_run_proc(void)
 int codec_close(void)
 {
     int status = CODEC_OK;
+
+    if (curr_rs_codec[0] != '\0')
+    {
+        pcmbuf_set_low_latency(false);
+        uipod_rs_codec_close();
+        curr_rs_codec[0] = '\0';
+        curr_rs_api = NULL;
+        return CODEC_OK;
+    }
 
     if (curr_handle != NULL) {
         logf("Codec: cleaning up");

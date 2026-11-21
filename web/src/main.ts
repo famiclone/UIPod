@@ -76,6 +76,11 @@ interface AppStateSnapshot {
   stopStart: boolean;
   speed: number;
   menuClick: boolean;
+  djMode?: number;
+  djLength?: number;
+  djMaxStretch?: number;
+  djKeepGapless?: boolean;
+  djQuickCut?: boolean;
 }
 
 function parseHex(hex: string): number {
@@ -103,6 +108,65 @@ async function boot(): Promise<void> {
   }
 
   const audio = new UIPodAudioEngine();
+  audio.djBridge = {
+    setConfig: (mode, length, maxStretch, keepGapless, quickCut) => {
+      uipod.set_dj_config(mode, length, maxStretch, keepGapless, quickCut);
+    },
+    beginTransition: (
+      sampleRate,
+      trackA,
+      tailAS16,
+      trackB,
+      introBS16,
+      isBEof,
+      deckBIsNativeNsf,
+      manualQuickCut,
+    ) =>
+      uipod.dj_begin_transition(
+        sampleRate,
+        trackA,
+        tailAS16,
+        trackB,
+        introBS16,
+        isBEof,
+        deckBIsNativeNsf,
+        manualQuickCut,
+      ),
+    feedDeckBS16: (chunkS16, isEof) => uipod.dj_feed_deck_b_s16(chunkS16, isEof),
+    renderS16: (frames) => uipod.dj_render_s16(frames),
+    takeMidpointCrossed: () => uipod.dj_take_midpoint_crossed(),
+    isActive: () => uipod.dj_is_active(),
+    reset: () => uipod.dj_reset(),
+  };
+
+  try {
+    const savedDj = localStorage.getItem('uipod_dj_cfg_v1');
+    if (savedDj) {
+      const parsed = JSON.parse(savedDj) as {
+        mode?: number;
+        length?: number;
+        maxStretch?: number;
+        keepGapless?: boolean;
+        quickCut?: boolean;
+      };
+      const djMode = Number(parsed.mode ?? 0);
+      const djLength = Number(parsed.length ?? 1);
+      const djMaxStretch = Number(parsed.maxStretch ?? 1);
+      const djKeepGapless = parsed.keepGapless !== false;
+      const djQuickCut = parsed.quickCut !== false;
+      uipod.set_dj_config(djMode, djLength, djMaxStretch, djKeepGapless, djQuickCut);
+      audio.applyDsp({
+        ...audio.dsp,
+        djMode,
+        djLength,
+        djMaxStretch,
+        djKeepGapless,
+        djQuickCut,
+      });
+    }
+  } catch {
+    // Ignore storage access errors
+  }
   const themes: ThemeInfo[] = JSON.parse(get_themes_json());
   const vizPresets: VizInfo[] = JSON.parse(get_viz_presets_json());
   const autoeqPresets: string[] = JSON.parse(get_autoeq_presets_json());
@@ -391,16 +455,174 @@ async function boot(): Promise<void> {
   const dropzone = document.getElementById('audio-dropzone') as HTMLElement;
   const fileInput = document.getElementById('audio-file-input') as HTMLInputElement;
   const btnPickAudio = document.getElementById('btn-pick-audio') as HTMLButtonElement;
+  const uriToTrackIndex = new Map<string, number>();
+
+  audio.onNonStreamingTrack = () => {
+    uipod.reset_nsf_session();
+  };
+  audio.onTrackAutoAdvance = (nextIdx: number) => {
+    uipod.select_and_play_track(nextIdx);
+  };
 
   async function importAudioFiles(files: FileList | File[]): Promise<void> {
     const list = Array.from(files);
-    const audioFiles = list.filter(
-      (f) => f.type.startsWith('audio/') || /\.(mp3|flac|wav|ogg|opus|m4a|aac)$/i.test(f.name),
-    );
+
+    // 1. Register any `.gsflib` sample/ROM libraries or `.sf2` SoundFonts first.
+    const gsfLibFiles = list.filter((f) => /\.gsflib$/i.test(f.name));
+    for (const libFile of gsfLibFiles) {
+      const libBytes = new Uint8Array(await libFile.arrayBuffer());
+      uipod.register_gsflib(libFile.name, libBytes);
+    }
+    const sf2Files = list.filter((f) => /\.sf2$/i.test(f.name));
+    for (const sf2File of sf2Files) {
+      const sf2Bytes = new Uint8Array(await sf2File.arrayBuffer());
+      uipod.register_soundfont(sf2File.name, sf2Bytes);
+    }
+
+    const m3uFiles = list.filter((f) => /\.(m3u|m3u8)$/i.test(f.name));
+    const audioFiles = list
+      .filter(
+        (f) =>
+          !/\.(m3u|m3u8|gsflib|sf2)$/i.test(f.name) &&
+          (f.type.startsWith('audio/') ||
+            /\.(mp3|flac|wav|ogg|opus|m4a|aac|nsf|nsfe|gsf|minigsf|mid|midi|kar|rmi)$/i.test(
+              f.name,
+            )),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
     const coverFile = list.find((f) => f.type.startsWith('image/'));
     const coverBytes = coverFile ? new Uint8Array(await coverFile.arrayBuffer()) : undefined;
 
+    let firstAddedIdx: number | null = null;
+
     for (const file of audioFiles) {
+      if (/\.(nsf|nsfe)$/i.test(file.name)) {
+        try {
+          const nsfBytes = new Uint8Array(await file.arrayBuffer());
+          const meta = JSON.parse(uipod.register_nsf_container(file.name, nsfBytes)) as {
+            ok?: boolean;
+            gameTitle?: string;
+            artist?: string;
+            chipFlags?: number;
+            startingSubtrack?: number;
+            subtracks?: Array<{
+              index: number;
+              title: string;
+              kind: 'music' | 'sfx';
+              durationMs: number;
+              loopPointMs: number | null;
+            }>;
+          };
+          if (!meta.ok || !Array.isArray(meta.subtracks) || meta.subtracks.length === 0) {
+            continue;
+          }
+
+          for (const sub of meta.subtracks) {
+            const uri = `${file.name}#${sub.index}`;
+            const nextIdx = audio.trackCount;
+            const durMs = Math.max(400, Number(sub.durationMs ?? 124000));
+            audio.registerStreamingPcmTrack(nextIdx, durMs, {
+              open: (sr) => uipod.open_nsf_stream(uri, Math.round(sr)),
+              renderS16: (frames) => uipod.render_nsf_stream_s16(frames),
+              seekMs: (ms) => uipod.seek_nsf_stream_ms(ms),
+              elapsedMs: () => uipod.nsf_stream_elapsed_ms(),
+              close: () => uipod.close_nsf_stream(),
+            });
+            const idx = uipod.add_nsf_subtrack(
+              uri,
+              sub.index,
+              sub.kind === 'sfx',
+              meta.chipFlags ?? 0,
+              sub.loopPointMs ?? -1,
+              sub.title,
+              meta.artist || 'Famicom / NES',
+              meta.gameTitle || file.name.replace(/\.[^.]+$/, ''),
+              durMs,
+              coverBytes,
+            );
+            uriToTrackIndex.set(uri.toLowerCase(), idx);
+            if (firstAddedIdx === null && sub.kind === 'music') {
+              firstAddedIdx = idx;
+            }
+          }
+          if (firstAddedIdx === null && meta.subtracks.length > 0) {
+            const startSub =
+              meta.subtracks[Math.min(meta.startingSubtrack ?? 0, meta.subtracks.length - 1)];
+            const startIdx = uriToTrackIndex.get(`${file.name}#${startSub.index}`.toLowerCase());
+            if (startIdx !== undefined) firstAddedIdx = startIdx;
+          }
+        } catch (err) {
+          console.warn('Could not import NSF/NSFe container:', file.name, err);
+        }
+        continue;
+      }
+      if (/\.(gsf|minigsf)$/i.test(file.name)) {
+        try {
+          const gsfBytes = new Uint8Array(await file.arrayBuffer());
+          const meta = JSON.parse(uipod.inspect_gsf_json(file.name, gsfBytes)) as {
+            ok?: boolean;
+            title?: string;
+            artist?: string;
+            album?: string;
+            durationMs?: number;
+          };
+          if (!meta.ok) continue;
+          const nextIdx = audio.trackCount;
+          const durMs = Number(meta.durationMs ?? 155000);
+          audio.registerLazyPcmTrack(nextIdx, durMs, 44100, () =>
+            uipod.decode_gsf_s16(file.name, gsfBytes),
+          );
+          const idx = uipod.add_user_track(
+            meta.title || file.name.replace(/\.[^.]+$/, ''),
+            meta.artist || 'Game Boy Advance',
+            meta.album || 'GSF Rip',
+            'GSF',
+            '16bit',
+            '44.1kHz',
+            durMs,
+            coverBytes,
+          );
+          if (firstAddedIdx === null) firstAddedIdx = idx;
+        } catch (err) {
+          console.warn('Could not import GSF track:', file.name, err);
+        }
+        continue;
+      }
+
+      if (/\.(mid|midi|kar|rmi)$/i.test(file.name)) {
+        try {
+          const midiBytes = new Uint8Array(await file.arrayBuffer());
+          const meta = JSON.parse(uipod.inspect_midi_json(file.name, midiBytes)) as {
+            ok?: boolean;
+            title?: string;
+            artist?: string;
+            album?: string;
+            durationMs?: number;
+          };
+          if (!meta.ok) continue;
+          const nextIdx = audio.trackCount;
+          const durMs = Number(meta.durationMs ?? 120000);
+          audio.registerLazyPcmTrack(nextIdx, durMs, 44100, () =>
+            uipod.decode_midi_s16(midiBytes),
+          );
+          const idx = uipod.add_user_track(
+            meta.title || file.name.replace(/\.[^.]+$/, ''),
+            meta.artist || 'MIDI Synthesizer',
+            meta.album || 'SoundFont MIDI',
+            'MIDI',
+            '16bit',
+            '44.1kHz',
+            durMs,
+            coverBytes,
+          );
+          if (firstAddedIdx === null) firstAddedIdx = idx;
+        } catch (err) {
+          console.warn('Could not import MIDI track:', file.name, err);
+        }
+        continue;
+      }
+
       const cleanName = file.name.replace(/\.[^.]+$/, '');
       const parts = cleanName.split(/\s+-\s+/);
       const artist = parts.length >= 2 ? parts[0].trim() : 'Local Upload';
@@ -420,12 +642,34 @@ async function boot(): Promise<void> {
           durMs,
           coverBytes,
         );
-        audio.playTrack(idx, 0);
-        uipod.select_and_play_track(idx);
-        uipod.jump_to_screen('now_playing');
+        if (firstAddedIdx === null) firstAddedIdx = idx;
       } catch (err) {
         console.warn('Could not decode dropped audio file:', file.name, err);
       }
+    }
+
+    // Resolve `.m3u` / `.m3u8` playlist entries (including `Castlevania.nsf#1` subtrack URIs)
+    for (const plFile of m3uFiles) {
+      try {
+        const text = await plFile.text();
+        for (const rawLine of text.split(/\r?\n/)) {
+          const line = rawLine.trim();
+          if (!line || line.startsWith('#')) continue;
+          const baseRef = line.split(/[\\/]/).pop()?.toLowerCase() ?? line.toLowerCase();
+          const matched = uriToTrackIndex.get(baseRef);
+          if (typeof matched === 'number' && firstAddedIdx === null) {
+            firstAddedIdx = matched;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not parse playlist file:', plFile.name, err);
+      }
+    }
+
+    if (firstAddedIdx !== null) {
+      audio.playTrack(firstAddedIdx, 0);
+      uipod.select_and_play_track(firstAddedIdx);
+      uipod.jump_to_screen('now_playing');
     }
   }
 
@@ -678,6 +922,9 @@ async function boot(): Promise<void> {
         case 'playTrack':
           audio.playTrack(Number(cmd.index ?? 0), 0);
           break;
+        case 'quickCutNext':
+          audio.quickCutToTrack(Number(cmd.index ?? 0));
+          break;
         case 'playTrackAt':
           audio.playTrack(Number(cmd.index ?? 0), Number(cmd.posMs ?? 0) / 1000);
           break;
@@ -727,7 +974,33 @@ async function boot(): Promise<void> {
             flangerDepth: Number(cmd.flangerDepth ?? 60),
             flangerFeedback: Number(cmd.flangerFeedback ?? 60),
             flangerMix: Number(cmd.flangerMix ?? 45),
+            djMode: typeof cmd.djMode === 'number' ? cmd.djMode : audio.dsp.djMode,
+            djLength: typeof cmd.djLength === 'number' ? cmd.djLength : audio.dsp.djLength,
+            djMaxStretch:
+              typeof cmd.djMaxStretch === 'number' ? cmd.djMaxStretch : audio.dsp.djMaxStretch,
+            djKeepGapless:
+              typeof cmd.djKeepGapless === 'boolean'
+                ? cmd.djKeepGapless
+                : audio.dsp.djKeepGapless,
+            djQuickCut:
+              typeof cmd.djQuickCut === 'boolean' ? cmd.djQuickCut : audio.dsp.djQuickCut,
           });
+          if (typeof cmd.djMode === 'number') {
+            try {
+              localStorage.setItem(
+                'uipod_dj_cfg_v1',
+                JSON.stringify({
+                  mode: cmd.djMode,
+                  length: cmd.djLength ?? 1,
+                  maxStretch: cmd.djMaxStretch ?? 1,
+                  keepGapless: cmd.djKeepGapless !== false,
+                  quickCut: cmd.djQuickCut !== false,
+                }),
+              );
+            } catch {
+              // Ignore storage access errors
+            }
+          }
           break;
       }
     }
@@ -858,6 +1131,7 @@ async function boot(): Promise<void> {
     lastTs = ts;
 
     pollGamepad();
+    audio.tickLookahead();
     uipod.sync_audio_state(audio.playing, audio.getPositionMs(), audio.getDurationMs());
     const pcm = audio.readStereoPcmS16();
     uipod.render(dt, pcm, audio.getSampleRate(), canvas.width, canvas.height);

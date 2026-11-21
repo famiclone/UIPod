@@ -1,0 +1,423 @@
+//! Pure-Rust Dual-Deck Smart DJ Crossfade Engine (`uipod-dj`).
+//!
+//! Shared identically across:
+//! 1. TrimUI Brick / Linux (`aarch64` ALSA)
+//! 2. Android Handhelds (`arm64-v8a` SDL2 / AAudio)
+//! 3. Web Studio Simulator (`wasm32-unknown-unknown` Web Audio)
+
+pub mod cue_scanner;
+pub mod filter;
+pub mod mixer;
+pub mod planner;
+pub mod resampler;
+pub mod wsola;
+
+pub use cue_scanner::{analyze_pcm_f32, analyze_pcm_s16, DeckCueAnalysis};
+pub use filter::{DeckChannelStrip, OnePoleSmoother, StereoWashDelay};
+pub use mixer::{DualDeckMixer, MixerPhase};
+pub use planner::{
+    evaluate_mix_curves, fold_bpm_to_reference, plan_transition, should_respect_album_gapless,
+    MixCurveStep, PlannedTransitionKind, TransitionPlan,
+};
+pub use resampler::VinylResampler;
+pub use wsola::WsolaStretcher;
+
+/// User-selectable crossfade / Auto-DJ mode (`Settings -> Sound -> Crossfade & Auto-DJ`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossfadeMode {
+    #[default]
+    Off = 0,
+    ClassicFade = 1,
+    DjVinylSync = 2,
+    DjMasterTempo = 3,
+}
+
+impl CrossfadeMode {
+    #[inline]
+    pub const fn from_u8(val: u8) -> Self {
+        match val {
+            1 => Self::ClassicFade,
+            2 => Self::DjVinylSync,
+            3 => Self::DjMasterTempo,
+            _ => Self::Off,
+        }
+    }
+}
+
+/// Transition length preset (`4 Bars / 4s`, `8 Bars / 8s`, or `12s` in Classic mode).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TransitionLength {
+    Short4Bars = 0,
+    #[default]
+    Club8Bars = 1,
+    Long12s = 2,
+}
+
+impl TransitionLength {
+    #[inline]
+    pub const fn from_u8(val: u8) -> Self {
+        match val {
+            0 => Self::Short4Bars,
+            2 => Self::Long12s,
+            _ => Self::Club8Bars,
+        }
+    }
+}
+
+/// Maximum allowed tempo stretch before falling back to `Filter Wash`.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MaxTempoStretch {
+    Pct6 = 0,
+    #[default]
+    Pct10 = 1,
+    Pct12 = 2,
+}
+
+impl MaxTempoStretch {
+    #[inline]
+    pub const fn from_u8(val: u8) -> Self {
+        match val {
+            0 => Self::Pct6,
+            2 => Self::Pct12,
+            _ => Self::Pct10,
+        }
+    }
+
+    #[inline]
+    pub const fn as_fraction(self) -> f32 {
+        match self {
+            Self::Pct6 => 0.06,
+            Self::Pct10 => 0.10,
+            Self::Pct12 => 0.12,
+        }
+    }
+}
+
+/// Active transition style reported to Now Playing UI telemetry.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActiveMixKind {
+    #[default]
+    None = 0,
+    Classic = 1,
+    Beatmatch = 2,
+    FilterWash = 3,
+}
+
+impl ActiveMixKind {
+    #[inline]
+    pub const fn from_u8(val: u8) -> Self {
+        match val {
+            1 => Self::Classic,
+            2 => Self::Beatmatch,
+            3 => Self::FilterWash,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Complete user configuration for the DJ engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DjConfig {
+    pub mode: CrossfadeMode,
+    pub length: TransitionLength,
+    pub max_stretch: MaxTempoStretch,
+    pub keep_album_gapless: bool,
+    pub quick_cut_on_next: bool,
+}
+
+impl Default for DjConfig {
+    fn default() -> Self {
+        Self {
+            mode: CrossfadeMode::Off,
+            length: TransitionLength::Club8Bars,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        }
+    }
+}
+
+/// Lock-free C-ABI telemetry snapshot rendered as the 4-shade Now Playing pill.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DjTelemetry {
+    /// `1` while `0.0 < p < 1.0`, `0` otherwise.
+    pub active: u8,
+    /// `ActiveMixKind` (`1 = Classic`, `2 = Beatmatch`, `3 = FilterWash`).
+    pub mix_kind: u8,
+    /// `1` across the `p = 0.47..=0.53` center Bass Swap downbeat!
+    pub bass_swap_flash: u8,
+    /// Normalized transition progress `0.0..=1.0`.
+    pub progress: f32,
+    /// Outgoing `Deck A` BPM (`> 0` when Beatmatched).
+    pub bpm_a: f32,
+    /// Incoming octave-folded `Deck B` BPM (`> 0` when Beatmatched).
+    pub bpm_b: f32,
+    /// Instantaneous ramped mix BPM.
+    pub current_bpm: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
+
+    /// Generate a synthetic stereo `bpm` kick+sine signal (`440 Hz` carrier + periodic `65 Hz` kick impulses).
+    fn synth_beat_signal(sr: u32, duration_sec: f32, bpm: f32, freq_hz: f32) -> Vec<f32> {
+        let frames = (sr as f32 * duration_sec).round() as usize;
+        let beat_period = (sr as f32) * 60.0 / bpm;
+        let mut out = vec![0.0f32; frames * 2];
+        for i in 0..frames {
+            let t = (i as f32) / (sr as f32);
+            let sine = 0.35 * (2.0 * PI * freq_hz * t).sin();
+            let in_beat = (i as f32) % beat_period;
+            let beat_num = ((i as f32) / beat_period).floor() as usize;
+            let accent = if beat_num % 4 == 0 { 0.55 } else { 0.38 };
+            let kick = if in_beat < (sr as f32) * 0.06 {
+                let kt = in_beat / (sr as f32);
+                accent * (-kt * 45.0).exp() * (2.0 * PI * 68.0 * kt).sin()
+            } else {
+                0.0
+            };
+            let s = (sine + kick).clamp(-0.98, 0.98);
+            out[i * 2] = s;
+            out[i * 2 + 1] = s;
+        }
+        out
+    }
+
+    /// Estimate dominant carrier frequency between `200..1000 Hz` via Goertzel/DFT magnitude scan.
+    fn dominant_freq_hz(stereo: &[f32], sr: u32) -> f32 {
+        let start_f = (sr as usize) / 2;
+        let len_f = (sr as usize).min((stereo.len() / 2).saturating_sub(start_f));
+        let mut best_hz = 0.0f32;
+        let mut best_mag = -1.0f32;
+        let mut hz = 380.0f32;
+        while hz <= 500.0 {
+            let w = 2.0 * PI * hz / (sr as f32);
+            let mut re = 0.0f32;
+            let mut im = 0.0f32;
+            for n in 0..len_f {
+                let s = stereo[(start_f + n) * 2];
+                let ang = w * (n as f32);
+                re += s * ang.cos();
+                im -= s * ang.sin();
+            }
+            let mag = re * re + im * im;
+            if mag > best_mag {
+                best_mag = mag;
+                best_hz = hz;
+            }
+            hz += 0.5;
+        }
+        best_hz
+    }
+
+    #[test]
+    fn test_wsola_stretch_plus_and_minus_8_pct_preserves_pitch_and_transients() {
+        let sr = 44_100u32;
+        let src = synth_beat_signal(sr, 4.0, 120.0, 440.0);
+        let in_frames = src.len() / 2;
+
+        let mut wsola = WsolaStretcher::new(sr);
+
+        // +8% faster tempo (`tempo_ratio = 1.08` -> output frames = `in_frames / 1.08`)
+        let out_fast = wsola.stretch_offline(&src, 1.08);
+        let fast_frames = out_fast.len() / 2;
+        let expected_fast = ((in_frames as f64) / 1.08).round() as usize;
+        assert_eq!(fast_frames, expected_fast);
+        assert!(out_fast.iter().all(|x| x.is_finite() && x.abs() <= 1.25));
+        let peak_fast_hz = dominant_freq_hz(&out_fast, sr);
+        assert!(
+            (peak_fast_hz - 440.0).abs() <= 1.5,
+            "Expected 440 Hz pitch preserved at +8%, got {peak_fast_hz} Hz"
+        );
+
+        // -8% slower tempo (`tempo_ratio = 0.92` -> output frames = `in_frames / 0.92`)
+        let out_slow = wsola.stretch_offline(&src, 0.92);
+        let slow_frames = out_slow.len() / 2;
+        let expected_slow = ((in_frames as f64) / 0.92).round() as usize;
+        assert_eq!(slow_frames, expected_slow);
+        assert!(out_slow.iter().all(|x| x.is_finite() && x.abs() <= 1.25));
+        let peak_slow_hz = dominant_freq_hz(&out_slow, sr);
+        assert!(
+            (peak_slow_hz - 440.0).abs() <= 1.5,
+            "Expected 440 Hz pitch preserved at -8%, got {peak_slow_hz} Hz"
+        );
+
+        // Verify transient sharpness (peak crest preserved, not smeared away)
+        let max_amp = out_fast.iter().copied().fold(0.0f32, |a, b| a.max(b.abs()));
+        assert!(max_amp > 0.65, "Kick transient peak should remain crisp (got {max_amp})");
+    }
+
+    #[test]
+    fn test_butterworth_svf_rapid_bass_swap_unity_passband_and_zero_clicks() {
+        let sr = 48_000u32;
+        let mut strip = DeckChannelStrip::new(sr);
+        strip.reset(sr, 1.0, 20.0);
+
+        // Sweep 2 kHz passband sine + 60 Hz sub-bass while rapidly flipping HPF `20 <-> 260 Hz` over 200 ms
+        let total_frames = (sr as usize) / 2; // 500 ms
+        let mut prev_l = 0.0f32;
+        let mut max_step_diff = 0.0f32;
+        let mut passband_peak = 0.0f32;
+
+        for i in 0..total_frames {
+            let t = (i as f32) / (sr as f32);
+            if i == (sr as usize) / 10 {
+                strip.set_targets(1.0, 260.0);
+            } else if i == (sr as usize) * 3 / 10 {
+                strip.set_targets(1.0, 20.0);
+            }
+            let x = 0.8 * (2.0 * PI * 2000.0 * t).sin();
+            let (yl, yr) = strip.process_frame(x, x);
+            assert!(yl.is_finite() && yr.is_finite());
+            if i > 100 {
+                max_step_diff = max_step_diff.max((yl - prev_l).abs());
+            }
+            if i > (sr as usize) * 4 / 10 {
+                passband_peak = passband_peak.max(yl.abs());
+            }
+            prev_l = yl;
+        }
+
+        // Theoretical max sample-to-sample step of `0.8 * sin(2*pi*2000*t)` @ 48 kHz is `0.8 * 2*pi*2000/48000 = 0.2094`
+        assert!(
+            max_step_diff < 0.25,
+            "Zero click/discontinuity violated: max_step_diff = {max_step_diff}"
+        );
+        assert!(
+            (passband_peak - 0.80).abs() < 0.015,
+            "Expected unity passband gain ~0.80, got {passband_peak}"
+        );
+    }
+
+    #[test]
+    fn test_cue_scanner_and_planner_beatmatch_octave_fold_wash_and_gapless() {
+        let sr = 44_100u32;
+        let sig_124 = synth_beat_signal(sr, 12.0, 124.0, 330.0);
+        let cue_124 = analyze_pcm_f32(&sig_124, sr);
+        assert!(
+            (cue_124.bpm - 124.0).abs() < 2.0,
+            "Expected ~124 BPM, got {}",
+            cue_124.bpm
+        );
+        assert!(cue_124.confidence >= 0.55, "conf={}", cue_124.confidence);
+
+        let cfg = DjConfig {
+            mode: CrossfadeMode::DjMasterTempo,
+            length: TransitionLength::Club8Bars,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        };
+
+        // 1. `87 BPM` -> `174 BPM` folds 174 * 0.5 = 87.0 BPM -> `1.0x` Beatmatch!
+        let cue_87 = DeckCueAnalysis {
+            sample_rate: sr,
+            total_frames: sr as usize * 16,
+            cue_in_frame: 0,
+            cue_out_frame: sr as usize * 16,
+            bpm: 87.0,
+            confidence: 0.85,
+            first_downbeat_frame: 0,
+            last_downbeat_frame: sr as usize * 15,
+        };
+        let cue_174 = DeckCueAnalysis {
+            bpm: 174.0,
+            ..cue_87
+        };
+        let plan_fold = plan_transition(&cfg, &cue_87, &cue_174, "Album A", 1, "Album B", 1, false, false);
+        assert_eq!(plan_fold.kind, PlannedTransitionKind::Beatmatch);
+        assert!((plan_fold.folded_bpm_b - 87.0).abs() < 0.01);
+        let c_mid = evaluate_mix_curves(&plan_fold, 0.50);
+        assert!((c_mid.tempo_a - 1.0).abs() < 0.001);
+        assert!((c_mid.tempo_b - 1.0).abs() < 0.001);
+        assert!(c_mid.bass_swap_flash);
+
+        // 2. `124 BPM` -> `128 BPM` (`3.2%` delta <= `10%`) -> smooth Beatmatch ramp!
+        let cue_a_124 = DeckCueAnalysis { bpm: 124.0, ..cue_87 };
+        let cue_b_128 = DeckCueAnalysis { bpm: 128.0, ..cue_87 };
+        let plan_bm = plan_transition(&cfg, &cue_a_124, &cue_b_128, "Hits 1", 2, "Hits 2", 5, false, false);
+        assert_eq!(plan_bm.kind, PlannedTransitionKind::Beatmatch);
+        let s0 = evaluate_mix_curves(&plan_bm, 0.10);
+        let s5 = evaluate_mix_curves(&plan_bm, 0.50);
+        let s9 = evaluate_mix_curves(&plan_bm, 0.90);
+        assert!((s0.current_bpm - 124.0).abs() < 0.01);
+        assert!((s5.current_bpm - 126.0).abs() < 0.05);
+        assert!((s9.current_bpm - 128.0).abs() < 0.01);
+        assert!((s9.tempo_b - 1.0).abs() < 0.0001);
+
+        // 3. `128 BPM` -> `98 BPM` (`30.6%` delta > `10%`) -> triggers `FilterWash` fallback!
+        let cue_b_98 = DeckCueAnalysis { bpm: 98.0, ..cue_87 };
+        let plan_wash = plan_transition(&cfg, &cue_b_128, &cue_b_98, "Club", 1, "Chill", 1, false, false);
+        assert_eq!(plan_wash.kind, PlannedTransitionKind::FilterWash);
+        let sw = evaluate_mix_curves(&plan_wash, 0.75);
+        assert_eq!(sw.tempo_a, 1.0);
+        assert_eq!(sw.tempo_b, 1.0);
+        assert!(sw.hpf_a_hz > 300.0);
+        assert!(sw.wash_wet_a > 0.20);
+
+        // 4. Consecutive same-album tracks (`Track 3 -> Track 4`, Shuffle OFF) -> `Gapless`!
+        let plan_gap = plan_transition(
+            &cfg,
+            &cue_a_124,
+            &cue_b_128,
+            "The Dark Side of the Moon",
+            3,
+            "The Dark Side of the Moon",
+            4,
+            false,
+            false,
+        );
+        assert_eq!(plan_gap.kind, PlannedTransitionKind::Gapless);
+    }
+
+    #[test]
+    fn test_dual_deck_mixer_full_transition_and_midpoint_handoff() {
+        let sr = 44_100u32;
+        let f_a = synth_beat_signal(sr, 12.0, 122.0, 330.0);
+        let f_b = synth_beat_signal(sr, 12.0, 126.0, 440.0);
+        let s16_a: Vec<i16> = f_a.iter().map(|&x| (x * 24000.0) as i16).collect();
+        let s16_b: Vec<i16> = f_b.iter().map(|&x| (x * 24000.0) as i16).collect();
+
+        let mut mixer = DualDeckMixer::new(sr);
+        mixer.set_config(DjConfig {
+            mode: CrossfadeMode::DjMasterTempo,
+            length: TransitionLength::Short4Bars,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        });
+
+        mixer.begin_deck_a_capture(sr, "Club Vol 1", 1, false, false);
+        mixer.push_deck_a_tail(&s16_a, |_| {});
+        mixer.finish_deck_a_and_begin_deck_b("Club Vol 2", 1, false);
+        assert!(mixer.push_deck_b_frames(&s16_b, true));
+
+        let mut out = [0i16; 2048];
+        let mut midpoint_count = 0usize;
+        let mut saw_active_tel = false;
+        let mut total_rendered = 0usize;
+
+        while mixer.phase() != MixerPhase::Idle {
+            let (n, mid) = mixer.render_s16(&mut out);
+            assert!(n > 0);
+            total_rendered += n;
+            if mid {
+                midpoint_count += 1;
+            }
+            if mixer.telemetry().active != 0 {
+                saw_active_tel = true;
+            }
+        }
+
+        assert_eq!(midpoint_count, 1, "Midpoint handoff must fire exactly once at p=0.50");
+        assert!(saw_active_tel, "DJ telemetry should report active Beatmatch during mix");
+        assert!(total_rendered > (sr as usize) * 14);
+    }
+}

@@ -359,7 +359,7 @@ void uipod_message_page(const char *title, const char *const *rows, int nrows)
 
 /* ---- Lightweight GPU UI list icon tag descriptors ---------------------- */
 
-#define ICON_TAG_SLOTS 32
+#define ICON_TAG_SLOTS 64
 
 const struct uipod_svg_icon *uipod_svg_tag(const char *tag)
 {
@@ -397,7 +397,7 @@ const struct uipod_svg_icon *uipod_svg_for_path(const char *path, bool is_dir)
 
     char ext[24];
     size_t i = 0;
-    for (const char *s = dot + 1; *s && i < sizeof(ext) - 1; s++, i++)
+    for (const char *s = dot + 1; *s && *s != '#' && i < sizeof(ext) - 1; s++, i++)
         ext[i] = (char)tolower((unsigned char)*s);
     ext[i] = '\0';
 

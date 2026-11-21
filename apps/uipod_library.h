@@ -67,4 +67,58 @@ bool uipod_library_music_at(int index,
                             char *title_out, size_t title_cap,
                             uint32_t *duration_ms_out);
 
+/* Expand a bare `.nsf`/`.nsfe` container path into canonical `<path>#<idx>` URIs
+ * for all `TrackKind::Music` subtracks (using the SQLite index when available,
+ * falling back to `uipod_rs_nsf_scan_container`).  If `fallback_if_empty` is
+ * true and the file contains only SFX subtracks, emits `<path>#<start>` once.
+ * Returns the number of URIs emitted. */
+int  uipod_library_expand_nsf_music(const char *nsf_path,
+                                    bool fallback_if_empty,
+                                    bool (*cb)(const char *uri, void *ctx),
+                                    void *ctx);
+
+/* Bulk-safe variant of `uipod_library_expand_nsf_music` for unindexed multi-file
+ * directory walks (1,000+ `.nsf` files): uses SQLite when indexed, otherwise
+ * inspects only the 128-byte `.nsf` header / `NSFE` `plst` chunk without 6502
+ * CPU emulation. */
+int  uipod_library_expand_nsf_fast(const char *nsf_path,
+                                   bool fallback_if_empty,
+                                   bool (*cb)(const char *uri, void *ctx),
+                                   void *ctx);
+
+/* Fast RAM-cached count of `TrackKind::Music` subtracks inside a bare `.nsf`/`.nsfe`
+ * container (used by File Browser rows to display `[24 ♪]` at 60 FPS). */
+int  uipod_library_nsf_music_count(const char *nsf_path);
+
+/* Look up `loop_point_ms` for an indexed `.nsf#idx` subtrack URI, or -1 if unknown. */
+int  uipod_library_get_loop_point_ms(const char *track_uri);
+
+struct uipod_rs_nsf_container_header;
+struct uipod_rs_nsf_subtrack_info;
+
+/* Load all subtracks (both `Music` and `Sfx`) for `nsf_path`, serving instantaneously
+ * from SQLite `tracks` when indexed or falling back to `uipod_rs_nsf_scan_container`. */
+size_t uipod_library_load_nsf_container(const char *nsf_path,
+                                        struct uipod_rs_nsf_container_header *out_header,
+                                        struct uipod_rs_nsf_subtrack_info *out_subtracks,
+                                        size_t max_subtracks);
+
+/* Enumerate all playable `TrackKind::Music` tracks (`track_kind == 0`, including
+ * individual `.nsf#idx` subtracks and excluding SFX) under `dir_path` from the
+ * SQLite index.  When `shuffle` is true, uniformly samples up to
+ * `UIPOD_MAX_FILES_IN_PLAYLIST` subtracks in random order across all files.
+ * Returns true if `dir_path` was served from the SQLite index, or false if
+ * `dir_path` is outside indexed roots. */
+bool uipod_library_folder_music_paths(const char *dir_path,
+                                      bool shuffle,
+                                      bool (*cb)(const char *uri, void *ctx),
+                                      void *ctx);
+
+/* Immediate File Manager cascade hooks so renaming, moving, or deleting a file
+ * or folder updates/deletes all associated track & `.nsf#idx` subtrack rows. */
+void uipod_library_on_path_renamed(const char *old_path,
+                                   const char *new_path,
+                                   bool is_dir);
+void uipod_library_on_path_deleted(const char *path, bool is_dir);
+
 #endif /* _UIPOD_LIBRARY_H */

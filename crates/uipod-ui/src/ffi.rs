@@ -12,7 +12,8 @@ use crate::renderer::{HEADER_BAND_ROWS, HEIGHT, WIDTH};
 use crate::viz_gl::{VizEngine, VIZ_PRESETS};
 use crate::{
     FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState,
-    ListRow, ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
+    ListRow, ListScreenState, NowPlayingState, NsfApuPill, NsfChannelRow, NsfChannelsState,
+    PlayMode, RightAccessory, ThemeColors, UiEngine,
 };
 
 // Safety: UiEngine is accessed exclusively from the serialized Rockbox thread holding the SDL GL context.
@@ -72,6 +73,43 @@ pub struct UIPodRsListScreen {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UIPodRsNsfApuPill {
+    pub short_code: *const c_char,
+    pub active: bool,
+    pub muted: bool,
+    pub volume: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UIPodRsNsfChannelRow {
+    pub short_code: *const c_char,
+    pub display_name: *const c_char,
+    pub enabled: bool,
+    pub soloed: bool,
+    pub active: bool,
+    pub volume: f32,
+    pub selected: bool,
+}
+
+#[repr(C)]
+pub struct UIPodRsNsfChannels {
+    pub bg_rgb: u32,
+    pub fg_rgb: u32,
+    pub fg1_rgb: u32,
+    pub fg2_rgb: u32,
+    pub header: UIPodRsHeader,
+    pub channels: *const UIPodRsNsfChannelRow,
+    pub channel_count: usize,
+    pub enable_all_label: *const c_char,
+    pub enable_all_selected: bool,
+    pub footer_hint: *const c_char,
+    pub start_item: usize,
+    pub visible_items: usize,
+}
+
+#[repr(C)]
 pub struct UIPodRsNowPlaying {
     pub bg_rgb: u32,
     pub fg_rgb: u32,
@@ -93,6 +131,16 @@ pub struct UIPodRsNowPlaying {
     pub art_rgb24: *const u8,
     pub mono_album_art: bool,
     pub alt_layout: bool,
+    pub is_nsf: bool,
+    pub nsf_endless_loop: bool,
+    pub nsf_chip_badge: *const c_char,
+    /// `< 0.0` when None, `0.0..=1.0` when `loop_point_ms` is known
+    pub nsf_loop_progress: f32,
+    pub nsf_channels: *const UIPodRsNsfApuPill,
+    pub nsf_channel_count: usize,
+    pub dj_status_label: *const c_char,
+    pub dj_progress: f32,
+    pub dj_bass_swap_flash: bool,
 }
 
 #[repr(C)]
@@ -306,6 +354,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list(
             3 => RightAccessory::Toggle(true),
             4 => RightAccessory::CycleValue(&rvals[i]),
             5 => RightAccessory::Value(&rvals[i]),
+            6 => RightAccessory::ValueChevron(&rvals[i]),
             _ => RightAccessory::None,
         };
         rows.push(ListRow {
@@ -377,6 +426,25 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
     let elapsed = cstr_lossy(n.elapsed_label);
     let remaining = cstr_lossy(n.remaining_label);
     let center_status = cstr_lossy(n.center_status_label);
+    let nsf_badge = cstr_lossy(n.nsf_chip_badge);
+    let dj_status = cstr_lossy(n.dj_status_label);
+
+    let raw_pills = if n.nsf_channels.is_null() || n.nsf_channel_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(n.nsf_channels, n.nsf_channel_count.min(8))
+    };
+    let pill_codes: Vec<Cow<str>> = raw_pills.iter().map(|p| cstr_lossy(p.short_code)).collect();
+    let pills: Vec<NsfApuPill> = raw_pills
+        .iter()
+        .enumerate()
+        .map(|(i, p)| NsfApuPill {
+            short_code: &pill_codes[i],
+            active: p.active,
+            muted: p.muted,
+            volume: p.volume,
+        })
+        .collect();
 
     let art_slice = if n.art_rgb24.is_null() {
         None
@@ -419,6 +487,15 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing(
         art_rgb24: art_slice,
         mono_album_art: n.mono_album_art,
         alt_layout: n.alt_layout,
+        is_nsf: n.is_nsf,
+        nsf_chip_badge: &nsf_badge,
+        nsf_loop_progress: (n.nsf_loop_progress >= 0.0 && n.nsf_loop_progress <= 1.0)
+            .then_some(n.nsf_loop_progress),
+        nsf_endless_loop: n.nsf_endless_loop,
+        nsf_channels: &pills,
+        dj_status_label: &dj_status,
+        dj_progress: n.dj_progress,
+        dj_bass_swap_flash: n.dj_bass_swap_flash,
     };
 
     let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
@@ -864,6 +941,7 @@ pub unsafe extern "C" fn uipod_rs_ui_render_list_gpu(
             3 => RightAccessory::Toggle(true),
             4 => RightAccessory::CycleValue(&rvals[i]),
             5 => RightAccessory::Value(&rvals[i]),
+            6 => RightAccessory::ValueChevron(&rvals[i]),
             _ => RightAccessory::None,
         };
         rows.push(ListRow {
@@ -934,6 +1012,25 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing_gpu(
     let elapsed = cstr_lossy(n.elapsed_label);
     let remaining = cstr_lossy(n.remaining_label);
     let center_status = cstr_lossy(n.center_status_label);
+    let nsf_badge = cstr_lossy(n.nsf_chip_badge);
+    let dj_status = cstr_lossy(n.dj_status_label);
+
+    let raw_pills = if n.nsf_channels.is_null() || n.nsf_channel_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(n.nsf_channels, n.nsf_channel_count.min(8))
+    };
+    let pill_codes: Vec<Cow<str>> = raw_pills.iter().map(|p| cstr_lossy(p.short_code)).collect();
+    let pills: Vec<NsfApuPill> = raw_pills
+        .iter()
+        .enumerate()
+        .map(|(i, p)| NsfApuPill {
+            short_code: &pill_codes[i],
+            active: p.active,
+            muted: p.muted,
+            volume: p.volume,
+        })
+        .collect();
 
     let art_slice = if n.art_rgb24.is_null() {
         None
@@ -976,6 +1073,15 @@ pub unsafe extern "C" fn uipod_rs_ui_render_now_playing_gpu(
         art_rgb24: art_slice,
         mono_album_art: n.mono_album_art,
         alt_layout: n.alt_layout,
+        is_nsf: n.is_nsf,
+        nsf_chip_badge: &nsf_badge,
+        nsf_loop_progress: (n.nsf_loop_progress >= 0.0 && n.nsf_loop_progress <= 1.0)
+            .then_some(n.nsf_loop_progress),
+        nsf_endless_loop: n.nsf_endless_loop,
+        nsf_channels: &pills,
+        dj_status_label: &dj_status,
+        dj_progress: n.dj_progress,
+        dj_bass_swap_flash: n.dj_bass_swap_flash,
     };
 
     wrap.0.render_now_playing_to_fbo_sized(&state, win_w, win_h);
@@ -1143,6 +1249,158 @@ pub unsafe extern "C" fn uipod_rs_ui_render_graphic_eq_gpu(
     };
 
     wrap.0.render_graphic_eq_to_fbo_sized(&state, win_w, win_h);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_nsf_channels(
+    ch_sc: *const UIPodRsNsfChannels,
+    fb_bgr: *mut u8,
+) -> bool {
+    if ch_sc.is_null() || fb_bgr.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let c = &*ch_sc;
+    let h_title = cstr_lossy(c.header.title);
+    let h_legend = cstr_lossy(c.header.legend);
+    let enable_all = cstr_lossy(c.enable_all_label);
+    let footer = cstr_lossy(c.footer_hint);
+
+    let raw_ch = if c.channels.is_null() || c.channel_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(c.channels, c.channel_count.min(16))
+    };
+    let codes: Vec<Cow<str>> = raw_ch.iter().map(|r| cstr_lossy(r.short_code)).collect();
+    let names: Vec<Cow<str>> = raw_ch.iter().map(|r| cstr_lossy(r.display_name)).collect();
+    let rows: Vec<NsfChannelRow> = raw_ch
+        .iter()
+        .enumerate()
+        .map(|(i, r)| NsfChannelRow {
+            short_code: &codes[i],
+            display_name: &names[i],
+            enabled: r.enabled,
+            soloed: r.soloed,
+            active: r.active,
+            volume: r.volume,
+            selected: r.selected,
+        })
+        .collect();
+
+    let state = NsfChannelsState {
+        theme: ThemeColors {
+            bg_rgb: c.bg_rgb,
+            fg_rgb: c.fg_rgb,
+            fg1_rgb: c.fg1_rgb,
+            fg2_rgb: c.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &h_title,
+            legend: &h_legend,
+            play_mode: decode_play_mode(c.header.play_mode),
+            battery_percent: c.header.battery_percent,
+            is_charging: c.header.is_charging,
+            is_hold: c.header.is_hold,
+            is_fx: decode_is_fx(c.header.source_icon),
+            is_downloading: c.header.is_downloading,
+            download_done: c.header.download_done,
+            download_total: c.header.download_total,
+            source_icon: decode_source_icon(c.header.source_icon),
+        },
+        channels: &rows,
+        enable_all_label: &enable_all,
+        enable_all_selected: c.enable_all_selected,
+        footer_hint: &footer,
+        start_item: c.start_item,
+        visible_items: c.visible_items,
+    };
+
+    let fb_slice = std::slice::from_raw_parts_mut(fb_bgr, WIDTH * HEIGHT * 3);
+    wrap.0.render_nsf_channels_into_bgr(&state, fb_slice);
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_render_nsf_channels_gpu(
+    ch_sc: *const UIPodRsNsfChannels,
+    win_w: u32,
+    win_h: u32,
+) -> bool {
+    if ch_sc.is_null() {
+        return false;
+    }
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+
+    let c = &*ch_sc;
+    let h_title = cstr_lossy(c.header.title);
+    let h_legend = cstr_lossy(c.header.legend);
+    let enable_all = cstr_lossy(c.enable_all_label);
+    let footer = cstr_lossy(c.footer_hint);
+
+    let raw_ch = if c.channels.is_null() || c.channel_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(c.channels, c.channel_count.min(16))
+    };
+    let codes: Vec<Cow<str>> = raw_ch.iter().map(|r| cstr_lossy(r.short_code)).collect();
+    let names: Vec<Cow<str>> = raw_ch.iter().map(|r| cstr_lossy(r.display_name)).collect();
+    let rows: Vec<NsfChannelRow> = raw_ch
+        .iter()
+        .enumerate()
+        .map(|(i, r)| NsfChannelRow {
+            short_code: &codes[i],
+            display_name: &names[i],
+            enabled: r.enabled,
+            soloed: r.soloed,
+            active: r.active,
+            volume: r.volume,
+            selected: r.selected,
+        })
+        .collect();
+
+    let state = NsfChannelsState {
+        theme: ThemeColors {
+            bg_rgb: c.bg_rgb,
+            fg_rgb: c.fg_rgb,
+            fg1_rgb: c.fg1_rgb,
+            fg2_rgb: c.fg2_rgb,
+        },
+        header: HeaderState {
+            title: &h_title,
+            legend: &h_legend,
+            play_mode: decode_play_mode(c.header.play_mode),
+            battery_percent: c.header.battery_percent,
+            is_charging: c.header.is_charging,
+            is_hold: c.header.is_hold,
+            is_fx: decode_is_fx(c.header.source_icon),
+            is_downloading: c.header.is_downloading,
+            download_done: c.header.download_done,
+            download_total: c.header.download_total,
+            source_icon: decode_source_icon(c.header.source_icon),
+        },
+        channels: &rows,
+        enable_all_label: &enable_all,
+        enable_all_selected: c.enable_all_selected,
+        footer_hint: &footer,
+        start_item: c.start_item,
+        visible_items: c.visible_items,
+    };
+
+    wrap.0.render_nsf_channels_to_fbo_sized(&state, win_w, win_h);
     true
 }
 

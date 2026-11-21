@@ -42,6 +42,7 @@
 #include "uipod_page.h"
 #include "uipod_playlists.h"
 #include "uipod_plugins.h"
+#include "uipod_rs_codecs.h"
 #include "uipod_rs_plugins.h"
 #include "uipod_rs_ui.h"
 #include "uipod_svg.h"
@@ -978,6 +979,35 @@ static bool host_library_track_at(size_t index,
                                   duration_ms_out);
 }
 
+static bool host_audio_get_apu_telemetry(struct UIPodPluginApuTelemetry *out)
+{
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (uipod_rs_nsf_get_active_chip_flags() < 0)
+        return false;
+
+    struct uipod_rs_apu_telemetry raw;
+    memset(&raw, 0, sizeof(raw));
+    if (!uipod_rs_nsf_get_telemetry(&raw))
+        return false;
+
+    out->has_apu_telemetry = 1u;
+    out->channel_count     = raw.channel_count;
+    out->chip_flags        = raw.chip_flags;
+    out->mute_mask         = raw.mute_mask;
+    for (int i = 0; i < 8; i++)
+    {
+        out->channels[i].active        = raw.channels[i].active;
+        out->channels[i].muted         = raw.channels[i].muted;
+        out->channels[i].onset_trigger = raw.channels[i].onset_trigger;
+        out->channels[i].duty_or_mode  = raw.channels[i].duty_or_mode;
+        out->channels[i].volume        = raw.channels[i].volume;
+        out->channels[i].freq_hz       = raw.channels[i].freq_hz;
+    }
+    return true;
+}
+
 static const struct UIPodPluginApi s_host_api = {
     .api_version             = UIPOD_PLUGIN_API_VERSION,
     .get_ticks_ms            = host_get_ticks_ms,
@@ -1014,6 +1044,7 @@ static const struct UIPodPluginApi s_host_api = {
     .library_track_at        = host_library_track_at,
     .canvas_begin_responsive = host_canvas_begin_responsive,
     .get_responsive_size     = host_get_responsive_size,
+    .audio_get_apu_telemetry = host_audio_get_apu_telemetry,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */

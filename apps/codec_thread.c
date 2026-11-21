@@ -33,6 +33,7 @@
 #include "dsp_core.h"
 #include "metadata.h"
 #include "settings.h"
+#include "uipod_dj.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 /*#define LOGF_ENABLE*/
@@ -89,7 +90,7 @@ static struct queue_sender_list codec_queue_sender_list SHAREDBSS_ATTR;
 /* Fixed 2019-8-14 (see FS#13131) */
 #define WORKAROUND_FS13060 0
 
-static long codec_stack[(DEFAULT_STACK_SIZE + 0x2000 + WORKAROUND_FS13060)/sizeof(long)] IBSS_ATTR;
+static long codec_stack[(DEFAULT_STACK_SIZE + 0x80000 + WORKAROUND_FS13060)/sizeof(long)] IBSS_ATTR;
 static const char codec_thread_name[] = "codec";
 
 static void unload_codec(void);
@@ -190,6 +191,34 @@ void codec_thread_do_callback(void (*fn)(void), unsigned int *id)
 
 /** --- codec API callbacks --- **/
 
+static void codec_dj_pcm_sink(const int16_t *stereo_s16,
+                              int frames,
+                              unsigned long elapsed,
+                              long offset)
+{
+    int rem = frames;
+    const int16_t *p = stereo_s16;
+
+    while (rem > 0 &&
+           (LIKELY(queue_empty(&codec_queue)) ||
+            codec_check_queue__have_msg() >= 0))
+    {
+        int req = MAX(rem, 1024);
+        int16_t *out = pcmbuf_request_buffer(&req);
+        if (out == NULL)
+        {
+            cancel_cpu_boost();
+            queue_wait_w_tmo(&codec_queue, NULL, HZ / 20);
+            continue;
+        }
+        int n = MIN(rem, req);
+        memcpy(out, p, (size_t)n * 4);
+        pcmbuf_write_complete(n, elapsed, (off_t)offset);
+        p += n * 2;
+        rem -= n;
+    }
+}
+
 static void codec_pcmbuf_insert_callback(
         const void *ch1, const void *ch2, int count)
 {
@@ -198,6 +227,33 @@ static void codec_pcmbuf_insert_callback(
     src.pin[0]    = ch1;
     src.pin[1]    = ch2;
     src.proc_mask = 0;
+
+    if (!uipod_dj_is_passthrough(ci.id3))
+    {
+        int16_t stage_buf[1024 * 2];
+        while (LIKELY(queue_empty(&codec_queue)) ||
+               codec_check_queue__have_msg() >= 0)
+        {
+            struct dsp_buffer dst;
+            dst.remcount = 0;
+            dst.bufcount = 1024;
+            dst.p16out   = stage_buf;
+
+            dsp_process(ci.dsp, &src, &dst, true);
+            if (dst.remcount > 0)
+            {
+                uipod_dj_process_codec_frames(ci.id3,
+                                              stage_buf,
+                                              dst.remcount,
+                                              codec_dj_pcm_sink);
+            }
+            else if (src.remcount <= 0)
+            {
+                return;
+            }
+        }
+        return;
+    }
 
     while (LIKELY(queue_empty(&codec_queue)) ||
            codec_check_queue__have_msg() >= 0)
@@ -483,6 +539,9 @@ static void run_codec(void)
 
     if (!encoder)
     {
+        if (status == CODEC_OK)
+            uipod_dj_on_codec_eof(ci.id3, codec_dj_pcm_sink);
+
         /* Codec is done with it - let it move */
         buf_pin_handle(ci.audio_hid, false);
 

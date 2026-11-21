@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.6.0
+Version: v0.7.0
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -25,7 +25,7 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 
 UIPod merges local SD-card folders and your personal streaming servers into a single deduplicated SQLite library (Artists, Albums, Genres, Songs, Playlists, Podcasts, Audiobooks, Videos):
 
-• Local SD Card — Browse serves as the first Main Menu item with persistent last-opened directory memory and file management context menu (Hold A / MENU -> Play, Add to Playlist, Delete, Rename, Copy, Move, and Info opened in Text Viewer). Watched library folders are configured under Settings -> Library (supports FLAC, MP3, Opus, Ogg Vorbis, AAC/M4A, ALAC, WAV, WavPack, APE, .m4b chapters, .cue sheets, and H.264/MP4 videos).
+• Local SD Card — Browse serves as the first Main Menu item with persistent last-opened directory memory and file management context menu (Hold A / MENU -> Play, Add to Playlist, Delete, Rename, Copy, Move, and Info opened in Text Viewer). Watched library folders are configured under Settings -> Library (supports FLAC, MP3, Opus, Ogg Vorbis, AAC/M4A, ALAC, WAV, WavPack, APE, .nsf/.nsfe NES/Famicom chiptunes with 2A03/VRC6/MMC5 expansion chips, Music & SFX subtrack browser, live Now Playing APU channel meters, Hold A -> Channels mute/solo mixer, and Endless Loop, .gsf/.minigsf GBA music, .mid/.midi/.kar/.rmi MIDI with built-in Mobile_0100_base.sf2 and custom .sf2 SoundFonts configured in Settings -> Library -> SoundFont Folders and selectable via Hold A -> SoundFont on MIDI tracks, .m4b chapters, .cue sheets, and H.264/MP4 videos).
 • Navidrome / Subsonic — Configure server URL, username, and password under Settings -> Sources -> Navidrome. Supports streaming, automatic sliding-window queue prefetching, scrobbling, Navidrome Favourites playlist, and offline pinning.
 • Jellyfin — Configure under Settings -> Sources -> Jellyfin. Supports music libraries plus Movies and TV Shows (direct-streaming compatible 8-bit H.264/MPEG4 on hardware CedarX and automatically transcoding HEVC/10-bit/4K/DTS on the server).
 • Video Player Controls & Subtitles — During local or Jellyfin video playback, press Hold A / MENU to open Video Settings: switch Aspect Mode (Fit / Crop / Stretch), select embedded Audio Tracks, and toggle external sidecar .srt Subtitles.
@@ -56,6 +56,7 @@ Open Settings -> Sound for studio-grade Rockbox 32-bit DSP processing:
   - Delay — Stereo / Ping-Pong echo with Delay Time, Feedback, Tone filter, Ping-Pong toggle, and Mix.
   - Chorus — Lush stereo modulation with Rate, Depth, and Mix.
   - Flanger — Resonant jet-sweep flanger with Rate, Depth, Feedback, and Mix.
+• Crossfade & Auto-DJ — Dual-Deck Smart DJ transition engine with Off, Classic, DJ Vinyl (cubic pitch resampler), and DJ Master Tempo (pitch-preserving stereo WSOLA) modes, 4 Bars / 8 Bars / 12s transition lengths, ±6% / ±10% / ±12% max tempo stretch (with 0.5x/2x octave folding and native .nsf tick-rate sync), Equal-Power center-phrase Bass Swap (20 Hz <-> 250 Hz), automatic DJ Filter Wash + Ping-Pong Tail fallback on incompatible BPMs, Keep Album Gapless protection, Quick Cut on Next (single R1 tap = ~2s DJ Filter Fade, double-tap R1 = instant cut), and a live Now Playing status pill (DJ SYNC / DJ WASH / FADE).
 • ReplayGain — Automatic track or album loudness normalization with clipping prevention.
 • Balance, Channels & Crossfeed — L/R channel balance, mono/swap routing, and Meier headphone crossfeed for vintage stereo recordings.
 • Menu Click — Authentic iPod-style tactile click sound when scrolling menus and adjusting inline settings.
@@ -68,6 +69,7 @@ Open Extras -> Plugins to launch native 60 FPS GPU-accelerated Rust plugins:
 • Games (exit & options via START / MENU):
   - Music Quiz — Classic iPod-style "Name That Tune" game! Plays a random mid-song snippet from your local SD-card library with 4 choices ("Artist - Track"). Pick with Up/Down + A (+1 point per right answer), press X for another snippet, or START/MENU for timer & round options.
   - Sound Racer — Real-time 3D rhythm highway generated directly from the currently playing song (including PCM audio and .nsf / chiptune / tracker formats)! Choose "Start song from beginning" or "Continue" on launch. Steer with Left/Right (or L1/R1), jump spikes with A, cash in clusters with B, skip songs with L2/R2, and pause game + music with START. Analyzed song maps (.bin) are cached automatically, and per-song Hi-Scores are recorded when you complete a track from beginning to end.
+  - Pulsar Vanguard — Cosmic Galaga-inspired swarm shooter with monotonic bar-phase music auto-attack! Steer with Left/Right (or L/R), switch 1/4 Beat Pulse and 1/1 Wave Cannon with Y, hold A for 1/8 Focus Vulcan spread, dash with B/X (±65 ms on-beat triggers Perfect Phase + EMP), and skip tracks with L2/R2.
   - Tetris — Guideline 7-bag Tetris with SRS wall kicks, ghost piece, hold piece, and high scores.
   - Snake — Smooth arcade Snake with speed scaling and Classic / Wrap wall modes.
   - Brick Breaker — Arkanoid-style paddle & multi-brick arcade game.

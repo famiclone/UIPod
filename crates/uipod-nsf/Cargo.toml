@@ -1,0 +1,13 @@
+[package]
+name = "uipod-nsf"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust NSF/NSFe parser, 6502 + bank mapper, band-limited 2A03/VRC6/MMC5 synthesizer, subtrack scanner, and real-time APU telemetry for UIPod"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_nsf"
+crate-type = ["rlib"]
+
+[dependencies]
+crc32fast = "1.5"

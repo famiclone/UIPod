@@ -564,6 +564,13 @@ struct user_settings
     int fx_flanger_feedback;
     int fx_flanger_mix;
 
+    /* Dual-Deck Smart DJ Crossfade */
+    int  dj_crossfade_mode;     /* 0=Off, 1=Classic, 2=DJ Vinyl, 3=DJ Master Tempo */
+    int  dj_transition_len;     /* 0=4 Bars (4s), 1=8 Bars (8s), 2=12s */
+    int  dj_max_stretch;        /* 0=±6%, 1=±10%, 2=±12% */
+    bool dj_keep_album_gapless; /* Respect consecutive same-album tracks when Shuffle OFF */
+    bool dj_quick_cut_next;     /* ~2s DJ Filter Wash on single manual Next (R1) */
+
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \
     (CONFIG_KEYPAD == IPOD_4G_PAD) || \

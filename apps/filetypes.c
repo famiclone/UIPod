@@ -53,7 +53,7 @@ static const char* inbuilt_audio_filetypes[] = {
     "ape", "mac", "sap", "rm", "ra", "rmvb", "cmc", "cm3", "cmr", "cms", "dmc",
     "dlt", "mpt", "mpd", "rmt", "tmc", "tm8", "tm2", "oma", "aa3", "at3", "mmf",
     "au", "snd", "vox", "w64", "tta", "ay", "vtx", "gbs", "hes", "sgc", "vgm",
-    "vgz", "kss", "aac",
+    "vgz", "kss", "aac", "gsf", "minigsf", "mid", "midi", "kar", "rmi",
 };
 
 struct filetype_inbuilt {
@@ -333,6 +333,33 @@ static void read_builtin_types_init(void)
 
 static int file_find_extension(const char* file)
 {
+    char stripped[MAX_PATH];
+    if (file)
+    {
+        const char *hash = strrchr(file, '#');
+        if (hash && hash > file && isdigit((unsigned char)hash[1]))
+        {
+            bool digits_only = true;
+            for (const char *p = hash + 1; *p; p++)
+            {
+                if (!isdigit((unsigned char)*p))
+                {
+                    digits_only = false;
+                    break;
+                }
+            }
+            size_t base_len = (size_t)(hash - file);
+            if (digits_only && base_len < sizeof(stripped) &&
+                ((base_len > 4 && strncasecmp(hash - 4, ".nsf", 4) == 0) ||
+                 (base_len > 5 && strncasecmp(hash - 5, ".nsfe", 5) == 0)))
+            {
+                memcpy(stripped, file, base_len);
+                stripped[base_len] = '\0';
+                file = stripped;
+            }
+        }
+    }
+
     const char *extension = strrchr(file, '.');
     if (extension)
         extension++;

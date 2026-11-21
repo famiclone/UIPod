@@ -3278,3 +3278,255 @@
     *: "Субтитри"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT
+  desc: UIPod MIDI SoundFont selector label
+  user: core
+  <source>
+    *: "SoundFont"
+  </source>
+  <dest>
+    *: "Саундфонт"
+  </dest>
+  <voice>
+    *: "Саундфонт"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT_DEFAULT
+  desc: UIPod built-in default SoundFont row label
+  user: core
+  <source>
+    *: "Default (Mobile_0100_base)"
+  </source>
+  <dest>
+    *: "Стандартний (Mobile_0100_base)"
+  </dest>
+  <voice>
+    *: "Стандартний саундфонт"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT_FOLDERS
+  desc: UIPod Settings > Library > SoundFont Folders
+  user: core
+  <source>
+    *: "SoundFont Folders"
+  </source>
+  <dest>
+    *: "Теки саундфонтів"
+  </dest>
+  <voice>
+    *: "Теки саундфонтів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_CROSSFADE
+  desc: UIPod Settings > Sound > Crossfade & Auto-DJ submenu
+  user: core
+  <source>
+    *: "Crossfade & Auto-DJ"
+  </source>
+  <dest>
+    *: "Авто-DJ і кросфейд"
+  </dest>
+  <voice>
+    *: "Авто DJ і кросфейд"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE
+  desc: Crossfade Mode setting label
+  user: core
+  <source>
+    *: "Crossfade Mode"
+  </source>
+  <dest>
+    *: "Режим кросфейду"
+  </dest>
+  <voice>
+    *: "Режим кросфейду"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_CLASSIC
+  desc: Classic equal-power crossfade mode
+  user: core
+  <source>
+    *: "Classic"
+  </source>
+  <dest>
+    *: "Класичний"
+  </dest>
+  <voice>
+    *: "Класичний"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_VINYL
+  desc: DJ Vinyl Sync crossfade mode
+  user: core
+  <source>
+    *: "DJ Vinyl"
+  </source>
+  <dest>
+    *: "DJ Вініл"
+  </dest>
+  <voice>
+    *: "DJ Вініл"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_MASTER
+  desc: DJ Master Tempo WSOLA crossfade mode
+  user: core
+  <source>
+    *: "DJ Master Tempo"
+  </source>
+  <dest>
+    *: "DJ Майстер-темп"
+  </dest>
+  <voice>
+    *: "DJ Майстер темп"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LENGTH
+  desc: DJ Transition Length setting label
+  user: core
+  <source>
+    *: "Transition Length"
+  </source>
+  <dest>
+    *: "Тривалість переходу"
+  </dest>
+  <voice>
+    *: "Тривалість переходу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_4B
+  desc: 4 Bars (Short) transition length
+  user: core
+  <source>
+    *: "4 Bars (Short)"
+  </source>
+  <dest>
+    *: "4 такти (Короткий)"
+  </dest>
+  <voice>
+    *: "4 такти"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_8B
+  desc: 8 Bars (Club) transition length
+  user: core
+  <source>
+    *: "8 Bars (Club)"
+  </source>
+  <dest>
+    *: "8 тактів (Клубний)"
+  </dest>
+  <voice>
+    *: "8 тактів"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_12S
+  desc: 12s (Long) transition length
+  user: core
+  <source>
+    *: "12s (Long)"
+  </source>
+  <dest>
+    *: "12 с (Довгий)"
+  </dest>
+  <voice>
+    *: "12 секунд"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MAX_STRETCH
+  desc: Max Tempo Stretch setting label
+  user: core
+  <source>
+    *: "Max Tempo Stretch"
+  </source>
+  <dest>
+    *: "Макс. зсув темпу"
+  </dest>
+  <voice>
+    *: "Максимальний зсув темпу"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_6
+  desc: +-6% tempo stretch limit
+  user: core
+  <source>
+    *: "±6%"
+  </source>
+  <dest>
+    *: "±6%"
+  </dest>
+  <voice>
+    *: "6 відсотків"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_10
+  desc: +-10% tempo stretch limit
+  user: core
+  <source>
+    *: "±10%"
+  </source>
+  <dest>
+    *: "±10%"
+  </dest>
+  <voice>
+    *: "10 відсотків"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_12
+  desc: +-12% tempo stretch limit
+  user: core
+  <source>
+    *: "±12%"
+  </source>
+  <dest>
+    *: "±12%"
+  </dest>
+  <voice>
+    *: "12 відсотків"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_KEEP_GAPLESS
+  desc: Keep Album Gapless setting label
+  user: core
+  <source>
+    *: "Keep Album Gapless"
+  </source>
+  <dest>
+    *: "Безшовний альбом"
+  </dest>
+  <voice>
+    *: "Безшовний альбом"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_QUICK_CUT
+  desc: Quick DJ Cut on Manual Next setting label
+  user: core
+  <source>
+    *: "Quick Cut on Next"
+  </source>
+  <dest>
+    *: "Плавний скіп (R1)"
+  </dest>
+  <voice>
+    *: "Плавний скіп"
+  </voice>
+</phrase>

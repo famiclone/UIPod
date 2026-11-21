@@ -24,6 +24,7 @@ uipod_page.c
 uipod_ui.c
 uipod_rs_ui_glue.c
 uipod_nowplaying.c
+uipod_nsf_ui.c
 uipod_folders.c
 uipod_library.c
 uipod_library_browse.c
@@ -39,6 +40,8 @@ uipod_autoeq.c
 uipod_mainmenu.c
 uipod_hold.c
 uipod_m4b.c
+uipod_midi.c
+uipod_dj.c
 uipod_video.c
 playlist.c
 playlist_catalog.c

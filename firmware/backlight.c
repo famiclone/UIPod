@@ -76,6 +76,7 @@ enum {
 #ifdef BACKLIGHT_DRIVER_CLOSE
     BACKLIGHT_QUIT,
 #endif
+    BACKLIGHT_HW_WOKE,
 };
 
 static void backlight_thread(void);
@@ -415,6 +416,10 @@ void backlight_thread(void)
                 usb_acknowledge(SYS_USB_CONNECTED_ACK, ev.data);
                 break;
 
+            case BACKLIGHT_HW_WOKE:
+                backlight_hw_complete_wake();
+                break;
+
 #ifdef BACKLIGHT_DRIVER_CLOSE
             /* Get out of here */
             case BACKLIGHT_QUIT:
@@ -649,6 +654,11 @@ void backlight_set_brightness(int val)
 }
 #endif /* HAVE_BACKLIGHT_BRIGHTNESS */
 
+void backlight_notify_hw_woke(void)
+{
+    queue_post(&backlight_queue, BACKLIGHT_HW_WOKE, 0);
+}
+
 
 #else /* !defined(BACKLIGHT_FULL_INIT) -- empty dummy functions */
 
@@ -662,6 +672,7 @@ void backlight_init(void)
 
 void backlight_on(void) {}
 void backlight_off(void) {}
+void backlight_notify_hw_woke(void) {}
 void backlight_set_timeout(int value) {(void)value;}
 
 bool is_backlight_on(bool ignore_always_off)

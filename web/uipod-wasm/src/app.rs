@@ -1,8 +1,13 @@
+use uipod_codecs::{
+    get_nsf_active_chip_flags, get_nsf_apu_telemetry, get_nsf_channel_mute_mask,
+    get_nsf_endless_loop, set_nsf_channel_mute_mask, set_nsf_endless_loop,
+};
+use uipod_nsf::{ChipFlags, SubtrackUri};
 use uipod_ui::layout::LIST_VISIBLE_ROWS;
 use uipod_ui::{
     FileIconKind, GraphicEqState, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState,
-    ListRow, ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
-    VizEngine, VIZ_PRESETS,
+    ListRow, ListScreenState, NowPlayingState, NsfApuPill, NsfChannelRow, NsfChannelsState,
+    PlayMode, RightAccessory, ThemeColors, UiEngine, VizEngine, VIZ_PRESETS,
 };
 
 use crate::library::{built_in_demo_tracks, decode_cover_256, Track};
@@ -122,6 +127,9 @@ pub enum Screen {
     },
     NowPlaying,
     NowPlayingContext { sel: usize },
+    NsfChannels { sel: usize },
+    NsfContainer { file_name: String, sel: usize },
+    NsfSfx { file_name: String, sel: usize },
     SettingsMenu { sel: usize },
     DisplayMenu { sel: usize },
     ThemeList { sel: usize },
@@ -137,6 +145,7 @@ pub enum Screen {
         allow_symbols: bool,
     },
     SoundMenu { sel: usize },
+    DjCrossfadeMenu { sel: usize },
     EqualizerMenu { sel: usize },
     GraphicEq { sel: usize },
     AutoEqList { sel: usize },
@@ -217,6 +226,11 @@ pub struct DspConfig {
     pub balance_pct: i8,
     pub channels_idx: usize,
     pub crossfeed_idx: usize,
+    pub dj_mode: u8,
+    pub dj_length: u8,
+    pub dj_max_stretch: u8,
+    pub dj_keep_gapless: bool,
+    pub dj_quick_cut: bool,
 }
 
 impl Default for DspConfig {
@@ -265,6 +279,11 @@ impl Default for DspConfig {
             balance_pct: 0,
             channels_idx: 0,
             crossfeed_idx: 0,
+            dj_mode: 0,
+            dj_length: 1,
+            dj_max_stretch: 1,
+            dj_keep_gapless: true,
+            dj_quick_cut: true,
         }
     }
 }
@@ -315,6 +334,8 @@ pub struct UIPodApp {
     pub hold_locked: bool,
 
     pub dsp: DspConfig,
+    pub dj_telemetry: uipod_dj::DjTelemetry,
+    last_np_skip_ms: u64,
 
     pub stack: Vec<Screen>,
     pub active_plugin: Option<ActivePlugin>,
@@ -346,6 +367,7 @@ pub struct UIPodApp {
     pending_np_skip: i8,
 
     pub outbound_cmds: Vec<String>,
+    pub user_playlist_uris: Vec<String>,
     pub state_dirty: bool,
 }
 
@@ -396,6 +418,8 @@ impl UIPodApp {
             clock_ms: 1000,
             hold_locked: false,
             dsp: DspConfig::default(),
+            dj_telemetry: uipod_dj::DjTelemetry::default(),
+            last_np_skip_ms: 0,
             stack: vec![Screen::MainMenu { sel: 0 }],
             active_plugin: None,
             trans_t: 1.0,
@@ -420,6 +444,7 @@ impl UIPodApp {
             seek_settle_sec: 0.0,
             pending_np_skip: 0,
             outbound_cmds: Vec::new(),
+            user_playlist_uris: Vec::new(),
             state_dirty: true,
         }
     }
@@ -512,7 +537,8 @@ impl UIPodApp {
                 r#""reverb":{},"reverbSize":{},"reverbDamp":{},"reverbPredelay":{},"reverbMix":{},"#,
                 r#""delay":{},"delayTime":{},"delayFeedback":{},"delayTone":{},"delayMix":{},"#,
                 r#""chorus":{},"chorusRate":{},"chorusDepth":{},"chorusMix":{},"#,
-                r#""flanger":{},"flangerRate":{},"flangerDepth":{},"flangerFeedback":{},"flangerMix":{}}}"#
+                r#""flanger":{},"flangerRate":{},"flangerDepth":{},"flangerFeedback":{},"flangerMix":{},"#,
+                r#""djMode":{},"djLength":{},"djMaxStretch":{},"djKeepGapless":{},"djQuickCut":{}}}"#
             ),
             d.fx_enabled,
             d.eq_enabled,
@@ -545,7 +571,12 @@ impl UIPodApp {
             d.flanger_rate,
             d.flanger_depth,
             d.flanger_feedback,
-            d.flanger_mix
+            d.flanger_mix,
+            d.dj_mode,
+            d.dj_length,
+            d.dj_max_stretch,
+            d.dj_keep_gapless,
+            d.dj_quick_cut
         ));
         self.state_dirty = true;
     }
@@ -553,6 +584,7 @@ impl UIPodApp {
     fn track_quiz_pool(&self) -> Vec<(String, u32)> {
         self.tracks
             .iter()
+            .filter(|t| !t.is_sfx)
             .map(|t| (format!("{} - {}", t.artist, t.title), t.duration_ms))
             .collect()
     }
@@ -561,6 +593,7 @@ impl UIPodApp {
         if self.tracks.is_empty() {
             return;
         }
+        self.dj_telemetry = uipod_dj::DjTelemetry::default();
         let idx = idx % self.tracks.len();
         self.current_track = idx;
         self.dur_ms = self.tracks[idx].duration_ms;
@@ -576,6 +609,7 @@ impl UIPodApp {
         if self.tracks.is_empty() {
             return;
         }
+        self.dj_telemetry = uipod_dj::DjTelemetry::default();
         let idx = idx % self.tracks.len();
         self.current_track = idx;
         self.pos_ms = 0;
@@ -586,7 +620,30 @@ impl UIPodApp {
         self.state_dirty = true;
     }
 
+    fn emit_manual_next_skip(&mut self) {
+        if self.tracks.is_empty() {
+            return;
+        }
+        let next = self.step_playable_track(self.current_track, 1);
+        let rapid_double = self.clock_ms.saturating_sub(self.last_np_skip_ms) <= 500;
+        self.last_np_skip_ms = self.clock_ms;
+        if !rapid_double
+            && self.dsp.dj_mode > 0
+            && self.dsp.dj_quick_cut
+            && self.audio_playing
+            && next != self.current_track
+        {
+            self.outbound_cmds
+                .push(format!(r#"{{"type":"quickCutNext","index":{next}}}"#));
+        } else {
+            self.emit_play_track(next);
+        }
+    }
+
     fn emit_set_playing(&mut self, should_play: bool) {
+        if !should_play {
+            self.dj_telemetry = uipod_dj::DjTelemetry::default();
+        }
         self.audio_playing = should_play;
         if !self.seek_active {
             self.play_mode = if should_play {
@@ -608,6 +665,7 @@ impl UIPodApp {
     }
 
     fn emit_seek_abs(&mut self, pos_ms: u32) {
+        self.dj_telemetry = uipod_dj::DjTelemetry::default();
         let clamped = pos_ms.min(self.dur_ms);
         self.pos_ms = clamped;
         self.seek_settle_sec = 0.25;
@@ -674,6 +732,9 @@ impl UIPodApp {
             self.stack.last(),
             Some(
                 Screen::NowPlaying
+                    | Screen::NsfChannels { .. }
+                    | Screen::NsfContainer { .. }
+                    | Screen::NsfSfx { .. }
                     | Screen::VideoPlayer { .. }
                     | Screen::MainMenu { .. }
                     | Screen::Browse { .. }
@@ -689,24 +750,193 @@ impl UIPodApp {
         )
     }
 
+    pub(crate) fn nsf_container_name_for_track(t: &Track) -> Option<String> {
+        if !t.codec.eq_ignore_ascii_case("NSF") {
+            return None;
+        }
+        let uri = t.uri.as_deref()?;
+        let parsed = SubtrackUri::parse(uri);
+        if parsed.file_path.is_empty() {
+            None
+        } else {
+            Some(parsed.file_path.to_string())
+        }
+    }
+
+    pub(crate) fn browse_music_items(&self) -> Vec<BrowseMusicItem> {
+        let mut out = Vec::new();
+        let mut seen_nsf: Vec<String> = Vec::new();
+        for (i, t) in self.tracks.iter().enumerate() {
+            if let Some(fname) = Self::nsf_container_name_for_track(t) {
+                if !seen_nsf.iter().any(|s| s.eq_ignore_ascii_case(&fname)) {
+                    let mut music_count = 0usize;
+                    let mut first_music_idx = None;
+                    let mut fallback_idx = None;
+                    for (j, cand) in self.tracks.iter().enumerate() {
+                        if Self::nsf_container_name_for_track(cand)
+                            .is_some_and(|cf| cf.eq_ignore_ascii_case(&fname))
+                        {
+                            if fallback_idx.is_none() {
+                                fallback_idx = Some(j);
+                            }
+                            if !cand.is_sfx {
+                                music_count += 1;
+                                if first_music_idx.is_none() {
+                                    first_music_idx = Some(j);
+                                }
+                            }
+                        }
+                    }
+                    seen_nsf.push(fname.clone());
+                    out.push(BrowseMusicItem::NsfContainer {
+                        file_name: fname,
+                        music_count,
+                        play_idx: first_music_idx.or(fallback_idx),
+                    });
+                }
+            } else if !t.is_sfx {
+                out.push(BrowseMusicItem::Track(i));
+            }
+        }
+        out.push(BrowseMusicItem::AboutTxt);
+        out
+    }
+
+    pub(crate) fn nsf_subtracks_for_file(&self, file_name: &str) -> (Vec<usize>, Vec<usize>, String) {
+        let mut music = Vec::new();
+        let mut sfx = Vec::new();
+        let mut game_title = String::new();
+        for (i, t) in self.tracks.iter().enumerate() {
+            if Self::nsf_container_name_for_track(t)
+                .is_some_and(|cf| cf.eq_ignore_ascii_case(file_name))
+            {
+                if game_title.is_empty() && !t.album.is_empty() {
+                    game_title = t.album.clone();
+                }
+                if t.is_sfx {
+                    sfx.push(i);
+                } else {
+                    music.push(i);
+                }
+            }
+        }
+        if game_title.is_empty() {
+            game_title = file_name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(file_name)
+                .rsplit_once('.')
+                .map(|(s, _)| s)
+                .unwrap_or(file_name)
+                .to_string();
+        }
+        (music, sfx, game_title)
+    }
+
+    fn step_playable_track(&self, from: usize, dir: isize) -> usize {
+        if self.tracks.is_empty() {
+            return 0;
+        }
+        if self.tracks.get(from).is_some_and(|t| t.is_sfx) {
+            let n = self.tracks.len() as isize;
+            return (((from as isize + dir) % n + n) % n) as usize;
+        }
+        let music: Vec<usize> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.is_sfx)
+            .map(|(i, _)| i)
+            .collect();
+        if music.is_empty() {
+            return 0;
+        }
+        let pos = music.iter().position(|&i| i == from).unwrap_or(0) as isize;
+        let n = music.len() as isize;
+        music[(((pos + dir) % n + n) % n) as usize]
+    }
+
+    pub fn active_nsf_chip_flags_for_ui(&self) -> Option<ChipFlags> {
+        if let Some(flags) = get_nsf_active_chip_flags() {
+            return Some(flags);
+        }
+        let t = self.tracks.get(self.current_track)?;
+        if t.codec.eq_ignore_ascii_case("NSF") {
+            Some(ChipFlags(t.chip_flags))
+        } else {
+            None
+        }
+    }
+
+    pub fn solo_or_restore_nsf_channel(chip_flags: ChipFlags, row: usize) {
+        let descs = chip_flags.channel_descriptors();
+        let Some(target) = descs.get(row) else {
+            return;
+        };
+        let mut valid_mask = 0u16;
+        for d in descs {
+            valid_mask |= 1u16 << d.bit_index;
+        }
+        let bit = 1u16 << target.bit_index;
+        let solo_mask = valid_mask & !bit;
+        let cur = get_nsf_channel_mute_mask() & valid_mask;
+        if cur == solo_mask {
+            set_nsf_channel_mute_mask(0);
+        } else {
+            set_nsf_channel_mute_mask(solo_mask);
+        }
+    }
+
+    pub fn toggle_nsf_channel_row(chip_flags: ChipFlags, row: usize) {
+        let descs = chip_flags.channel_descriptors();
+        if row == descs.len() {
+            set_nsf_channel_mute_mask(0);
+        } else if let Some(d) = descs.get(row) {
+            let bit = 1u16 << d.bit_index;
+            set_nsf_channel_mute_mask(get_nsf_channel_mute_mask() ^ bit);
+        }
+    }
+
     fn resolved_selected_track_for_top(&self) -> Option<usize> {
         match self.stack.last()? {
-            Screen::AllSongs { sel } => (*sel < self.tracks.len()).then_some(*sel),
+            Screen::AllSongs { sel } => self
+                .tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| !t.is_sfx)
+                .map(|(i, _)| i)
+                .nth(*sel),
             Screen::Browse { path, sel } if path == "/mnt/SDCARD/Media/Music" => {
-                (*sel < self.tracks.len()).then_some(*sel)
+                match self.browse_music_items().get(*sel)? {
+                    BrowseMusicItem::Track(idx) => Some(*idx),
+                    BrowseMusicItem::NsfContainer { play_idx, .. } => *play_idx,
+                    BrowseMusicItem::AboutTxt => None,
+                }
+            }
+            Screen::NsfContainer { file_name, sel } => {
+                let (music, _, _) = self.nsf_subtracks_for_file(file_name);
+                if !music.is_empty() && *sel >= 1 && *sel <= music.len() {
+                    music.get(*sel - 1).copied()
+                } else {
+                    None
+                }
+            }
+            Screen::NsfSfx { file_name, sel } => {
+                let (_, sfx, _) = self.nsf_subtracks_for_file(file_name);
+                sfx.get(*sel).copied()
             }
             Screen::ArtistSongs { artist, sel } => self
                 .tracks
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| &t.artist == artist)
+                .filter(|(_, t)| !t.is_sfx && &t.artist == artist)
                 .map(|(i, _)| i)
                 .nth(*sel),
             Screen::AlbumSongs { album, sel } => self
                 .tracks
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| &t.album == album)
+                .filter(|(_, t)| !t.is_sfx && &t.album == album)
                 .map(|(i, _)| i)
                 .nth(*sel),
             Screen::GenreSongs { genre, sel } => self
@@ -730,6 +960,18 @@ impl UIPodApp {
                 self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
                 true
             }
+            Some(Screen::NsfChannels { sel }) => {
+                let row = *sel;
+                if let Some(cflags) = self.active_nsf_chip_flags_for_ui() {
+                    if row < cflags.channel_descriptors().len() {
+                        Self::solo_or_restore_nsf_channel(cflags, row);
+                        self.emit_click();
+                        self.state_dirty = true;
+                        return true;
+                    }
+                }
+                false
+            }
             Some(Screen::VideoPlayer { .. }) => {
                 self.emit_click();
                 self.push_screen(Screen::VideoContextMenu { sel: 0 }, ui);
@@ -742,6 +984,8 @@ impl UIPodApp {
             }
             Some(
                 Screen::Browse { .. }
+                | Screen::NsfContainer { .. }
+                | Screen::NsfSfx { .. }
                 | Screen::Artists { .. }
                 | Screen::ArtistSongs { .. }
                 | Screen::Albums { .. }
@@ -968,6 +1212,14 @@ impl UIPodApp {
                     Screen::SoundMenu { sel: 0 },
                 ];
             }
+            "dj_crossfade" => {
+                self.stack = vec![
+                    Screen::MainMenu { sel: 0 },
+                    Screen::SettingsMenu { sel: 1 },
+                    Screen::SoundMenu { sel: 2 },
+                    Screen::DjCrossfadeMenu { sel: 0 },
+                ];
+            }
             other if other.starts_with("plugin:") => {
                 let pid = match &other[7..] {
                     "music_quiz" => PluginId::MusicQuiz,
@@ -1009,6 +1261,11 @@ impl UIPodApp {
         let art_rgb24 = art_bytes.and_then(decode_cover_256);
         self.tracks.push(Track {
             id,
+            uri: None,
+            subtrack_index: None,
+            is_sfx: false,
+            chip_flags: 0,
+            loop_point_ms: None,
             title,
             artist,
             album,
@@ -1017,6 +1274,44 @@ impl UIPodApp {
             bitdepth,
             samplerate,
             duration_ms: duration_ms.max(1000),
+            is_user_file: true,
+            art_rgb24,
+        });
+        self.state_dirty = true;
+        id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_nsf_subtrack(
+        &mut self,
+        uri: String,
+        subtrack_index: u16,
+        is_sfx: bool,
+        chip_flags: u8,
+        loop_point_ms: Option<u32>,
+        title: String,
+        artist: String,
+        album: String,
+        duration_ms: u32,
+        art_bytes: Option<&[u8]>,
+    ) -> usize {
+        let id = self.tracks.len();
+        let art_rgb24 = art_bytes.and_then(decode_cover_256);
+        self.tracks.push(Track {
+            id,
+            uri: Some(uri),
+            subtrack_index: Some(subtrack_index),
+            is_sfx,
+            chip_flags,
+            loop_point_ms,
+            title,
+            artist,
+            album,
+            genre: "Chiptune".to_string(),
+            codec: "NSF".to_string(),
+            bitdepth: "16bit".to_string(),
+            samplerate: "44.1kHz".to_string(),
+            duration_ms: duration_ms.max(400),
             is_user_file: true,
             art_rgb24,
         });
@@ -1058,7 +1353,7 @@ impl UIPodApp {
 
     fn artists_list(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for t in &self.tracks {
+        for t in self.tracks.iter().filter(|t| !t.is_sfx) {
             if !out.contains(&t.artist) {
                 out.push(t.artist.clone());
             }
@@ -1068,7 +1363,7 @@ impl UIPodApp {
 
     fn albums_list(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for t in &self.tracks {
+        for t in self.tracks.iter().filter(|t| !t.is_sfx) {
             if !out.contains(&t.album) {
                 out.push(t.album.clone());
             }
@@ -1078,7 +1373,7 @@ impl UIPodApp {
 
     fn genres_list(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for t in &self.tracks {
+        for t in self.tracks.iter().filter(|t| !t.is_sfx) {
             if !out.contains(&t.genre) {
                 out.push(t.genre.clone());
             }
@@ -1164,8 +1459,10 @@ impl UIPodApp {
         let is_plugin = matches!(self.stack.last(), Some(Screen::PluginActive));
         let is_viz = matches!(self.stack.last(), Some(Screen::VisualizerActive));
 
-        // Key auto-repeat for list scrolling / spinner cycling (NEVER auto-repeat Left/Right on NowPlaying!)
-        let repeat_mask = if on_now_playing {
+        let on_nsf_channels = matches!(self.stack.last(), Some(Screen::NsfChannels { .. }));
+
+        // Key auto-repeat for list scrolling / spinner cycling (NEVER auto-repeat Left/Right on NowPlaying or NsfChannels!)
+        let repeat_mask = if on_now_playing || on_nsf_channels {
             btn::UP | btn::DOWN
         } else {
             btn::UP | btn::DOWN | btn::LEFT | btn::RIGHT
@@ -1189,20 +1486,26 @@ impl UIPodApp {
                 if self.pos_ms > 3_500 {
                     self.emit_seek_abs(0);
                 } else {
-                    let prev =
-                        (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
+                    let prev = self.step_playable_track(self.current_track, -1);
                     self.emit_play_track(prev);
                 }
             } else {
-                let next = (self.current_track + 1) % self.tracks.len().max(1);
-                self.emit_play_track(next);
+                self.emit_manual_next_skip();
             }
         }
 
         let on_video = matches!(self.stack.last(), Some(Screen::VideoPlayer { .. }));
+        let on_browser_play = matches!(
+            self.stack.last(),
+            Some(
+                Screen::Browse { .. }
+                    | Screen::NsfContainer { .. }
+                    | Screen::NsfSfx { .. }
+            )
+        );
 
-        // Global START Play/Pause outside games & video player
-        if !is_plugin && !on_video && (pressed & btn::START) != 0 {
+        // Global START Play/Pause outside games, video player, and File Browser direct-play
+        if !is_plugin && !on_video && !on_browser_play && (pressed & btn::START) != 0 {
             self.emit_click();
             self.emit_toggle_play_pause();
         }
@@ -1394,9 +1697,31 @@ impl UIPodApp {
                                 ui,
                             ),
                             MainMenuId::Shuffle => {
-                                let idx = (self.current_track + 2) % self.tracks.len().max(1);
-                                self.emit_play_track(idx);
-                                self.push_screen(Screen::NowPlaying, ui);
+                                let music_indices: Vec<usize> = self
+                                    .tracks
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, t)| !t.is_sfx)
+                                    .map(|(i, _)| i)
+                                    .collect();
+                                if let Some(&idx) = if music_indices.len() > 1 {
+                                    let seed = (self.pos_ms as usize)
+                                        .wrapping_mul(1103515245)
+                                        .wrapping_add(self.current_track * 7 + 12345);
+                                    let mut pick = music_indices[seed % music_indices.len()];
+                                    if pick == self.current_track {
+                                        pick = music_indices[(seed + 1) % music_indices.len()];
+                                    }
+                                    Some(&music_indices[music_indices
+                                        .iter()
+                                        .position(|&x| x == pick)
+                                        .unwrap_or(0)])
+                                } else {
+                                    music_indices.first()
+                                } {
+                                    self.emit_play_track(idx);
+                                    self.push_screen(Screen::NowPlaying, ui);
+                                }
                             }
                         },
                     }
@@ -1404,15 +1729,34 @@ impl UIPodApp {
             }
 
             Screen::Browse { path, mut sel } => {
+                let music_items = self.browse_music_items();
                 let count = match path.as_str() {
                     "/mnt/SDCARD" => 3,
                     "/mnt/SDCARD/Media" => 2,
-                    _ => self.tracks.len() + 1,
+                    _ => music_items.len(),
                 };
                 if self.nav_list(pressed, &mut sel, count.max(1), ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & btn::MENU) != 0 {
                     self.open_context_menu_for_top(ui);
+                } else if (pressed & btn::START) != 0 {
+                    if path != "/mnt/SDCARD" && path != "/mnt/SDCARD/Media" {
+                        if let Some(item) = music_items.get(sel) {
+                            let play_target = match item {
+                                BrowseMusicItem::NsfContainer { play_idx, .. } => *play_idx,
+                                BrowseMusicItem::Track(idx) => Some(*idx),
+                                BrowseMusicItem::AboutTxt => None,
+                            };
+                            if let Some(idx) = play_target {
+                                self.emit_click();
+                                self.emit_play_track(idx);
+                                self.push_screen(Screen::NowPlaying, ui);
+                            }
+                        }
+                    } else {
+                        self.emit_click();
+                        self.emit_toggle_play_pause();
+                    }
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
                     match path.as_str() {
@@ -1451,11 +1795,21 @@ impl UIPodApp {
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
-                        _ => {
-                            if sel < self.tracks.len() {
-                                self.emit_play_track(sel);
+                        _ => match music_items.get(sel) {
+                            Some(BrowseMusicItem::NsfContainer { file_name, .. }) => {
+                                self.push_screen(
+                                    Screen::NsfContainer {
+                                        file_name: file_name.clone(),
+                                        sel: 0,
+                                    },
+                                    ui,
+                                );
+                            }
+                            Some(BrowseMusicItem::Track(idx)) => {
+                                self.emit_play_track(*idx);
                                 self.push_screen(Screen::NowPlaying, ui);
-                            } else {
+                            }
+                            _ => {
                                 self.active_plugin = Some(ActivePlugin::launch(
                                     PluginId::TextViewer,
                                     &[],
@@ -1463,7 +1817,72 @@ impl UIPodApp {
                                 ));
                                 self.push_screen(Screen::PluginActive, ui);
                             }
+                        },
+                    }
+                }
+            }
+
+            Screen::NsfContainer {
+                file_name,
+                mut sel,
+            } => {
+                let (music, sfx, _) = self.nsf_subtracks_for_file(&file_name);
+                let row_count = (if music.is_empty() { 0 } else { 1 + music.len() })
+                    + usize::from(!sfx.is_empty());
+                if self.nav_list(pressed, &mut sel, row_count.max(1), ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
+                } else if (pressed & (btn::A | btn::START)) != 0 {
+                    let is_start = (pressed & btn::START) != 0;
+                    let mut cur = sel;
+                    if !music.is_empty() {
+                        if cur == 0 {
+                            self.emit_click();
+                            let seed = (self.pos_ms as usize)
+                                .wrapping_mul(1103515245)
+                                .wrapping_add(self.current_track + 7);
+                            let pick = music[seed % music.len()];
+                            self.emit_play_track(pick);
+                            self.push_screen(Screen::NowPlaying, ui);
+                            return;
                         }
+                        cur -= 1;
+                        if cur < music.len() {
+                            self.emit_click();
+                            self.emit_play_track(music[cur]);
+                            self.push_screen(Screen::NowPlaying, ui);
+                            return;
+                        }
+                        cur -= music.len();
+                    }
+                    if !is_start && !sfx.is_empty() && cur == 0 {
+                        self.emit_click();
+                        self.push_screen(
+                            Screen::NsfSfx {
+                                file_name,
+                                sel: 0,
+                            },
+                            ui,
+                        );
+                    }
+                }
+            }
+
+            Screen::NsfSfx {
+                file_name,
+                mut sel,
+            } => {
+                let (_, sfx, _) = self.nsf_subtracks_for_file(&file_name);
+                if self.nav_list(pressed, &mut sel, sfx.len().max(1), ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::MENU) != 0 {
+                    self.open_context_menu_for_top(ui);
+                } else if (pressed & (btn::A | btn::START)) != 0 {
+                    if let Some(&idx) = sfx.get(sel) {
+                        self.emit_click();
+                        self.emit_play_track(idx);
+                        self.push_screen(Screen::NowPlaying, ui);
                     }
                 }
             }
@@ -1652,7 +2071,20 @@ impl UIPodApp {
                             self.emit_play_track(track_idx);
                             self.push_screen(Screen::NowPlaying, ui);
                         }
-                        1 | 2 => {
+                        1 => {
+                            self.pop_screen(ui);
+                        }
+                        2 => {
+                            if let Some(t) = self.tracks.get(track_idx) {
+                                let entry = t
+                                    .uri
+                                    .clone()
+                                    .unwrap_or_else(|| format!("{}.{}", t.title, t.codec.to_lowercase()));
+                                if !self.user_playlist_uris.contains(&entry) {
+                                    self.user_playlist_uris.push(entry);
+                                }
+                            }
+                            self.state_dirty = true;
                             self.pop_screen(ui);
                         }
                         3 => {
@@ -1695,7 +2127,7 @@ impl UIPodApp {
                     .tracks
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| t.artist == artist)
+                    .filter(|(_, t)| !t.is_sfx && t.artist == artist)
                     .map(|(i, _)| i)
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
@@ -1730,7 +2162,7 @@ impl UIPodApp {
                     .tracks
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| t.album == album)
+                    .filter(|(_, t)| !t.is_sfx && t.album == album)
                     .map(|(i, _)| i)
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
@@ -1765,7 +2197,7 @@ impl UIPodApp {
                     .tracks
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| t.genre == genre)
+                    .filter(|(_, t)| !t.is_sfx && t.genre == genre)
                     .map(|(i, _)| i)
                     .collect();
                 if self.nav_list(pressed, &mut sel, indices.len().max(1), ui) {
@@ -1782,15 +2214,24 @@ impl UIPodApp {
             }
 
             Screen::AllSongs { mut sel } => {
-                let count = self.tracks.len().max(1);
+                let indices: Vec<usize> = self
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| !t.is_sfx)
+                    .map(|(i, _)| i)
+                    .collect();
+                let count = indices.len().max(1);
                 if self.nav_list(pressed, &mut sel, count, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & btn::MENU) != 0 {
                     self.open_context_menu_for_top(ui);
-                } else if (pressed & btn::A) != 0 && sel < self.tracks.len() {
-                    self.emit_click();
-                    self.emit_play_track(sel);
-                    self.push_screen(Screen::NowPlaying, ui);
+                } else if (pressed & btn::A) != 0 {
+                    if let Some(&idx) = indices.get(sel) {
+                        self.emit_click();
+                        self.emit_play_track(idx);
+                        self.push_screen(Screen::NowPlaying, ui);
+                    }
                 }
             }
 
@@ -1823,12 +2264,10 @@ impl UIPodApp {
                     self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
                 } else if (pressed & btn::R1) != 0 {
                     self.emit_click();
-                    let next = (self.current_track + 1) % self.tracks.len().max(1);
-                    self.emit_play_track(next);
+                    self.emit_manual_next_skip();
                 } else if (pressed & btn::L1) != 0 {
                     self.emit_click();
-                    let prev =
-                        (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
+                    let prev = self.step_playable_track(self.current_track, -1);
                     self.emit_play_track(prev);
                 } else if (pressed & btn::R2) != 0 {
                     self.emit_seek_delta(15_000);
@@ -1842,57 +2281,117 @@ impl UIPodApp {
             }
 
             Screen::NowPlayingContext { mut sel } => {
-                // Exact 9 rows from `apps/gui/wps.c`:
-                // Pause/Resume, Effects, Shuffle, Repeat, Sleep Timer, Monochrome album art, Large Album Art, Add to Playlist, Start Visualizer
-                if self.nav_list(pressed, &mut sel, 9, ui) {
+                // Exact rows from `apps/gui/wps.c`:
+                // Pause/Resume, [Channels, Endless Loop when NSF], Effects, [SoundFont when MIDI],
+                // Shuffle, Repeat, Sleep Timer, Large Album Art, Add to Playlist, Start Visualizer
+                let actions = self.now_playing_context_actions();
+                let row_count = actions.len().max(1);
+                if self.nav_list(pressed, &mut sel, row_count, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
+                    let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
                     self.emit_click();
-                    match sel {
-                        0 => self.emit_toggle_play_pause(),
-                        1 => {
-                            self.dsp.fx_enabled = !self.dsp.fx_enabled;
-                            self.emit_dsp();
+                    if let Some(&act) = actions.get(sel) {
+                        match act {
+                            NpCtxAction::PlayPause => self.emit_toggle_play_pause(),
+                            NpCtxAction::NsfChannels => {
+                                if !is_dir {
+                                    self.push_screen(Screen::NsfChannels { sel: 0 }, ui);
+                                }
+                            }
+                            NpCtxAction::NsfEndlessLoop => {
+                                set_nsf_endless_loop(!get_nsf_endless_loop());
+                                self.state_dirty = true;
+                            }
+                            NpCtxAction::Effects => {
+                                self.dsp.fx_enabled = !self.dsp.fx_enabled;
+                                self.emit_dsp();
+                            }
+                            NpCtxAction::SoundFont => {}
+                            NpCtxAction::Shuffle => {
+                                let next = self.step_playable_track(self.current_track, 2);
+                                self.emit_play_track(next);
+                                self.pop_screen(ui);
+                            }
+                            NpCtxAction::Repeat => {
+                                let n = REPEAT_MODES_EN.len();
+                                self.repeat_idx = if left {
+                                    (self.repeat_idx + n - 1) % n
+                                } else {
+                                    (self.repeat_idx + 1) % n
+                                };
+                            }
+                            NpCtxAction::SleepTimer => {
+                                let n = SLEEP_TIMERS.len();
+                                self.sleep_idx = if left {
+                                    (self.sleep_idx + n - 1) % n
+                                } else {
+                                    (self.sleep_idx + 1) % n
+                                };
+                            }
+                            NpCtxAction::LargeArt => {
+                                self.alt_now_playing = !self.alt_now_playing;
+                                self.state_dirty = true;
+                            }
+                            NpCtxAction::AddToPlaylist => {
+                                if let Some(t) = self.tracks.get(self.current_track) {
+                                    let entry = t
+                                        .uri
+                                        .clone()
+                                        .unwrap_or_else(|| format!("{}.{}", t.title, t.codec.to_lowercase()));
+                                    if !self.user_playlist_uris.contains(&entry) {
+                                        self.user_playlist_uris.push(entry);
+                                    }
+                                }
+                                self.state_dirty = true;
+                                self.pop_screen(ui);
+                            }
+                            NpCtxAction::StartViz => {
+                                viz.set_preset(self.viz_preset);
+                                self.viz_fade = 0.0;
+                                self.pop_screen(ui);
+                                self.push_screen(Screen::VisualizerActive, ui);
+                            }
                         }
-                        2 => {
-                            let next = (self.current_track + 2) % self.tracks.len().max(1);
-                            self.emit_play_track(next);
-                            self.pop_screen(ui);
-                        }
-                        3 => {
-                            let n = REPEAT_MODES_EN.len();
-                            self.repeat_idx = if left {
-                                (self.repeat_idx + n - 1) % n
-                            } else {
-                                (self.repeat_idx + 1) % n
-                            };
-                        }
-                        4 => {
-                            let n = SLEEP_TIMERS.len();
-                            self.sleep_idx = if left {
-                                (self.sleep_idx + n - 1) % n
-                            } else {
-                                (self.sleep_idx + 1) % n
-                            };
-                        }
-                        5 => {
-                            self.mono_album_art = !self.mono_album_art;
-                            self.state_dirty = true;
-                        }
-                        6 => {
-                            self.alt_now_playing = !self.alt_now_playing;
-                            self.state_dirty = true;
-                        }
-                        7 => {
-                            self.pop_screen(ui);
-                        }
-                        _ => {
-                            viz.set_preset(self.viz_preset);
-                            self.viz_fade = 0.0;
-                            self.pop_screen(ui);
-                            self.push_screen(Screen::VisualizerActive, ui);
-                        }
+                    }
+                }
+            }
+
+            Screen::NsfChannels { mut sel } => {
+                let Some(cflags) = self.active_nsf_chip_flags_for_ui() else {
+                    self.pop_screen(ui);
+                    return;
+                };
+                let ch_count = cflags.channel_descriptors().len();
+                let total_rows = ch_count + 1;
+                if (pressed & btn::B) != 0 {
+                    self.emit_click();
+                    self.pop_screen(ui);
+                } else if (pressed & btn::X) != 0 {
+                    set_nsf_channel_mute_mask(0);
+                    self.emit_click();
+                    self.state_dirty = true;
+                } else if (pressed & btn::MENU) != 0 {
+                    if sel < ch_count {
+                        Self::solo_or_restore_nsf_channel(cflags, sel);
+                        self.emit_click();
+                        self.state_dirty = true;
+                    }
+                } else if (pressed & btn::UP) != 0 {
+                    sel = (sel + total_rows - 1) % total_rows;
+                    self.emit_click();
+                    self.set_top_sel(sel);
+                } else if (pressed & btn::DOWN) != 0 {
+                    sel = (sel + 1) % total_rows;
+                    self.emit_click();
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
+                    if !is_dir || sel < ch_count {
+                        Self::toggle_nsf_channel_row(cflags, sel);
+                        self.emit_click();
+                        self.state_dirty = true;
                     }
                 }
             }
@@ -2157,9 +2656,9 @@ impl UIPodApp {
             }
 
             Screen::SoundMenu { mut sel } => {
-                // Exact 7 rows from `apps/menus/sound_menu.c` lines 94-101:
-                // Equalizer, Effects, Replaygain, Balance, Channels, Crossfeed, Menu Click
-                if self.nav_list(pressed, &mut sel, 7, ui) {
+                // Exact 8 rows from `apps/menus/sound_menu.c`:
+                // Equalizer, Effects, Crossfade & Auto-DJ, Replaygain, Balance, Channels, Crossfeed, Menu Click
+                if self.nav_list(pressed, &mut sel, 8, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
@@ -2168,12 +2667,13 @@ impl UIPodApp {
                     match sel {
                         0 if !is_dir => self.push_screen(Screen::EqualizerMenu { sel: 0 }, ui),
                         1 if !is_dir => self.push_screen(Screen::EffectsMenu { sel: 0 }, ui),
-                        2 if !is_dir => self.push_screen(Screen::ReplayGainMenu { sel: 0 }, ui),
-                        3 => {
+                        2 if !is_dir => self.push_screen(Screen::DjCrossfadeMenu { sel: 0 }, ui),
+                        3 if !is_dir => self.push_screen(Screen::ReplayGainMenu { sel: 0 }, ui),
+                        4 => {
                             let d = if left { -5i8 } else { 5i8 };
                             self.dsp.balance_pct = (self.dsp.balance_pct + d).clamp(-100, 100);
                         }
-                        4 => {
+                        5 => {
                             let n = CHANNEL_MODES.len();
                             self.dsp.channels_idx = if left {
                                 (self.dsp.channels_idx + n - 1) % n
@@ -2181,7 +2681,7 @@ impl UIPodApp {
                                 (self.dsp.channels_idx + 1) % n
                             };
                         }
-                        5 => {
+                        6 => {
                             let n = CROSSFEED_MODES.len();
                             self.dsp.crossfeed_idx = if left {
                                 (self.dsp.crossfeed_idx + n - 1) % n
@@ -2189,9 +2689,55 @@ impl UIPodApp {
                                 (self.dsp.crossfeed_idx + 1) % n
                             };
                         }
-                        6 => {
+                        7 => {
                             self.dsp.menu_click = !self.dsp.menu_click;
                             self.state_dirty = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Screen::DjCrossfadeMenu { mut sel } => {
+                // Exact 5 rows from `apps/menus/sound_menu.c` `dj_crossfade_menu`:
+                // Crossfade Mode, Transition Length, Max Tempo Stretch, Keep Album Gapless, Quick Cut on Next
+                if self.nav_list(pressed, &mut sel, 5, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let left = (pressed & btn::LEFT) != 0;
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.dsp.dj_mode = if left {
+                                (self.dsp.dj_mode + 3) % 4
+                            } else {
+                                (self.dsp.dj_mode + 1) % 4
+                            };
+                            self.emit_dsp();
+                        }
+                        1 => {
+                            self.dsp.dj_length = if left {
+                                (self.dsp.dj_length + 2) % 3
+                            } else {
+                                (self.dsp.dj_length + 1) % 3
+                            };
+                            self.emit_dsp();
+                        }
+                        2 => {
+                            self.dsp.dj_max_stretch = if left {
+                                (self.dsp.dj_max_stretch + 2) % 3
+                            } else {
+                                (self.dsp.dj_max_stretch + 1) % 3
+                            };
+                            self.emit_dsp();
+                        }
+                        3 => {
+                            self.dsp.dj_keep_gapless = !self.dsp.dj_keep_gapless;
+                            self.emit_dsp();
+                        }
+                        4 => {
+                            self.dsp.dj_quick_cut = !self.dsp.dj_quick_cut;
+                            self.emit_dsp();
                         }
                         _ => {}
                     }
@@ -2690,13 +3236,13 @@ impl UIPodApp {
             }
 
             Screen::LibraryMenu { mut sel } => {
-                // Exact 6 rows from `apps/menus/audio_folders_menu.c` lines 56-58:
-                // Music Folders, Podcast Folders, Audiobook Folders, Movie Folders, Television Folders, Rescan Library
-                if self.nav_list(pressed, &mut sel, 6, ui) {
+                // Exact 7 rows from `apps/menus/audio_folders_menu.c`:
+                // Music, Podcast, Audiobook, Movie, Television, SoundFont Folders, Rescan Library
+                if self.nav_list(pressed, &mut sel, 7, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
-                    if sel < 5 {
+                    if sel < 6 {
                         self.push_screen(
                             Screen::LibraryFolderList {
                                 kind: sel as u8,
@@ -2866,12 +3412,16 @@ impl UIPodApp {
                 | Screen::AllSongs { sel }
                 | Screen::Playlists { sel }
                 | Screen::NowPlayingContext { sel }
+                | Screen::NsfChannels { sel }
+                | Screen::NsfContainer { sel, .. }
+                | Screen::NsfSfx { sel, .. }
                 | Screen::SettingsMenu { sel }
                 | Screen::DisplayMenu { sel }
                 | Screen::ThemeList { sel }
                 | Screen::CustomizeThemeMenu { sel }
                 | Screen::MainMenuSettings { sel }
                 | Screen::SoundMenu { sel }
+                | Screen::DjCrossfadeMenu { sel }
                 | Screen::EqualizerMenu { sel }
                 | Screen::GraphicEq { sel }
                 | Screen::AutoEqList { sel }
@@ -2994,6 +3544,139 @@ impl UIPodApp {
             }
         }
         best_c
+    }
+
+    pub(crate) fn now_playing_context_actions(&self) -> Vec<NpCtxAction> {
+        let is_nsf = self.active_nsf_chip_flags_for_ui().is_some();
+        let is_midi = self
+            .tracks
+            .get(self.current_track)
+            .is_some_and(|t| t.codec.eq_ignore_ascii_case("MIDI"));
+        let mut out = Vec::with_capacity(11);
+        out.push(NpCtxAction::PlayPause);
+        if is_nsf {
+            out.push(NpCtxAction::NsfChannels);
+            out.push(NpCtxAction::NsfEndlessLoop);
+        }
+        out.push(NpCtxAction::Effects);
+        if is_midi {
+            out.push(NpCtxAction::SoundFont);
+        }
+        out.extend([
+            NpCtxAction::Shuffle,
+            NpCtxAction::Repeat,
+            NpCtxAction::SleepTimer,
+            NpCtxAction::LargeArt,
+            NpCtxAction::AddToPlaylist,
+            NpCtxAction::StartViz,
+        ]);
+        out
+    }
+
+    pub(crate) fn now_playing_context_items(
+        &self,
+    ) -> Vec<(String, FileIconKind, OwnedRight)> {
+        let pause_lbl = if self.play_mode == PlayMode::Play {
+            self.tr("Pause", "Пауза")
+        } else {
+            self.tr("Resume", "Продовжити")
+        };
+        let rep = if self.uk {
+            REPEAT_MODES_UK[self.repeat_idx]
+        } else {
+            REPEAT_MODES_EN[self.repeat_idx]
+        };
+        let mut items = Vec::with_capacity(11);
+        for act in self.now_playing_context_actions() {
+            match act {
+                NpCtxAction::PlayPause => {
+                    items.push((pause_lbl.to_string(), FileIconKind::None, OwnedRight::None));
+                }
+                NpCtxAction::NsfChannels => {
+                    let cflags = self.active_nsf_chip_flags_for_ui().unwrap_or(ChipFlags(0));
+                    let descs = cflags.channel_descriptors();
+                    let mask = get_nsf_channel_mute_mask();
+                    let enabled = descs
+                        .iter()
+                        .filter(|d| (mask & (1u16 << d.bit_index)) == 0)
+                        .count();
+                    let summary = if enabled == descs.len() {
+                        self.tr("All ON", "Усі УВІМК").to_string()
+                    } else {
+                        format!("{}/{} {}", enabled, descs.len(), self.tr("ON", "УВІМК"))
+                    };
+                    items.push((
+                        self.tr("Channels", "Канали").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::ValueChevron(summary),
+                    ));
+                }
+                NpCtxAction::NsfEndlessLoop => {
+                    items.push((
+                        self.tr("Endless Loop", "Нескінченний цикл").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(get_nsf_endless_loop()),
+                    ));
+                }
+                NpCtxAction::Effects => {
+                    items.push((
+                        self.tr("Effects", "Ефекти").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.dsp.fx_enabled),
+                    ));
+                }
+                NpCtxAction::SoundFont => {
+                    items.push((
+                        self.tr("SoundFont", "Саундфонт").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Chevron,
+                    ));
+                }
+                NpCtxAction::Shuffle => {
+                    items.push((
+                        self.tr("Shuffle", "Перемішати").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ));
+                }
+                NpCtxAction::Repeat => {
+                    items.push((
+                        self.tr("Repeat", "Повтор").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::CycleValue(rep.to_string()),
+                    ));
+                }
+                NpCtxAction::SleepTimer => {
+                    items.push((
+                        self.tr("Sleep Timer", "Таймер сну").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::CycleValue(SLEEP_TIMERS[self.sleep_idx].to_string()),
+                    ));
+                }
+                NpCtxAction::LargeArt => {
+                    items.push((
+                        self.tr("Large Album Art", "Великий кавер").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.alt_now_playing),
+                    ));
+                }
+                NpCtxAction::AddToPlaylist => {
+                    items.push((
+                        self.tr("Add to Playlist", "Додати у плейлист").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ));
+                }
+                NpCtxAction::StartViz => {
+                    items.push((
+                        self.tr("Start Visualizer", "Запустити візуалізатор").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ));
+                }
+            }
+        }
+        items
     }
 
     fn render_list(
@@ -3153,27 +3836,99 @@ impl UIPodApp {
                         ("Music".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
                         ("about.txt".to_string(), FileIconKind::Text("TXT".into()), OwnedRight::Value("6 KB".into())),
                     ],
-                    _ => {
-                        let mut list: Vec<_> = self
-                            .tracks
-                            .iter()
-                            .map(|t| {
+                    _ => self
+                        .browse_music_items()
+                        .into_iter()
+                        .map(|entry| match entry {
+                            BrowseMusicItem::NsfContainer {
+                                file_name,
+                                music_count,
+                                ..
+                            } => (
+                                file_name,
+                                FileIconKind::from_tag("NSF"),
+                                OwnedRight::Value(format!("[{music_count} ♪]")),
+                            ),
+                            BrowseMusicItem::Track(idx) => {
+                                let t = &self.tracks[idx];
                                 (
                                     format!("{}.{}", t.title, t.codec.to_lowercase()),
                                     FileIconKind::from_tag(&t.codec),
                                     OwnedRight::Value(fmt_ms(t.duration_ms)),
                                 )
-                            })
-                            .collect();
-                        list.push((
-                            "about.txt".to_string(),
-                            FileIconKind::Text("TXT".into()),
-                            OwnedRight::Value("6 KB".into()),
-                        ));
-                        list
-                    }
+                            }
+                            BrowseMusicItem::AboutTxt => (
+                                "about.txt".to_string(),
+                                FileIconKind::Text("TXT".into()),
+                                OwnedRight::Value("6 KB".into()),
+                            ),
+                        })
+                        .collect(),
                 };
                 self.render_list(ui, &path, &items, sel);
+            }
+
+            Screen::NsfContainer { file_name, sel } => {
+                let (music, sfx, game_title) = self.nsf_subtracks_for_file(&file_name);
+                let mut items = Vec::with_capacity(music.len() + 2);
+                if !music.is_empty() {
+                    items.push((
+                        self.tr("Shuffle Game Music", "Перемішати музику гри").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::None,
+                    ));
+                    for (pos, &idx) in music.iter().enumerate() {
+                        let t = &self.tracks[idx];
+                        let label = if has_leading_track_num(&t.title) {
+                            t.title.clone()
+                        } else {
+                            format!("{:02}. {}", pos + 1, t.title)
+                        };
+                        items.push((
+                            label,
+                            FileIconKind::from_tag("NSF"),
+                            OwnedRight::Value(fmt_ms(t.duration_ms)),
+                        ));
+                    }
+                }
+                if !sfx.is_empty() {
+                    let sfx_lbl = if self.uk {
+                        format!("Звукові ефекти ({})", sfx.len())
+                    } else {
+                        format!("Sound Effects ({})", sfx.len())
+                    };
+                    items.push((sfx_lbl, FileIconKind::Folder, OwnedRight::Chevron));
+                }
+                self.render_list(ui, &game_title, &items, sel);
+            }
+
+            Screen::NsfSfx { file_name, sel } => {
+                let (_, sfx, _) = self.nsf_subtracks_for_file(&file_name);
+                let title = if self.uk {
+                    format!("Звукові ефекти ({})", sfx.len())
+                } else {
+                    format!("Sound Effects ({})", sfx.len())
+                };
+                let items: Vec<_> = sfx
+                    .iter()
+                    .enumerate()
+                    .map(|(pos, &idx)| {
+                        let t = &self.tracks[idx];
+                        let def_name =
+                            format!("Track {:02}", t.subtrack_index.unwrap_or(pos as u16) + 1);
+                        let lbl = if t.title.eq_ignore_ascii_case(&def_name) {
+                            format!("SFX {:02}", pos + 1)
+                        } else {
+                            format!("SFX {:02} - {}", pos + 1, t.title)
+                        };
+                        (
+                            lbl,
+                            FileIconKind::from_tag("NSF"),
+                            OwnedRight::Value(fmt_ms(t.duration_ms)),
+                        )
+                    })
+                    .collect();
+                self.render_list(ui, &title, &items, sel);
             }
 
             Screen::ExtrasMenu { sel } => {
@@ -3421,7 +4176,7 @@ impl UIPodApp {
                 let items: Vec<_> = self
                     .tracks
                     .iter()
-                    .filter(|t| t.artist == artist)
+                    .filter(|t| !t.is_sfx && t.artist == artist)
                     .map(|t| {
                         (
                             t.title.clone(),
@@ -3446,7 +4201,7 @@ impl UIPodApp {
                 let items: Vec<_> = self
                     .tracks
                     .iter()
-                    .filter(|t| t.album == album)
+                    .filter(|t| !t.is_sfx && t.album == album)
                     .map(|t| {
                         (
                             t.title.clone(),
@@ -3471,7 +4226,7 @@ impl UIPodApp {
                 let items: Vec<_> = self
                     .tracks
                     .iter()
-                    .filter(|t| t.genre == genre)
+                    .filter(|t| !t.is_sfx && t.genre == genre)
                     .map(|t| {
                         (
                             t.title.clone(),
@@ -3487,6 +4242,7 @@ impl UIPodApp {
                 let items: Vec<_> = self
                     .tracks
                     .iter()
+                    .filter(|t| !t.is_sfx)
                     .map(|t| {
                         (
                             format!("{} — {}", t.title, t.artist),
@@ -3499,10 +4255,12 @@ impl UIPodApp {
             }
 
             Screen::Playlists { sel } => {
+                let music_total = self.tracks.iter().filter(|t| !t.is_sfx).count();
+                let fav_count = music_total + self.user_playlist_uris.len();
                 let items = vec![
-                    ("Y2K System Mix".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{}", self.tracks.len()))),
+                    ("Y2K System Mix".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{music_total}"))),
                     ("Liquid Millennium".to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value("2".into())),
-                    (self.tr("Favourites", "Обране").to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{}", self.tracks.len()))),
+                    (self.tr("Favourites", "Обране").to_string(), FileIconKind::Audio("M3U".into()), OwnedRight::Value(format!("{fav_count}"))),
                 ];
                 self.render_list(ui, self.tr("Playlists", "Плейлисти"), &items, sel);
             }
@@ -3510,11 +4268,28 @@ impl UIPodApp {
             Screen::NowPlaying => {
                 let trk = self.tracks.get(self.current_track).or_else(|| self.tracks.first());
                 if let Some(t) = trk {
+                    let music_tracks: Vec<usize> = self
+                        .tracks
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, tr)| !tr.is_sfx)
+                        .map(|(i, _)| i)
+                        .collect();
+                    let (disp_pos, disp_total) = if t.is_sfx || music_tracks.is_empty() {
+                        (self.current_track + 1, self.tracks.len().max(1))
+                    } else {
+                        let p = music_tracks
+                            .iter()
+                            .position(|&i| i == self.current_track)
+                            .unwrap_or(0)
+                            + 1;
+                        (p, music_tracks.len())
+                    };
                     let track_pos = format!(
                         "{} {} {}",
-                        self.current_track + 1,
+                        disp_pos,
                         self.tr("of", "з"),
-                        self.tracks.len()
+                        disp_total
                     );
                     let elapsed = fmt_ms(self.pos_ms);
                     let rem_ms = self.dur_ms.saturating_sub(self.pos_ms);
@@ -3524,6 +4299,72 @@ impl UIPodApp {
                     } else {
                         0.0
                     };
+
+                    let is_nsf = t.codec.eq_ignore_ascii_case("NSF")
+                        || get_nsf_active_chip_flags().is_some();
+                    let cflags = self.active_nsf_chip_flags_for_ui().unwrap_or(ChipFlags(t.chip_flags));
+                    let nsf_badge = if is_nsf {
+                        cflags.primary_badge_label()
+                    } else {
+                        ""
+                    };
+                    let nsf_loop_progress = if is_nsf {
+                        t.loop_point_ms
+                            .filter(|&lp| lp > 0 && self.dur_ms > lp)
+                            .map(|lp| (lp as f32 / self.dur_ms as f32).clamp(0.02, 0.98))
+                    } else {
+                        None
+                    };
+                    let descs: &[uipod_nsf::ChannelDescriptor] = if is_nsf {
+                        cflags.channel_descriptors()
+                    } else {
+                        &[]
+                    };
+                    let mute_mask = get_nsf_channel_mute_mask();
+                    let apu_tel = get_nsf_apu_telemetry();
+                    let playing_now = self.play_mode == PlayMode::Play;
+                    let pills: Vec<NsfApuPill<'_>> = descs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, d)| {
+                            let muted = (mute_mask & (1u16 << d.bit_index)) != 0;
+                            let volume = if !muted && playing_now && i < apu_tel.channel_count as usize {
+                                apu_tel.channels[i].volume.clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+                            let active = !muted
+                                && playing_now
+                                && i < apu_tel.channel_count as usize
+                                && apu_tel.channels[i].active != 0
+                                && volume > 0.02;
+                            NsfApuPill {
+                                short_code: d.short_code,
+                                active,
+                                muted,
+                                volume,
+                            }
+                        })
+                        .collect();
+
+                    let dj_label = if self.dj_telemetry.active != 0 {
+                        if self.dj_telemetry.mix_kind == 2
+                            && self.dj_telemetry.bpm_a > 1.0
+                            && self.dj_telemetry.bpm_b > 1.0
+                        {
+                            format!(
+                                "DJ SYNC · {:.0}→{:.0} BPM",
+                                self.dj_telemetry.bpm_a, self.dj_telemetry.bpm_b
+                            )
+                        } else if self.dj_telemetry.mix_kind == 3 {
+                            "DJ WASH › NEXT".to_string()
+                        } else {
+                            "FADE › NEXT".to_string()
+                        }
+                    } else {
+                        String::new()
+                    };
+
                     let state = NowPlayingState {
                         theme: self.theme,
                         header: self.header_state(self.tr("Now Playing", "Програється")),
@@ -3542,34 +4383,86 @@ impl UIPodApp {
                         art_rgb24: t.art_rgb24.as_deref(),
                         mono_album_art: self.mono_album_art,
                         alt_layout: self.alt_now_playing,
+                        is_nsf,
+                        nsf_chip_badge: nsf_badge,
+                        nsf_loop_progress,
+                        nsf_endless_loop: is_nsf && get_nsf_endless_loop(),
+                        nsf_channels: &pills,
+                        dj_status_label: &dj_label,
+                        dj_progress: self.dj_telemetry.progress,
+                        dj_bass_swap_flash: self.dj_telemetry.bass_swap_flash != 0,
                     };
                     ui.render_now_playing_to_fbo(&state);
                 }
             }
 
             Screen::NowPlayingContext { sel } => {
-                let pause_lbl = if self.play_mode == PlayMode::Play {
-                    self.tr("Pause", "Пауза")
-                } else {
-                    self.tr("Resume", "Продовжити")
-                };
-                let rep = if self.uk {
-                    REPEAT_MODES_UK[self.repeat_idx]
-                } else {
-                    REPEAT_MODES_EN[self.repeat_idx]
-                };
-                let items = vec![
-                    (pause_lbl.to_string(), FileIconKind::None, OwnedRight::None),
-                    (self.tr("Effects", "Ефекти").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.fx_enabled)),
-                    (self.tr("Shuffle", "Перемішати").to_string(), FileIconKind::None, OwnedRight::None),
-                    (self.tr("Repeat", "Повтор").to_string(), FileIconKind::None, OwnedRight::CycleValue(rep.to_string())),
-                    (self.tr("Sleep Timer", "Таймер сну").to_string(), FileIconKind::None, OwnedRight::CycleValue(SLEEP_TIMERS[self.sleep_idx].to_string())),
-                    (self.tr("Monochrome album art", "Монохромна обкладинка").to_string(), FileIconKind::None, OwnedRight::Toggle(self.mono_album_art)),
-                    (self.tr("Large Album Art", "Великий кавер").to_string(), FileIconKind::None, OwnedRight::Toggle(self.alt_now_playing)),
-                    (self.tr("Add to Playlist", "Додати у плейлист").to_string(), FileIconKind::None, OwnedRight::None),
-                    (self.tr("Start Visualizer", "Запустити візуалізатор").to_string(), FileIconKind::None, OwnedRight::None),
-                ];
+                let items = self.now_playing_context_items();
                 self.render_list(ui, self.tr("Now Playing", "Програється"), &items, sel);
+            }
+
+            Screen::NsfChannels { sel } => {
+                let cflags = self.active_nsf_chip_flags_for_ui().unwrap_or(ChipFlags(0));
+                let descs = cflags.channel_descriptors();
+                let mute_mask = get_nsf_channel_mute_mask();
+                let mut valid_mask = 0u16;
+                for d in descs {
+                    valid_mask |= 1u16 << d.bit_index;
+                }
+                let apu_tel = get_nsf_apu_telemetry();
+                let playing_now = self.play_mode == PlayMode::Play;
+                let total_items = descs.len() + 1;
+                let vis = LIST_VISIBLE_ROWS;
+                let sel = sel.min(total_items.saturating_sub(1));
+                let start = if total_items <= vis {
+                    0
+                } else if sel >= vis {
+                    (sel + 1 - vis).min(total_items - vis)
+                } else {
+                    0
+                };
+                let enable_all_lbl = self.tr("Enable All Channels", "Увімкнути всі канали");
+                let footer_hint = self.tr(
+                    "A: Toggle  ·  Hold A: Solo  ·  X: Enable All",
+                    "A: Перемкнути  ·  Утрим. A: Соло  ·  X: Усі УВІМК",
+                );
+
+                let rows: Vec<NsfChannelRow<'_>> = descs
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, d)| {
+                        let bit = 1u16 << d.bit_index;
+                        let enabled = (mute_mask & bit) == 0;
+                        let soloed = descs.len() > 1 && (mute_mask & valid_mask) == (valid_mask & !bit);
+                        let volume = if enabled && playing_now && idx < apu_tel.channel_count as usize {
+                            apu_tel.channels[idx].volume.clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let active = enabled && volume > 0.02;
+                        NsfChannelRow {
+                            short_code: d.short_code,
+                            display_name: d.display_name,
+                            enabled,
+                            soloed,
+                            active,
+                            volume,
+                            selected: idx == sel,
+                        }
+                    })
+                    .collect();
+
+                let state = NsfChannelsState {
+                    theme: self.theme,
+                    header: self.header_state(self.tr("Channels", "Канали")),
+                    channels: &rows,
+                    enable_all_label: enable_all_lbl,
+                    enable_all_selected: sel == descs.len(),
+                    footer_hint,
+                    start_item: start,
+                    visible_items: vis,
+                };
+                ui.render_nsf_channels_to_fbo(&state);
             }
 
             Screen::SettingsMenu { sel } => {
@@ -3703,6 +4596,7 @@ impl UIPodApp {
                 let items = vec![
                     (self.tr("Equalizer", "Еквалайзер").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Effects", "Ефекти").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Crossfade & Auto-DJ", "Авто-DJ і кросфейд").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     ("Replaygain".to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Balance", "Баланс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.balance_pct))),
                     (self.tr("Channels", "Канали").to_string(), FileIconKind::None, OwnedRight::CycleValue(CHANNEL_MODES[self.dsp.channels_idx].to_string())),
@@ -3710,6 +4604,33 @@ impl UIPodApp {
                     (self.tr("Menu Click", "Звук кліку").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.menu_click)),
                 ];
                 self.render_list(ui, self.tr("Sound", "Звук"), &items, sel);
+            }
+
+            Screen::DjCrossfadeMenu { sel } => {
+                let mode_lbl = match self.dsp.dj_mode {
+                    1 => self.tr("Classic", "Класичний"),
+                    2 => self.tr("DJ Vinyl", "DJ Вініл"),
+                    3 => self.tr("DJ Master Tempo", "DJ Майстер-темп"),
+                    _ => self.tr("Off", "Вимк."),
+                };
+                let len_lbl = match self.dsp.dj_length {
+                    0 => self.tr("4 Bars (Short)", "4 такти (Короткий)"),
+                    2 => self.tr("12s (Long)", "12 с (Довгий)"),
+                    _ => self.tr("8 Bars (Club)", "8 тактів (Клубний)"),
+                };
+                let stretch_lbl = match self.dsp.dj_max_stretch {
+                    0 => "±6%",
+                    2 => "±12%",
+                    _ => "±10%",
+                };
+                let items = vec![
+                    (self.tr("Crossfade Mode", "Режим кросфейду").to_string(), FileIconKind::None, OwnedRight::CycleValue(mode_lbl.to_string())),
+                    (self.tr("Transition Length", "Тривалість переходу").to_string(), FileIconKind::None, OwnedRight::CycleValue(len_lbl.to_string())),
+                    (self.tr("Max Tempo Stretch", "Макс. зсув темпу").to_string(), FileIconKind::None, OwnedRight::CycleValue(stretch_lbl.to_string())),
+                    (self.tr("Keep Album Gapless", "Безшовний альбом").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.dj_keep_gapless)),
+                    (self.tr("Quick Cut on Next", "Плавний скіп (R1)").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.dj_quick_cut)),
+                ];
+                self.render_list(ui, self.tr("Crossfade & Auto-DJ", "Авто-DJ і кросфейд"), &items, sel);
             }
 
             Screen::EqualizerMenu { sel } => {
@@ -4056,6 +4977,7 @@ impl UIPodApp {
                     (self.tr("Audiobook Folders", "Теки аудіокниг").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Movie Folders", "Теки відео").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Television Folders", "Теки серіалів").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("SoundFont Folders", "Теки саундфонтів").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Rescan Library", "Оновити бібліотеку").to_string(), FileIconKind::None, OwnedRight::None),
                 ];
                 self.render_list(ui, self.tr("Library", "Бібліотека"), &items, sel);
@@ -4067,7 +4989,8 @@ impl UIPodApp {
                     1 => (self.tr("Podcast Folders", "Теки подкастів"), "/mnt/SDCARD/Media/Podcasts"),
                     2 => (self.tr("Audiobook Folders", "Теки аудіокниг"), "/mnt/SDCARD/Media/Audiobooks"),
                     3 => (self.tr("Movie Folders", "Теки відео"), "/mnt/SDCARD/Media/Videos"),
-                    _ => (self.tr("Television Folders", "Теки серіалів"), "/mnt/SDCARD/Media/TV"),
+                    4 => (self.tr("Television Folders", "Теки серіалів"), "/mnt/SDCARD/Media/TV"),
+                    _ => (self.tr("SoundFont Folders", "Теки саундфонтів"), "/mnt/SDCARD/SoundFonts"),
                 };
                 let items = vec![
                     (path.to_string(), FileIconKind::Folder, OwnedRight::None),
@@ -4136,7 +5059,11 @@ impl UIPodApp {
                     "plugin"
                 }
             }
-            Some(Screen::SoundMenu { .. } | Screen::TapeModeMenu { .. }) => "sound",
+            Some(
+                Screen::SoundMenu { .. }
+                | Screen::DjCrossfadeMenu { .. }
+                | Screen::TapeModeMenu { .. },
+            ) => "sound",
             _ => "menu",
         };
         let trk = self.tracks.get(self.current_track);
@@ -4163,7 +5090,8 @@ impl UIPodApp {
                 r##""themeIndex":{},"themeName":"{}","bg":"#{:06X}","fg":"#{:06X}","fg1":"#{:06X}","fg2":"#{:06X}","##,
                 r##""monoArt":{},"altLayout":{},"transition":{},"uk":{},"hold":{},"volumeStep":{},"volumeDb":{},"##,
                 r##""vizPreset":{},"vizName":"{}","vizFine":{},"vizCustom":{},"##,
-                r##""eq":{},"autoeq":{},"tape":{},"wow":{},"hiss":{},"sat":{},"hf":{},"stopStart":{},"speed":{},"menuClick":{}}}"##
+                r##""eq":{},"autoeq":{},"tape":{},"wow":{},"hiss":{},"sat":{},"hf":{},"stopStart":{},"speed":{},"menuClick":{},"##,
+                r##""djMode":{},"djLength":{},"djMaxStretch":{},"djKeepGapless":{},"djQuickCut":{}}}"##
             ),
             screen_tag,
             self.play_mode == PlayMode::Play,
@@ -4198,16 +5126,48 @@ impl UIPodApp {
             self.dsp.tape_stop_start,
             self.dsp.speed_pct,
             self.dsp.menu_click,
+            self.dsp.dj_mode,
+            self.dsp.dj_length,
+            self.dsp.dj_max_stretch,
+            self.dsp.dj_keep_gapless,
+            self.dsp.dj_quick_cut,
         )
     }
 }
 
-enum OwnedRight {
+#[derive(Debug, Clone)]
+pub(crate) enum BrowseMusicItem {
+    NsfContainer {
+        file_name: String,
+        music_count: usize,
+        play_idx: Option<usize>,
+    },
+    Track(usize),
+    AboutTxt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NpCtxAction {
+    PlayPause,
+    NsfChannels,
+    NsfEndlessLoop,
+    Effects,
+    SoundFont,
+    Shuffle,
+    Repeat,
+    SleepTimer,
+    LargeArt,
+    AddToPlaylist,
+    StartViz,
+}
+
+pub(crate) enum OwnedRight {
     None,
     Chevron,
     Toggle(bool),
     CycleValue(String),
     Value(String),
+    ValueChevron(String),
 }
 
 impl OwnedRight {
@@ -4218,8 +5178,21 @@ impl OwnedRight {
             Self::Toggle(v) => RightAccessory::Toggle(*v),
             Self::CycleValue(s) => RightAccessory::CycleValue(s.as_str()),
             Self::Value(s) => RightAccessory::Value(s.as_str()),
+            Self::ValueChevron(s) => RightAccessory::ValueChevron(s.as_str()),
         }
     }
+}
+
+fn has_leading_track_num(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    i > 0
+        && i + 1 < bytes.len()
+        && matches!(bytes[i], b'.' | b')' | b'-')
+        && bytes[i + 1] == b' '
 }
 
 fn fmt_ms(ms: u32) -> String {
@@ -4241,4 +5214,188 @@ fn escape_json(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod phase3_tests {
+    use super::*;
+    use uipod_codecs::reset_nsf_runtime_session;
+
+    #[test]
+    fn channels_menu_visibility_and_2a03_vrc6_mmc5_toggles_solo_enable_all() {
+        reset_nsf_runtime_session();
+        let mut app = UIPodApp::new();
+
+        // 1. Standard MP3/FLAC tracks MUST hide `Channels` and `Endless Loop`
+        app.current_track = 0; // built-in MP3 demo track
+        assert!(app.active_nsf_chip_flags_for_ui().is_none());
+        let mp3_actions = app.now_playing_context_actions();
+        assert!(!mp3_actions.contains(&NpCtxAction::NsfChannels));
+        assert!(!mp3_actions.contains(&NpCtxAction::NsfEndlessLoop));
+
+        let flac_idx = app.add_user_track(
+            "Lossless Suite".into(),
+            "Studio".into(),
+            "Reference".into(),
+            "FLAC".into(),
+            "24bit".into(),
+            "96kHz".into(),
+            180_000,
+            None,
+        );
+        app.current_track = flac_idx;
+        assert!(!app
+            .now_playing_context_actions()
+            .contains(&NpCtxAction::NsfChannels));
+
+        // 2. 2A03 `.nsf` track: 5 channels, live bit toggles, Solo, Enable All
+        let nsf_2a03 = app.add_nsf_subtrack(
+            "/Music/Mega Man 2.nsf#0".into(),
+            0,
+            false,
+            0,
+            Some(42_000),
+            "Title Theme".into(),
+            "Takashi Tateishi".into(),
+            "Mega Man 2".into(),
+            102_000,
+            None,
+        );
+        app.current_track = nsf_2a03;
+        let cflags_2a03 = app.active_nsf_chip_flags_for_ui().expect("2A03 active");
+        let descs_2a03 = cflags_2a03.channel_descriptors();
+        assert_eq!(descs_2a03.len(), 5);
+        assert_eq!(descs_2a03[0].display_name, "Pulse 1");
+        assert_eq!(descs_2a03[4].display_name, "DPCM");
+
+        let nsf_items = app.now_playing_context_items();
+        assert!(nsf_items.iter().any(|(lbl, _, r)| {
+            lbl == "Channels" && matches!(r, OwnedRight::ValueChevron(s) if s == "All ON")
+        }));
+        assert!(nsf_items.iter().any(|(lbl, _, _)| lbl == "Endless Loop"));
+
+        // Toggle Pulse 1 (bit 0) and Noise (bit 3) -> 3/5 ON
+        UIPodApp::toggle_nsf_channel_row(cflags_2a03, 0);
+        UIPodApp::toggle_nsf_channel_row(cflags_2a03, 3);
+        assert_eq!(get_nsf_channel_mute_mask(), (1 << 0) | (1 << 3));
+        let nsf_items_muted = app.now_playing_context_items();
+        assert!(nsf_items_muted.iter().any(|(lbl, _, r)| {
+            lbl == "Channels" && matches!(r, OwnedRight::ValueChevron(s) if s == "3/5 ON")
+        }));
+
+        // Solo Triangle (row 2, bit 2) -> all other 4 channels muted (`1/5 ON`), second Solo restores `0`
+        UIPodApp::solo_or_restore_nsf_channel(cflags_2a03, 2);
+        assert_eq!(get_nsf_channel_mute_mask(), 0b1_1011);
+        UIPodApp::solo_or_restore_nsf_channel(cflags_2a03, 2);
+        assert_eq!(get_nsf_channel_mute_mask(), 0);
+
+        // Mute DPCM and trigger `Enable All Channels` row (`row == 5`)
+        UIPodApp::toggle_nsf_channel_row(cflags_2a03, 4);
+        assert_eq!(get_nsf_channel_mute_mask(), 1 << 4);
+        UIPodApp::toggle_nsf_channel_row(cflags_2a03, 5);
+        assert_eq!(get_nsf_channel_mute_mask(), 0);
+
+        // 3. VRC6 & MMC5 `.nsf` tracks: 8 channels (`2A03` 5 + 3 expansion channels)
+        let nsf_vrc6 = app.add_nsf_subtrack(
+            "/Music/Castlevania III.nsf#0".into(),
+            0,
+            false,
+            ChipFlags::VRC6,
+            None,
+            "Beginning".into(),
+            "Konami Kukeiha Club".into(),
+            "Castlevania III".into(),
+            135_000,
+            None,
+        );
+        app.current_track = nsf_vrc6;
+        let cflags_vrc6 = app.active_nsf_chip_flags_for_ui().unwrap();
+        let descs_vrc6 = cflags_vrc6.channel_descriptors();
+        assert_eq!(descs_vrc6.len(), 8);
+        assert_eq!(descs_vrc6[7].display_name, "VRC6 Sawtooth");
+        UIPodApp::toggle_nsf_channel_row(cflags_vrc6, 7);
+        assert_eq!(get_nsf_channel_mute_mask(), 1 << 7);
+        assert!(app.now_playing_context_items().iter().any(|(lbl, _, r)| {
+            lbl == "Channels" && matches!(r, OwnedRight::ValueChevron(s) if s == "7/8 ON")
+        }));
+
+        let cflags_mmc5 = ChipFlags(ChipFlags::MMC5);
+        assert_eq!(cflags_mmc5.channel_descriptors().len(), 8);
+        assert_eq!(cflags_mmc5.channel_descriptors()[7].display_name, "MMC5 PCM");
+
+        reset_nsf_runtime_session();
+    }
+
+    #[test]
+    fn file_browser_nsf_drilldown_separates_music_sfx_and_persists_playlist_uri() {
+        let mut app = UIPodApp::new();
+        let m0 = app.add_nsf_subtrack(
+            "/Music/Mega Man 2.nsf#0".into(),
+            0,
+            false,
+            0,
+            Some(36_000),
+            "Title Theme".into(),
+            "Capcom".into(),
+            "Mega Man 2".into(),
+            102_000,
+            None,
+        );
+        let m1 = app.add_nsf_subtrack(
+            "/Music/Mega Man 2.nsf#1".into(),
+            1,
+            false,
+            0,
+            Some(48_000),
+            "Dr. Wily Stage 1".into(),
+            "Capcom".into(),
+            "Mega Man 2".into(),
+            145_000,
+            None,
+        );
+        let sfx0 = app.add_nsf_subtrack(
+            "/Music/Mega Man 2.nsf#2".into(),
+            2,
+            true,
+            0,
+            None,
+            "Track 03".into(),
+            "Capcom".into(),
+            "Mega Man 2".into(),
+            1_800,
+            None,
+        );
+
+        // 1. File Browser groups the container with `music_count == 2` (`[2 ♪]`)
+        let browse = app.browse_music_items();
+        let container_entries: Vec<_> = browse
+            .iter()
+            .filter_map(|it| match it {
+                BrowseMusicItem::NsfContainer {
+                    file_name,
+                    music_count,
+                    play_idx,
+                } => Some((file_name.as_str(), *music_count, *play_idx)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            container_entries,
+            vec![("/Music/Mega Man 2.nsf", 2, Some(m0))]
+        );
+
+        // 2. Container drill-down separates Music (2) and Sound Effects (1)
+        let (music, sfx, game_title) = app.nsf_subtracks_for_file("/Music/Mega Man 2.nsf");
+        assert_eq!(game_title, "Mega Man 2");
+        assert_eq!(music, vec![m0, m1]);
+        assert_eq!(sfx, vec![sfx0]);
+
+        // 3. Library Songs / Next-Prev navigation exclude SFX subtracks
+        assert_eq!(app.step_playable_track(m1, 1), 0); // wraps back to track 0, skipping `sfx0`!
+
+        // 4. Add to Playlist on subtrack `#1` stores exact `/Music/Mega Man 2.nsf#1` URI
+        let chosen_uri = app.tracks[m1].uri.clone().unwrap();
+        app.user_playlist_uris.push(chosen_uri);
+        assert_eq!(app.user_playlist_uris, vec!["/Music/Mega Man 2.nsf#1"]);
+    }
 }

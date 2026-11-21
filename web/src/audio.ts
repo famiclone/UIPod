@@ -41,6 +41,44 @@ export interface DspParams {
   flangerDepth?: number;
   flangerFeedback?: number;
   flangerMix?: number;
+  djMode?: number;          // 0=Off, 1=Classic, 2=DJ Vinyl, 3=DJ Master Tempo
+  djLength?: number;        // 0=4 Bars, 1=8 Bars, 2=12s
+  djMaxStretch?: number;    // 0=6%, 1=10%, 2=12%
+  djKeepGapless?: boolean;
+  djQuickCut?: boolean;
+}
+
+export interface DjWasmBridge {
+  setConfig: (
+    mode: number,
+    length: number,
+    maxStretch: number,
+    keepGapless: boolean,
+    quickCut: boolean,
+  ) => void;
+  beginTransition: (
+    sampleRate: number,
+    trackA: number,
+    tailAS16: Int16Array,
+    trackB: number,
+    introBS16: Int16Array,
+    isBEof: boolean,
+    deckBIsNativeNsf: boolean,
+    manualQuickCut: boolean,
+  ) => boolean;
+  feedDeckBS16: (chunkS16: Int16Array, isEof: boolean) => void;
+  renderS16: (frames: number) => Int16Array;
+  takeMidpointCrossed: () => boolean;
+  isActive: () => boolean;
+  reset: () => void;
+}
+
+export interface StreamingPcmSource {
+  open: (sampleRate: number) => number;
+  renderS16: (frames: number) => Int16Array;
+  seekMs: (targetMs: number) => void;
+  elapsedMs: () => number;
+  close: () => void;
 }
 
 const BUILTIN_TRACK_URLS: string[] = [
@@ -110,12 +148,30 @@ export class UIPodAudioEngine {
   private pcmOut = new Int16Array(2048);
 
   private sourceNode: AudioBufferSourceNode | null = null;
+  private activeDecodedBuffer: AudioBuffer | null = null;
+  private streamNode: ScriptProcessorNode | null = null;
+  private activeStreamSource: StreamingPcmSource | null = null;
+  public djBridge: DjWasmBridge | null = null;
+  private djActive = false;
+  private djPreppingSeq = -1;
+  private djMidpointDone = false;
+  private djDisplayPosSec = 0;
   private seekOsc: OscillatorNode | null = null;
   private seekLfo: OscillatorNode | null = null;
   private seekGain: GainNode | null = null;
   private builtinCache = new Map<number, AudioBuffer>();
   private builtinLoading = new Map<number, Promise<AudioBuffer>>();
   private userBuffers = new Map<number, AudioBuffer>();
+  private lazyPcmLoaders = new Map<
+    number,
+    { durSec: number; sampleRate: number; renderS16: () => Int16Array }
+  >();
+  private streamingTracks = new Map<
+    number,
+    { initialDurSec: number; source: StreamingPcmSource }
+  >();
+  public onNonStreamingTrack: (() => void) | null = null;
+  public onTrackAutoAdvance: ((nextIndex: number) => void) | null = null;
   private playSeq = 0;
 
   public playing = false;
@@ -136,6 +192,11 @@ export class UIPodAudioEngine {
     hf: 40,
     stopStart: true,
     speed: 100,
+    djMode: 0,
+    djLength: 1,
+    djMaxStretch: 1,
+    djKeepGapless: true,
+    djQuickCut: true,
   };
 
   private ensureContext(): AudioContext {
@@ -366,7 +427,25 @@ export class UIPodAudioEngine {
   }
 
   public applyDsp(dsp: DspParams): void {
-    this.dsp = { ...dsp };
+    const merged: DspParams = { ...this.dsp, ...dsp };
+    this.dsp = merged;
+    if (typeof dsp.djMode === 'number' && this.djBridge) {
+      this.djBridge.setConfig(
+        merged.djMode ?? 0,
+        merged.djLength ?? 1,
+        merged.djMaxStretch ?? 1,
+        merged.djKeepGapless !== false,
+        merged.djQuickCut !== false,
+      );
+      if ((merged.djMode ?? 0) === 0 && this.djActive) {
+        this.djActive = false;
+      }
+    }
+    if (this.sourceNode) {
+      const isUser = this.userBuffers.has(this.currentTrack);
+      const djOn = (merged.djMode ?? 0) > 0 && this.trackCount >= 2;
+      this.sourceNode.loop = !isUser && !djOn;
+    }
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
@@ -503,9 +582,54 @@ export class UIPodAudioEngine {
     return Math.round(buf.duration * 1000);
   }
 
+  public registerLazyPcmTrack(
+    trackIndex: number,
+    durationMs: number,
+    sampleRate: number,
+    renderS16: () => Int16Array,
+  ): void {
+    this.lazyPcmLoaders.set(trackIndex, {
+      durSec: Math.max(0.1, durationMs / 1000),
+      sampleRate,
+      renderS16,
+    });
+    this.trackCount = Math.max(this.trackCount, trackIndex + 1);
+  }
+
+  public registerStreamingPcmTrack(
+    trackIndex: number,
+    durationMs: number,
+    source: StreamingPcmSource,
+  ): void {
+    this.streamingTracks.set(trackIndex, {
+      initialDurSec: Math.max(0.4, durationMs / 1000),
+      source,
+    });
+    this.trackCount = Math.max(this.trackCount, trackIndex + 1);
+  }
+
   private async loadTrackBuffer(ctx: AudioContext, trackIndex: number): Promise<AudioBuffer> {
     const userBuf = this.userBuffers.get(trackIndex);
     if (userBuf) return userBuf;
+
+    const lazy = this.lazyPcmLoaders.get(trackIndex);
+    if (lazy) {
+      const s16 = lazy.renderS16();
+      const frames = Math.floor(s16.length / 2);
+      if (frames <= 0) {
+        throw new Error('GSF track produced no audio samples (missing .gsflib?)');
+      }
+      const buf = ctx.createBuffer(2, frames, lazy.sampleRate);
+      const chL = buf.getChannelData(0);
+      const chR = buf.getChannelData(1);
+      const inv = 1.0 / 32768.0;
+      for (let i = 0; i < frames; i++) {
+        chL[i] = s16[i * 2] * inv;
+        chR[i] = s16[i * 2 + 1] * inv;
+      }
+      this.userBuffers.set(trackIndex, buf);
+      return buf;
+    }
 
     const idx = trackIndex % BUILTIN_TRACK_URLS.length;
     const cached = this.builtinCache.get(idx);
@@ -529,27 +653,415 @@ export class UIPodAudioEngine {
     return promise;
   }
 
+  private extractBufferS16AtRate(
+    buf: AudioBuffer,
+    targetRate: number,
+    startSec: number,
+    maxSec: number,
+  ): { s16: Int16Array; consumedSec: number; reachedEnd: boolean } {
+    const srcRate = buf.sampleRate;
+    const srcStart = Math.max(0, Math.min(buf.length, Math.floor(startSec * srcRate)));
+    const srcAvail = Math.max(0, buf.length - srcStart);
+    const availSec = srcAvail / srcRate;
+    const takeSec = Math.max(0, Math.min(availSec, maxSec));
+    const outFrames = Math.max(0, Math.floor(takeSec * targetRate));
+    const out = new Int16Array(outFrames * 2);
+    if (outFrames === 0 || buf.numberOfChannels === 0) {
+      return { s16: out, consumedSec: 0, reachedEnd: true };
+    }
+
+    const chL = buf.getChannelData(0);
+    const chR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : chL;
+    if (srcRate === targetRate) {
+      for (let i = 0; i < outFrames; i++) {
+        const idx = Math.min(buf.length - 1, srcStart + i);
+        const l = Math.max(-1, Math.min(1, chL[idx]));
+        const r = Math.max(-1, Math.min(1, chR[idx]));
+        out[i * 2] = (l * 32767) | 0;
+        out[i * 2 + 1] = (r * 32767) | 0;
+      }
+    } else {
+      const step = srcRate / targetRate;
+      for (let i = 0; i < outFrames; i++) {
+        const pos = srcStart + i * step;
+        const idx0 = Math.min(buf.length - 1, Math.floor(pos));
+        const idx1 = Math.min(buf.length - 1, idx0 + 1);
+        const frac = pos - idx0;
+        const l = Math.max(-1, Math.min(1, chL[idx0] * (1 - frac) + chL[idx1] * frac));
+        const r = Math.max(-1, Math.min(1, chR[idx0] * (1 - frac) + chR[idx1] * frac));
+        out[i * 2] = (l * 32767) | 0;
+        out[i * 2 + 1] = (r * 32767) | 0;
+      }
+    }
+
+    const consumedSrc = Math.ceil(takeSec * srcRate);
+    return {
+      s16: out,
+      consumedSec: outFrames / targetRate,
+      reachedEnd: srcStart + consumedSrc >= buf.length - 2,
+    };
+  }
+
+  public tickLookahead(): void {
+    if (
+      !this.playing ||
+      this.djActive ||
+      !this.djBridge ||
+      (this.dsp.djMode ?? 0) === 0 ||
+      this.trackCount < 2 ||
+      !this.ctx
+    ) {
+      return;
+    }
+    const posSec = this.getPositionSec();
+    const remSec = this.currentDurSec - posSec;
+    if (
+      this.currentDurSec >= 8.0 &&
+      remSec > 0.35 &&
+      remSec <= 17.5 &&
+      this.djPreppingSeq !== this.playSeq
+    ) {
+      this.djPreppingSeq = this.playSeq;
+      const nextIdx = (this.currentTrack + 1) % Math.max(1, this.trackCount);
+      void this.beginDjTransitionInternal(nextIdx, false);
+    }
+  }
+
+  public quickCutToTrack(nextIdx: number): void {
+    if (
+      !this.playing ||
+      !this.djBridge ||
+      (this.dsp.djMode ?? 0) === 0 ||
+      this.djActive ||
+      !this.ctx
+    ) {
+      this.playTrack(nextIdx, 0);
+      this.onTrackAutoAdvance?.(nextIdx);
+      return;
+    }
+    this.djPreppingSeq = this.playSeq;
+    void this.beginDjTransitionInternal(nextIdx, true);
+  }
+
+  private async beginDjTransitionInternal(
+    nextIdx: number,
+    manualQuickCut: boolean,
+  ): Promise<void> {
+    const ctx = this.ensureContext();
+    const seq = this.playSeq;
+    const trackA = this.currentTrack;
+    const djBridge = this.djBridge;
+    if (!djBridge) return;
+
+    const streamEntryB = this.streamingTracks.get(nextIdx) ?? null;
+    let bufB: AudioBuffer | null = null;
+    if (!streamEntryB) {
+      try {
+        bufB = await this.loadTrackBuffer(ctx, nextIdx);
+      } catch (err) {
+        console.warn('DJ Deck B preload error:', err);
+        if (manualQuickCut && seq === this.playSeq) {
+          this.playTrack(nextIdx, 0);
+          this.onTrackAutoAdvance?.(nextIdx);
+        }
+        return;
+      }
+    }
+
+    if (seq !== this.playSeq || !this.playing || this.djActive) {
+      return;
+    }
+
+    const posA = this.getPositionSec();
+    const maxTailSec = manualQuickCut ? 2.4 : 17.5;
+    let tailAS16: Int16Array;
+
+    if (this.activeDecodedBuffer && this.sourceNode) {
+      tailAS16 = this.extractBufferS16AtRate(
+        this.activeDecodedBuffer,
+        ctx.sampleRate,
+        posA,
+        maxTailSec,
+      ).s16;
+    } else if (this.activeStreamSource) {
+      const remSec = Math.max(0.5, Math.min(maxTailSec, this.currentDurSec - posA));
+      const framesA = Math.floor(remSec * ctx.sampleRate);
+      tailAS16 = this.activeStreamSource.renderS16(framesA);
+      this.activeStreamSource.close();
+      this.activeStreamSource = null;
+    } else {
+      if (manualQuickCut) {
+        this.playTrack(nextIdx, 0);
+        this.onTrackAutoAdvance?.(nextIdx);
+      }
+      return;
+    }
+
+    let introBS16: Int16Array;
+    let isBEof = true;
+    let deckBIsNativeNsf = false;
+    let handoffSecB = 0;
+    let durSecB = 23.0;
+    let liveStreamB: StreamingPcmSource | null = null;
+
+    if (streamEntryB) {
+      const durMsB = streamEntryB.source.open(ctx.sampleRate);
+      durSecB = durMsB > 0 ? durMsB / 1000 : streamEntryB.initialDurSec;
+      const introSec = manualQuickCut ? 3.5 : 13.5;
+      introBS16 = streamEntryB.source.renderS16(Math.floor(introSec * ctx.sampleRate));
+      const gotSec = introBS16.length / 2 / ctx.sampleRate;
+      isBEof = gotSec + 0.05 >= durSecB;
+      deckBIsNativeNsf = true;
+      liveStreamB = streamEntryB.source;
+      handoffSecB = gotSec;
+    } else if (bufB) {
+      this.onNonStreamingTrack?.();
+      durSecB = bufB.duration;
+      const introWindowSec = manualQuickCut
+        ? Math.min(8.0, bufB.duration)
+        : Math.min(20.0, bufB.duration);
+      const extractedB = this.extractBufferS16AtRate(bufB, ctx.sampleRate, 0, introWindowSec);
+      introBS16 = extractedB.s16;
+      handoffSecB = extractedB.consumedSec;
+      isBEof = true;
+    } else {
+      return;
+    }
+
+    const armed = djBridge.beginTransition(
+      ctx.sampleRate,
+      trackA,
+      tailAS16,
+      nextIdx,
+      introBS16,
+      isBEof,
+      deckBIsNativeNsf,
+      manualQuickCut,
+    );
+    if (!armed) {
+      liveStreamB?.close();
+      if (manualQuickCut) {
+        this.playTrack(nextIdx, 0);
+        this.onTrackAutoAdvance?.(nextIdx);
+      }
+      return;
+    }
+
+    this.stopSource(false, false);
+    this.djActive = true;
+    this.djMidpointDone = false;
+    this.djDisplayPosSec = posA;
+
+    const proc = ctx.createScriptProcessor(2048, 0, 2);
+    let streamBEof = isBEof;
+    let handoffQueued = false;
+
+    proc.onaudioprocess = (ev: AudioProcessingEvent) => {
+      const outL = ev.outputBuffer.getChannelData(0);
+      const outR = ev.outputBuffer.getChannelData(1);
+      const frames = outL.length;
+      if (!this.playing || this.streamNode !== proc || !this.djBridge) {
+        outL.fill(0);
+        outR.fill(0);
+        return;
+      }
+
+      if (liveStreamB && !streamBEof) {
+        const chunkB = liveStreamB.renderS16(frames * 2);
+        if (chunkB.length === 0) {
+          streamBEof = true;
+          this.djBridge.feedDeckBS16(chunkB, true);
+        } else {
+          this.djBridge.feedDeckBS16(chunkB, false);
+        }
+      }
+
+      const s16 = this.djBridge.renderS16(frames);
+      const gotFrames = Math.floor(s16.length / 2);
+      const inv = 1.0 / 32768.0;
+
+      for (let i = 0; i < Math.min(frames, gotFrames); i++) {
+        outL[i] = s16[i * 2] * inv;
+        outR[i] = s16[i * 2 + 1] * inv;
+      }
+
+      this.djDisplayPosSec += Math.min(frames, gotFrames) / ctx.sampleRate;
+
+      if (!this.djMidpointDone && this.djBridge.takeMidpointCrossed()) {
+        this.djMidpointDone = true;
+        this.currentTrack = nextIdx;
+        this.currentDurSec = durSecB;
+        this.djDisplayPosSec = Math.min(handoffSecB, durSecB * 0.25);
+        setTimeout(() => {
+          if (this.playing) {
+            this.onTrackAutoAdvance?.(nextIdx);
+          }
+        }, 0);
+      }
+
+      if (gotFrames < frames || !this.djBridge.isActive()) {
+        const remOut = frames - gotFrames;
+        if (remOut > 0 && bufB && handoffSecB < bufB.duration) {
+          const tailFill = this.extractBufferS16AtRate(
+            bufB,
+            ctx.sampleRate,
+            handoffSecB,
+            remOut / ctx.sampleRate,
+          );
+          const fillN = Math.min(remOut, Math.floor(tailFill.s16.length / 2));
+          for (let j = 0; j < fillN; j++) {
+            outL[gotFrames + j] = tailFill.s16[j * 2] * inv;
+            outR[gotFrames + j] = tailFill.s16[j * 2 + 1] * inv;
+          }
+          for (let j = gotFrames + fillN; j < frames; j++) {
+            outL[j] = 0;
+            outR[j] = 0;
+          }
+          handoffSecB += tailFill.consumedSec;
+        } else {
+          for (let j = gotFrames; j < frames; j++) {
+            outL[j] = 0;
+            outR[j] = 0;
+          }
+        }
+
+        if (!handoffQueued) {
+          handoffQueued = true;
+          setTimeout(() => {
+            if (this.streamNode !== proc || !this.playing) return;
+            this.djActive = false;
+            if (!this.djMidpointDone) {
+              this.djMidpointDone = true;
+              this.currentTrack = nextIdx;
+              this.onTrackAutoAdvance?.(nextIdx);
+            }
+            if (liveStreamB && streamEntryB) {
+              if (streamBEof) {
+                const afterB = (nextIdx + 1) % Math.max(1, this.trackCount);
+                this.playTrack(afterB, 0);
+                this.onTrackAutoAdvance?.(afterB);
+              } else {
+                this.continueOpenStreamingTrack(ctx, nextIdx, streamEntryB, liveStreamB, durSecB);
+              }
+            } else if (bufB) {
+              if (handoffSecB + 0.15 >= bufB.duration) {
+                const afterB = (nextIdx + 1) % Math.max(1, this.trackCount);
+                this.playTrack(afterB, 0);
+                this.onTrackAutoAdvance?.(afterB);
+              } else {
+                this.startDecodedBuffer(ctx, bufB, nextIdx, handoffSecB, true);
+              }
+            }
+          }, 0);
+        }
+      }
+    };
+
+    proc.connect(this.eqFilters[0]);
+    this.streamNode = proc;
+    this.activeStreamSource = liveStreamB;
+    this.playing = true;
+  }
+
+  private continueOpenStreamingTrack(
+    ctx: AudioContext,
+    trackIndex: number,
+    entry: { initialDurSec: number; source: StreamingPcmSource },
+    openSource: StreamingPcmSource,
+    durSec: number,
+  ): void {
+    if (this.streamNode) {
+      const oldProc = this.streamNode;
+      this.streamNode = null;
+      try {
+        oldProc.onaudioprocess = null;
+        oldProc.disconnect();
+      } catch {
+        // ignore
+      }
+    }
+    this.currentTrack = trackIndex;
+    this.currentDurSec = durSec > 0 ? durSec : entry.initialDurSec;
+    this.offsetSec = openSource.elapsedMs() / 1000;
+
+    const proc = ctx.createScriptProcessor(2048, 0, 2);
+    let endedQueued = false;
+    proc.onaudioprocess = (ev: AudioProcessingEvent) => {
+      const outL = ev.outputBuffer.getChannelData(0);
+      const outR = ev.outputBuffer.getChannelData(1);
+      const frames = outL.length;
+      if (!this.playing || this.streamNode !== proc) {
+        outL.fill(0);
+        outR.fill(0);
+        return;
+      }
+      const fxOn = this.dsp.fxEnabled !== false;
+      const rate = fxOn ? Math.max(0.5, Math.min(1.5, this.dsp.speed / 100)) : 1.0;
+      const pullFrames = rate === 1.0 ? frames : Math.max(1, Math.round(frames * rate));
+      const s16 = openSource.renderS16(pullFrames);
+      const gotFrames = Math.floor(s16.length / 2);
+      if (gotFrames <= 0) {
+        outL.fill(0);
+        outR.fill(0);
+        if (!endedQueued && this.playing && this.streamNode === proc) {
+          endedQueued = true;
+          setTimeout(() => {
+            if (this.streamNode === proc && this.playing) {
+              const next = (this.currentTrack + 1) % Math.max(1, this.trackCount);
+              this.playTrack(next, 0);
+              this.onTrackAutoAdvance?.(next);
+            }
+          }, 0);
+        }
+        return;
+      }
+      const inv = 1.0 / 32768.0;
+      if (gotFrames === frames) {
+        for (let i = 0; i < frames; i++) {
+          outL[i] = s16[i * 2] * inv;
+          outR[i] = s16[i * 2 + 1] * inv;
+        }
+      } else {
+        const scale = (gotFrames - 1) / Math.max(1, frames - 1);
+        for (let i = 0; i < frames; i++) {
+          const srcIdx = Math.min(gotFrames - 1, Math.floor(i * scale));
+          outL[i] = s16[srcIdx * 2] * inv;
+          outR[i] = s16[srcIdx * 2 + 1] * inv;
+        }
+      }
+    };
+    proc.connect(this.eqFilters[0]);
+    this.streamNode = proc;
+    this.activeStreamSource = openSource;
+    this.startCtxTime = ctx.currentTime;
+    this.playing = true;
+    this.applyDsp(this.dsp);
+  }
+
   private startDecodedBuffer(
     ctx: AudioContext,
     buf: AudioBuffer,
     trackIndex: number,
     startSec: number,
+    skipMotorRamp = false,
   ): void {
     this.stopSource(false);
     const isUser = this.userBuffers.has(trackIndex);
+    const djOn = (this.dsp.djMode ?? 0) > 0 && this.trackCount >= 2;
+    this.activeDecodedBuffer = buf;
     this.currentTrack = trackIndex;
     this.currentDurSec = buf.duration;
     this.offsetSec = Math.max(0, Math.min(startSec, Math.max(0, buf.duration - 0.25)));
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.loop = !isUser;
+    src.loop = !isUser && !djOn;
     src.connect(this.eqFilters[0]);
 
     const fxOn = this.dsp.fxEnabled !== false;
     const targetRate = fxOn ? Math.max(0.5, Math.min(1.5, this.dsp.speed / 100)) : 1.0;
     const now = ctx.currentTime;
-    if (fxOn && this.dsp.tape && this.dsp.stopStart) {
+    if (!skipMotorRamp && fxOn && this.dsp.tape && this.dsp.stopStart) {
       src.playbackRate.setValueAtTime(0.32, now);
       src.playbackRate.exponentialRampToValueAtTime(targetRate, now + 0.24);
     } else {
@@ -559,14 +1071,88 @@ export class UIPodAudioEngine {
     const bufOffset = this.offsetSec % Math.max(0.1, buf.duration);
     src.start(now, bufOffset);
     src.onended = () => {
-      if (this.sourceNode === src && isUser && this.playing) {
+      if (this.sourceNode === src && (isUser || djOn) && this.playing && !this.djActive) {
         const next = (this.currentTrack + 1) % Math.max(1, this.trackCount);
         this.playTrack(next, 0);
+        this.onTrackAutoAdvance?.(next);
       }
     };
 
     this.sourceNode = src;
     this.startCtxTime = now;
+    this.playing = true;
+    this.applyDsp(this.dsp);
+  }
+
+  private startStreamingTrack(
+    ctx: AudioContext,
+    trackIndex: number,
+    entry: { initialDurSec: number; source: StreamingPcmSource },
+    startSec: number,
+  ): void {
+    this.stopSource(false);
+    const durMs = entry.source.open(ctx.sampleRate);
+    this.currentTrack = trackIndex;
+    this.currentDurSec = durMs > 0 ? durMs / 1000 : entry.initialDurSec;
+    this.offsetSec = Math.max(0, Math.min(startSec, Math.max(0, this.currentDurSec - 0.1)));
+    if (this.offsetSec > 0.005) {
+      entry.source.seekMs(Math.round(this.offsetSec * 1000));
+    }
+
+    const proc = ctx.createScriptProcessor(2048, 0, 2);
+    let endedQueued = false;
+    proc.onaudioprocess = (ev: AudioProcessingEvent) => {
+      const outL = ev.outputBuffer.getChannelData(0);
+      const outR = ev.outputBuffer.getChannelData(1);
+      const frames = outL.length;
+      if (!this.playing || this.streamNode !== proc) {
+        outL.fill(0);
+        outR.fill(0);
+        return;
+      }
+
+      const fxOn = this.dsp.fxEnabled !== false;
+      const rate = fxOn ? Math.max(0.5, Math.min(1.5, this.dsp.speed / 100)) : 1.0;
+      const pullFrames = rate === 1.0 ? frames : Math.max(1, Math.round(frames * rate));
+      const s16 = entry.source.renderS16(pullFrames);
+      const gotFrames = Math.floor(s16.length / 2);
+
+      if (gotFrames <= 0) {
+        outL.fill(0);
+        outR.fill(0);
+        if (!endedQueued && this.playing && this.streamNode === proc) {
+          endedQueued = true;
+          setTimeout(() => {
+            if (this.streamNode === proc && this.playing) {
+              const next = (this.currentTrack + 1) % Math.max(1, this.trackCount);
+              this.playTrack(next, 0);
+              this.onTrackAutoAdvance?.(next);
+            }
+          }, 0);
+        }
+        return;
+      }
+
+      const inv = 1.0 / 32768.0;
+      if (gotFrames === frames) {
+        for (let i = 0; i < frames; i++) {
+          outL[i] = s16[i * 2] * inv;
+          outR[i] = s16[i * 2 + 1] * inv;
+        }
+      } else {
+        const scale = (gotFrames - 1) / Math.max(1, frames - 1);
+        for (let i = 0; i < frames; i++) {
+          const srcIdx = Math.min(gotFrames - 1, Math.floor(i * scale));
+          outL[i] = s16[srcIdx * 2] * inv;
+          outR[i] = s16[srcIdx * 2 + 1] * inv;
+        }
+      }
+    };
+
+    proc.connect(this.eqFilters[0]);
+    this.streamNode = proc;
+    this.activeStreamSource = entry.source;
+    this.startCtxTime = ctx.currentTime;
     this.playing = true;
     this.applyDsp(this.dsp);
   }
@@ -578,9 +1164,36 @@ export class UIPodAudioEngine {
     this.offsetSec = startSec;
     this.playing = true;
 
+    const streaming = this.streamingTracks.get(trackIndex);
+    if (streaming) {
+      this.startStreamingTrack(ctx, trackIndex, streaming, startSec);
+      return;
+    }
+
+    // Switching away from an NSF track to a standard/non-NSF track: reset NSF runtime mask!
+    this.onNonStreamingTrack?.();
+
     const userBuf = this.userBuffers.get(trackIndex);
     if (userBuf) {
       this.startDecodedBuffer(ctx, userBuf, trackIndex, startSec);
+      return;
+    }
+
+    const lazy = this.lazyPcmLoaders.get(trackIndex);
+    if (lazy) {
+      this.currentDurSec = lazy.durSec;
+      this.stopSource(false);
+      void this.loadTrackBuffer(ctx, trackIndex)
+        .then((buf) => {
+          if (seq !== this.playSeq || !this.playing) return;
+          this.startDecodedBuffer(ctx, buf, trackIndex, startSec);
+        })
+        .catch((err) => {
+          console.warn('GSF track decode error:', err);
+          if (seq === this.playSeq) {
+            this.playing = false;
+          }
+        });
       return;
     }
 
@@ -612,7 +1225,7 @@ export class UIPodAudioEngine {
       this.offsetSec = 0;
     }
     if (shouldPlay) {
-      if (!this.playing || !this.sourceNode) {
+      if (!this.playing || (!this.sourceNode && !this.streamNode)) {
         this.playTrack(this.currentTrack, this.offsetSec);
       }
     } else if (this.playing) {
@@ -625,7 +1238,21 @@ export class UIPodAudioEngine {
   }
 
   public seekMs(posMs: number): void {
-    this.offsetSec = Math.max(0, Math.min(posMs / 1000, this.currentDurSec));
+    const clampedMs = Math.max(0, Math.min(posMs, this.currentDurSec * 1000));
+    this.offsetSec = clampedMs / 1000;
+    if (this.djActive) {
+      this.djBridge?.reset();
+      this.djActive = false;
+      this.djPreppingSeq = -1;
+      if (this.playing) {
+        this.playTrack(this.currentTrack, this.offsetSec);
+      }
+      return;
+    }
+    if (this.playing && this.streamNode && this.activeStreamSource) {
+      this.activeStreamSource.seekMs(Math.round(clampedMs));
+      return;
+    }
     if (this.playing) {
       this.playTrack(this.currentTrack, this.offsetSec);
     }
@@ -691,7 +1318,29 @@ export class UIPodAudioEngine {
     this.seekGain = gain;
   }
 
-  private stopSource(withTapeSpinDown: boolean): void {
+  private stopSource(withTapeSpinDown: boolean, resetDj = true): void {
+    if (resetDj) {
+      this.djActive = false;
+      this.djPreppingSeq = -1;
+      this.djBridge?.reset();
+    }
+    this.activeDecodedBuffer = null;
+    if (this.streamNode) {
+      const proc = this.streamNode;
+      this.streamNode = null;
+      try {
+        proc.onaudioprocess = null;
+        proc.disconnect();
+      } catch {
+        // Already disconnected
+      }
+    }
+    if (this.activeStreamSource) {
+      const st = this.activeStreamSource;
+      this.activeStreamSource = null;
+      st.close();
+    }
+
     const src = this.sourceNode;
     this.sourceNode = null;
     if (!src || !this.ctx) return;
@@ -711,6 +1360,13 @@ export class UIPodAudioEngine {
   }
 
   public getPositionSec(): number {
+    if (this.playing && this.djActive) {
+      return Math.max(0, Math.min(this.djDisplayPosSec, this.currentDurSec || this.djDisplayPosSec));
+    }
+    if (this.playing && this.streamNode && this.activeStreamSource) {
+      const sec = this.activeStreamSource.elapsedMs() / 1000;
+      return Math.max(0, Math.min(sec, this.currentDurSec || sec));
+    }
     if (!this.playing || !this.ctx || !this.sourceNode) return this.offsetSec;
     const rate = Math.max(0.5, Math.min(1.5, this.dsp.speed / 100));
     const elapsed = (this.ctx.currentTime - this.startCtxTime) * rate;

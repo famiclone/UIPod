@@ -66,6 +66,7 @@
 #include "uipod_plugins.h"
 #include "menus/exported_menus.h"
 #include "uipod_m4b.h"
+#include "uipod_midi.h"
 #include "rbunicode.h"
 #include "dsp_core.h"
 #include "dircache.h"
@@ -175,6 +176,7 @@ int main(void)
      * changed; shows "Scanning Library NN%" while parsing new files) so
      * Shuffle Songs and the library browse are ready. */
     uipod_offline_mode_init();
+    uipod_midi_init();
     uipod_library_init();
     uipod_navidrome_init();
     uipod_jellyfin_init();

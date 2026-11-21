@@ -83,6 +83,37 @@ public class UIPodActivity extends SDLActivity implements SurfaceHolder.Callback
     public static native void nativeOnAndroidVolumeChanged(
             int cur, int min, int max, boolean isFixed);
 
+    /* Native Rust NSF/NSFe lock-free runtime controls (`crates/uipod-codecs/src/nsf_bridge.rs`) */
+    public static native int nativeGetNsfChannelMuteMask();
+    public static native void nativeSetNsfChannelMuteMask(int mask);
+    public static native int nativeGetNsfActiveChipFlags();
+    public static native boolean nativeGetNsfEndlessLoop();
+    public static native void nativeSetNsfEndlessLoop(boolean enabled);
+
+    public static int getNsfChannelMuteMask() {
+        return sNativeLoaded ? nativeGetNsfChannelMuteMask() : 0;
+    }
+
+    public static void setNsfChannelMuteMask(int mask) {
+        if (sNativeLoaded) {
+            nativeSetNsfChannelMuteMask(mask & 0xFFFF);
+        }
+    }
+
+    public static int getNsfActiveChipFlags() {
+        return sNativeLoaded ? nativeGetNsfActiveChipFlags() : -1;
+    }
+
+    public static boolean getNsfEndlessLoop() {
+        return sNativeLoaded && nativeGetNsfEndlessLoop();
+    }
+
+    public static void setNsfEndlessLoop(boolean enabled) {
+        if (sNativeLoaded) {
+            nativeSetNsfEndlessLoop(enabled);
+        }
+    }
+
     public static final class StreamVolumeReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {

@@ -34,6 +34,8 @@ bool backlight_hw_init(void);
 void backlight_hw_on(void);
 void backlight_hw_off(void);
 void backlight_hw_brightness(int brightness);
+void backlight_hw_complete_wake(void);
+void backlight_notify_hw_woke(void);
 
 
 #endif

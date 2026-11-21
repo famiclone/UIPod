@@ -77,7 +77,10 @@ impl DlLibrary {
         if desc.magic != UIPOD_PLUGIN_MAGIC {
             return Err(format!("Invalid plugin magic: 0x{:08X}", desc.magic));
         }
-        if desc.api_version != UIPOD_PLUGIN_API_VERSION && desc.api_version != 5 {
+        if desc.api_version != UIPOD_PLUGIN_API_VERSION
+            && desc.api_version != 6
+            && desc.api_version != 5
+        {
             return Err(format!(
                 "Incompatible plugin ABI v{} (host v{})",
                 desc.api_version, UIPOD_PLUGIN_API_VERSION
@@ -820,6 +823,13 @@ mod tests {
             }
         }
 
+        unsafe extern "C" fn m_apu_tel(out: *mut uipod_plugin_sdk::PluginApuTelemetry) -> bool {
+            if !out.is_null() {
+                *out = uipod_plugin_sdk::PluginApuTelemetry::default();
+            }
+            false
+        }
+
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
             get_ticks_ms: m_ticks,
@@ -856,6 +866,7 @@ mod tests {
             library_track_at: m_libat,
             canvas_begin_responsive: m_begin_resp,
             get_responsive_size: m_resp_size,
+            audio_get_apu_telemetry: m_apu_tel,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");

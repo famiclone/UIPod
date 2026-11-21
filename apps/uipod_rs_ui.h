@@ -19,7 +19,10 @@ extern "C" {
 
 /* Prefix for `callback_get_item_indicator` to render plain right-aligned
  * value text (`Active5`, no `< >` arrows) instead of cycleable `< Value >`. */
-#define UIPOD_INDIC_PLAIN "\x1f"
+#define UIPOD_INDIC_PLAIN         "\x1f"
+/* Prefix for `callback_get_item_indicator` to render right-aligned value text
+ * followed by submenu chevron `>` (e.g. `"3/5 ON ›"` or `"Sound Effects (8) ›"`). */
+#define UIPOD_INDIC_VALUE_CHEVRON "\x1e"
 
 enum uipod_rs_source_icon
 {
@@ -68,28 +71,72 @@ struct UIPodRsListScreen
     size_t                      visible_items;
 };
 
+struct UIPodRsNsfApuPill
+{
+    const char *short_code;
+    bool        active;
+    bool        muted;
+    float       volume;
+};
+
+struct UIPodRsNsfChannelRow
+{
+    const char *short_code;
+    const char *display_name;
+    bool        enabled;
+    bool        soloed;
+    bool        active;
+    float       volume;
+    bool        selected;
+};
+
+struct UIPodRsNsfChannels
+{
+    uint32_t                          bg_rgb;
+    uint32_t                          fg_rgb;
+    uint32_t                          fg1_rgb;
+    uint32_t                          fg2_rgb;
+    struct UIPodRsHeader              header;
+    const struct UIPodRsNsfChannelRow *channels;
+    size_t                            channel_count;
+    const char                       *enable_all_label;
+    bool                              enable_all_selected;
+    const char                       *footer_hint;
+    size_t                            start_item;
+    size_t                            visible_items;
+};
+
 struct UIPodRsNowPlaying
 {
-    uint32_t             bg_rgb;
-    uint32_t             fg_rgb;
-    uint32_t             fg1_rgb;
-    uint32_t             fg2_rgb;
-    struct UIPodRsHeader header;
-    const char          *track_pos_label;
-    bool                 eq_enabled;
-    const char          *title;
-    const char          *artist;
-    const char          *album;
-    const char          *codec_label;
-    const char          *bitdepth_label;
-    const char          *samplerate_label;
-    float                progress;
-    const char          *elapsed_label;
-    const char          *remaining_label;
-    const char          *center_status_label;
-    const uint8_t       *art_rgb24;
-    bool                 mono_album_art;
-    bool                 alt_layout;
+    uint32_t                       bg_rgb;
+    uint32_t                       fg_rgb;
+    uint32_t                       fg1_rgb;
+    uint32_t                       fg2_rgb;
+    struct UIPodRsHeader           header;
+    const char                    *track_pos_label;
+    bool                           eq_enabled;
+    const char                    *title;
+    const char                    *artist;
+    const char                    *album;
+    const char                    *codec_label;
+    const char                    *bitdepth_label;
+    const char                    *samplerate_label;
+    float                          progress;
+    const char                    *elapsed_label;
+    const char                    *remaining_label;
+    const char                    *center_status_label;
+    const uint8_t                 *art_rgb24;
+    bool                           mono_album_art;
+    bool                           alt_layout;
+    bool                           is_nsf;
+    bool                           nsf_endless_loop;
+    const char                    *nsf_chip_badge;
+    float                          nsf_loop_progress; /* < 0.0 when None */
+    const struct UIPodRsNsfApuPill *nsf_channels;
+    size_t                         nsf_channel_count;
+    const char                    *dj_status_label;
+    float                          dj_progress;
+    bool                           dj_bass_swap_flash;
 };
 
 struct UIPodRsKeyboardKey
@@ -185,6 +232,11 @@ bool   uipod_rs_ui_render_graphic_eq(const struct UIPodRsGraphicEq *eq,
 bool   uipod_rs_ui_render_graphic_eq_gpu(const struct UIPodRsGraphicEq *eq,
                                          uint32_t win_w,
                                          uint32_t win_h);
+bool   uipod_rs_ui_render_nsf_channels(const struct UIPodRsNsfChannels *ch_sc,
+                                       uint8_t *fb_bgr);
+bool   uipod_rs_ui_render_nsf_channels_gpu(const struct UIPodRsNsfChannels *ch_sc,
+                                           uint32_t win_w,
+                                           uint32_t win_h);
 bool   uipod_rs_ui_snapshot_transition(void);
 bool   uipod_rs_ui_present_transition_gpu(uint32_t win_w,
                                           uint32_t win_h,
@@ -290,6 +342,14 @@ bool uipod_gpu_render_graphic_eq(const char *header_title,
                                  size_t selected_col,
                                  bool adjusting,
                                  bool bypassed);
+bool uipod_gpu_render_nsf_channels(const char *header_title,
+                                   const struct UIPodRsNsfChannelRow *channels,
+                                   size_t channel_count,
+                                   const char *enable_all_label,
+                                   bool enable_all_selected,
+                                   const char *footer_hint,
+                                   size_t start_item,
+                                   size_t visible_items);
 void uipod_gpu_notify_volume_changed(void);
 bool uipod_gpu_is_volume_popup_active(void);
 bool uipod_gpu_tick_volume_popup(void);

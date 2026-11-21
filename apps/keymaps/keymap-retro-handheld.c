@@ -70,6 +70,8 @@ static const struct button_mapping button_context_wps[]  = {
     { ACTION_STD_CONTEXT,   BUTTON_MENU|BUTTON_REL,         BUTTON_MENU|BUTTON_REPEAT },
     { ACTION_WPS_SKIPPREV,  BUTTON_LEFT|BUTTON_REL,         BUTTON_LEFT },
     { ACTION_WPS_SKIPNEXT,  BUTTON_RIGHT|BUTTON_REL,        BUTTON_RIGHT },
+    { ACTION_WPS_SKIPPREV,  BUTTON_L|BUTTON_REL,            BUTTON_L },
+    { ACTION_WPS_SKIPNEXT,  BUTTON_R|BUTTON_REL,            BUTTON_R },
     { ACTION_WPS_SEEKBACK,  BUTTON_LEFT|BUTTON_REPEAT,      BUTTON_NONE },
     { ACTION_WPS_SEEKFWD,   BUTTON_RIGHT|BUTTON_REPEAT,     BUTTON_NONE },
     { ACTION_WPS_STOPSEEK,  BUTTON_LEFT|BUTTON_REL,         BUTTON_LEFT|BUTTON_REPEAT },
@@ -109,6 +111,9 @@ static const struct button_mapping button_context_list[] = {
     { ACTION_LISTTREE_PGDOWN, BUTTON_RIGHT,                            BUTTON_NONE },
     { ACTION_LISTTREE_PGUP,   BUTTON_L,                                BUTTON_NONE },
     { ACTION_LISTTREE_PGDOWN, BUTTON_R,                                BUTTON_NONE },
+    /* START plays the highlighted track / .nsf game music / folder immediately */
+    { ACTION_TP_LIST_PLAY,    BUTTON_START|BUTTON_REL,                 BUTTON_START },
+    { ACTION_TP_LIST_PLAY,    BUTTON_START|BUTTON_REL,                 BUTTON_START|BUTTON_REPEAT },
     /* A (select) and B (back; hold >1s = home) are inherited from CONTEXT_STD */
 
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)

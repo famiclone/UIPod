@@ -114,7 +114,8 @@ use std::path::{Path, PathBuf};
 use uipod_ui::renderer::{HEIGHT, WIDTH};
 use uipod_ui::{
     FileIconKind, HeaderSourceIcon, HeaderState, KeyboardKey, KeyboardState, ListRow,
-    ListScreenState, NowPlayingState, PlayMode, RightAccessory, ThemeColors, UiEngine,
+    ListScreenState, NowPlayingState, NsfApuPill, NsfChannelRow, NsfChannelsState, PlayMode,
+    RightAccessory, ThemeColors, UiEngine,
 };
 
 fn write_png(path: &Path, rgba: &[u8]) {
@@ -385,6 +386,7 @@ fn main() {
             art_rgb24: Some(&art),
             mono_album_art: true,
             alt_layout: false,
+            ..Default::default()
         };
         let rgba_np = engine.render_now_playing_rgba(&np_state);
         let np_path = out_dir.join("preview_now_playing.png");
@@ -463,6 +465,129 @@ fn main() {
         let rgba_kbd = engine.render_keyboard_rgba(&kbd_state);
         let kbd_path = out_dir.join("preview_keyboard.png");
         write_png(&kbd_path, &rgba_kbd);
+
+        // Phase 3 NSF Previews: Now Playing (Famicom Cartridge + Loop Tick + [∞] + APU Strip),
+        // Live `Channels` Toggle Submenu, and File Browser `[24 ♪]` + `Sound Effects (12) ›`.
+        let nsf_pills = [
+            NsfApuPill { short_code: "P1", muted: false, active: true, volume: 0.82 },
+            NsfApuPill { short_code: "P2", muted: true, active: false, volume: 0.0 },
+            NsfApuPill { short_code: "TR", muted: false, active: true, volume: 0.94 },
+            NsfApuPill { short_code: "NS", muted: false, active: false, volume: 0.12 },
+            NsfApuPill { short_code: "DP", muted: true, active: false, volume: 0.0 },
+            NsfApuPill { short_code: "VP1", muted: false, active: true, volume: 0.68 },
+            NsfApuPill { short_code: "VP2", muted: false, active: false, volume: 0.0 },
+            NsfApuPill { short_code: "SAW", muted: false, active: true, volume: 0.77 },
+        ];
+        let np_nsf_state = NowPlayingState {
+            theme: ThemeColors::default(),
+            header: HeaderState {
+                title: "Now Playing",
+                legend: "",
+                play_mode: PlayMode::Play,
+                battery_percent: 87,
+                is_charging: false,
+                is_hold: false,
+                source_icon: HeaderSourceIcon::MicroSd,
+                ..Default::default()
+            },
+            track_pos_label: "2 of 24",
+            eq_enabled: true,
+            title: "Beginning (Stage 1)",
+            artist: "Konami Kukeiha Club",
+            album: "Castlevania III: Dracula's Curse",
+            codec_label: "NSF",
+            bitdepth_label: "16bit",
+            samplerate_label: "44.1kHz",
+            progress: 0.62,
+            elapsed_label: "1:18",
+            remaining_label: "-0:48",
+            center_status_label: "",
+            art_rgb24: None,
+            mono_album_art: true,
+            alt_layout: false,
+            is_nsf: true,
+            nsf_chip_badge: "VRC6",
+            nsf_loop_progress: Some(0.36),
+            nsf_endless_loop: true,
+            nsf_channels: &nsf_pills,
+            ..Default::default()
+        };
+        let rgba_np_nsf = engine.render_now_playing_rgba(&np_nsf_state);
+        write_png(&out_dir.join("code_now_playing_nsf.png"), &rgba_np_nsf);
+
+        let nsf_ch_rows = [
+            NsfChannelRow { short_code: "P1", display_name: "Pulse 1", enabled: true, soloed: false, active: true, volume: 0.82, selected: true },
+            NsfChannelRow { short_code: "P2", display_name: "Pulse 2", enabled: false, soloed: false, active: false, volume: 0.0, selected: false },
+            NsfChannelRow { short_code: "TR", display_name: "Triangle", enabled: true, soloed: false, active: true, volume: 0.94, selected: false },
+            NsfChannelRow { short_code: "NS", display_name: "Noise", enabled: true, soloed: false, active: true, volume: 0.35, selected: false },
+            NsfChannelRow { short_code: "DP", display_name: "DPCM", enabled: false, soloed: false, active: false, volume: 0.0, selected: false },
+            NsfChannelRow { short_code: "VP1", display_name: "VRC6 Pulse 1", enabled: true, soloed: false, active: true, volume: 0.68, selected: false },
+            NsfChannelRow { short_code: "VP2", display_name: "VRC6 Pulse 2", enabled: true, soloed: false, active: false, volume: 0.08, selected: false },
+            NsfChannelRow { short_code: "SAW", display_name: "VRC6 Sawtooth", enabled: true, soloed: false, active: true, volume: 0.77, selected: false },
+        ];
+        let nsf_ch_state = NsfChannelsState {
+            theme: ThemeColors::default(),
+            header: HeaderState {
+                title: "Channels",
+                legend: "",
+                play_mode: PlayMode::Play,
+                battery_percent: 87,
+                source_icon: HeaderSourceIcon::MicroSd,
+                ..Default::default()
+            },
+            channels: &nsf_ch_rows,
+            enable_all_label: "Enable All Channels",
+            enable_all_selected: false,
+            footer_hint: "A: Toggle  ·  Hold A: Solo  ·  X: Enable All",
+            start_item: 0,
+            visible_items: 8,
+        };
+        let rgba_nsf_ch = engine.render_nsf_channels_rgba(&nsf_ch_state);
+        write_png(&out_dir.join("code_nsf_channels.png"), &rgba_nsf_ch);
+
+        let nsf_browse_rows = vec![
+            ListRow {
+                label: "Mega Man 2.nsf",
+                file_icon: FileIconKind::from_tag("NSF"),
+                selected: true,
+                right: RightAccessory::Value("[24 ♪]"),
+            },
+            ListRow {
+                label: "Castlevania III.nsfe",
+                file_icon: FileIconKind::from_tag("NSFE"),
+                selected: false,
+                right: RightAccessory::Value("[31 ♪]"),
+            },
+            ListRow {
+                label: "Channels",
+                file_icon: FileIconKind::None,
+                selected: false,
+                right: RightAccessory::ValueChevron("3/5 ON"),
+            },
+            ListRow {
+                label: "Sound Effects (12)",
+                file_icon: FileIconKind::Folder,
+                selected: false,
+                right: RightAccessory::Chevron,
+            },
+        ];
+        let nsf_browse_state = ListScreenState {
+            theme: ThemeColors::default(),
+            header: HeaderState {
+                title: "Music",
+                legend: "",
+                play_mode: PlayMode::Play,
+                battery_percent: 87,
+                source_icon: HeaderSourceIcon::MicroSd,
+                ..Default::default()
+            },
+            rows: nsf_browse_rows,
+            total_items: 4,
+            start_item: 0,
+            visible_items: 7,
+        };
+        let rgba_nsf_browse = engine.render_list_rgba(&nsf_browse_state);
+        write_png(&out_dir.join("code_nsf_browser.png"), &rgba_nsf_browse);
 
         println!("Rendered previews to {}", out_dir.display());
     }

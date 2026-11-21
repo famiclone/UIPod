@@ -332,6 +332,7 @@ __pycache__
 /build-tg5040-themeview/
 # Claude Code / AI-assistant working files -- never ship to the public repo.
 /.claude/
+/.gemini/
 /PICKUP.md
 /RELEASING.md
 CLAUDE.md

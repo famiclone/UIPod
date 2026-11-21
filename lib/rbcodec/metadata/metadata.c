@@ -238,6 +238,12 @@ const struct afmt_entry audio_formats[AFMT_NUM_CODECS] =
     /* AAC bitstream format */
     [AFMT_AAC_BSF] =
         AFMT_ENTRY("AAC", "aac_bsf", "N/A", get_aac_metadata,   "aac\0"),
+    /* Game Boy Advance Sound Format (.gsf / .minigsf) */
+    [AFMT_GSF] =
+        AFMT_ENTRY("GSF", "gsf", "N/A", get_gsf_metadata,       "gsf\0minigsf\0"),
+    /* Standard MIDI File (.mid / .midi / .kar / .rmi) */
+    [AFMT_MIDI] =
+        AFMT_ENTRY("MIDI", "midi", "N/A", get_midi_metadata,    "mid\0midi\0kar\0rmi\0"),
 };
 
 #if defined (HAVE_RECORDING)
@@ -352,6 +358,8 @@ bool rbcodec_format_is_atomic(int afmt)
     case AFMT_SGC:
     case AFMT_VGM:
     case AFMT_KSS:
+    case AFMT_GSF:
+    case AFMT_MIDI:
         /* Type must be allocated and loaded in its entirety onto
            the buffer */
         return true;
@@ -381,9 +389,39 @@ bool format_buffers_with_offset(int afmt)
     }
 }
 
+/* Strip trailing `#<digits>` virtual subtrack suffix on `.nsf`/`.nsfe` URIs. */
+static bool strip_nsf_subtrack_suffix(const char *src, char *out, size_t cap)
+{
+    if (!src)
+        return false;
+    const char *hash = strrchr(src, '#');
+    if (!hash || hash == src || !isdigit((unsigned char)hash[1]))
+        return false;
+    for (const char *p = hash + 1; *p; p++)
+    {
+        if (!isdigit((unsigned char)*p))
+            return false;
+    }
+    size_t base_len = (size_t)(hash - src);
+    if ((base_len > 4 && strncasecmp(hash - 4, ".nsf", 4) == 0) ||
+        (base_len > 5 && strncasecmp(hash - 5, ".nsfe", 5) == 0))
+    {
+        if (base_len >= cap)
+            return false;
+        memcpy(out, src, base_len);
+        out[base_len] = '\0';
+        return true;
+    }
+    return false;
+}
+
 /* Simple file type probing by looking at the filename extension. */
 unsigned int probe_file_format(const char *filename)
 {
+    char stripped[MAX_PATH];
+    if (strip_nsf_subtrack_suffix(filename, stripped, sizeof(stripped)))
+        filename = stripped;
+
     const char *suffix;
     unsigned int i;
 
@@ -459,6 +497,9 @@ bool get_metadata_ex(struct mp3entry* id3, int fd, const char* trackname, int fl
 
     entry = &audio_formats[id3->codectype];
 
+    if (trackname)
+        strlcpy(id3->path, trackname, sizeof(id3->path));
+
     /* Load codec specific track tag information and confirm the codec type. */
     if (!entry->parse_func)
     {
@@ -498,6 +539,10 @@ bool get_metadata_ex(struct mp3entry* id3, int fd, const char* trackname, int fl
     if (success && (flags & METADATA_EXCLUDE_ID3_PATH) == 0)
     {
         strlcpy(id3->path, trackname, sizeof(id3->path));
+    }
+    else if (success)
+    {
+        id3->path[0] = '\0';
     }
     /* have we successfully read the metadata from the file? */
 log_on_exit:

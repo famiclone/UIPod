@@ -54,9 +54,12 @@
 #include "status.h"
 #include "string-extra.h"
 #include "system.h"
+#include "uipod_library.h"
 #include "uipod_nowplaying.h"
+#include "uipod_nsf_ui.h"
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
+#include "uipod_rs_codecs.h"
 #include "uipod_rs_ui.h"
 #include "window-sdl.h"
 
@@ -73,6 +76,7 @@ static char    s_cached_path[MAX_PATH];
 static bool    s_has_art;
 static bool    s_alt_layout;
 static int     s_bit_depth;      /* >0 when lossless/PCM bit depth known */
+static int     s_loop_point_ms = -1;
 static bool    s_is_alac;
 static uint8_t s_art_rgb[NP_ART_SIZE * NP_ART_SIZE * 3];
 
@@ -1203,16 +1207,21 @@ static int score_folder_cover(const char *fname, const char *track_stem,
 }
 
 static void inspect_folder_art(const char *track_path, const char *album_name,
-                               bool *got_art)
+                               bool is_nsf_track, bool *got_art)
 {
     if (*got_art || !track_path || !track_path[0])
         return;
 
+    /* Strip virtual `#<subtrack>` fragment before resolving symlinks on disk */
+    char clean_path[MAX_PATH];
+    if (uipod_rs_nsf_parse_uri(track_path, clean_path, sizeof(clean_path)) < 0)
+        strlcpy(clean_path, track_path, sizeof(clean_path));
+
     /* Resolve tmpfs library farm symlinks to the real SD card folder */
     char resolved[MAX_PATH];
-    const char *real = realpath(track_path, resolved);
+    const char *real = realpath(clean_path, resolved);
     if (!real)
-        real = track_path;
+        real = clean_path;
 
     const char *slash = strrchr(real, '/');
     if (!slash || slash == real)
@@ -1237,11 +1246,12 @@ static void inspect_folder_art(const char *track_path, const char *album_name,
 
     char best_name[MAX_PATH] = "";
     int best_score = 0;
+    int min_score = is_nsf_track ? 50 : 1;
     struct dirent *de;
     while ((de = readdir(d)) != NULL)
     {
         int sc = score_folder_cover(de->d_name, track_stem, album_name);
-        if (sc > best_score)
+        if (sc >= min_score && sc > best_score)
         {
             best_score = sc;
             strlcpy(best_name, de->d_name, sizeof(best_name));
@@ -1249,7 +1259,7 @@ static void inspect_folder_art(const char *track_path, const char *album_name,
     }
     closedir(d);
 
-    if (best_score > 0 && best_name[0])
+    if (best_score >= min_score && best_name[0])
     {
         char full[MAX_PATH];
         snprintf(full, sizeof(full), "%s/%s", dirpath, best_name);
@@ -1274,6 +1284,7 @@ static void ensure_track_inspected(const struct mp3entry *id3)
         s_cached_path[0] = '\0';
         s_has_art = false;
         s_bit_depth = 0;
+        s_loop_point_ms = -1;
         s_is_alac = false;
         return;
     }
@@ -1284,6 +1295,9 @@ static void ensure_track_inspected(const struct mp3entry *id3)
     strlcpy(s_cached_path, id3->path, sizeof(s_cached_path));
     s_has_art = false;
     s_bit_depth = 0;
+    s_loop_point_ms = (id3->codectype == AFMT_NSF)
+        ? uipod_library_get_loop_point_ms(id3->path)
+        : -1;
     s_is_alac = (id3->codectype == AFMT_MP4_ALAC);
 
     int fd = open(id3->path, O_RDONLY);
@@ -1394,7 +1408,8 @@ static void ensure_track_inspected(const struct mp3entry *id3)
     }
 
     if (!s_has_art)
-        inspect_folder_art(id3->path, id3->album, &s_has_art);
+        inspect_folder_art(id3->path, id3->album,
+                           id3->codectype == AFMT_NSF, &s_has_art);
 }
 
 static void format_codec_badge(const struct mp3entry *id3, char *out, size_t sz)
@@ -1442,6 +1457,9 @@ static void format_codec_badge(const struct mp3entry *id3, char *out, size_t sz)
         case AFMT_WMAPRO:
         case AFMT_WMAVOICE:    strlcpy(out, "WMA",  sz); return;
         case AFMT_A52:         strlcpy(out, "AC3",  sz); return;
+        case AFMT_NSF:         strlcpy(out, "NSF",  sz); return;
+        case AFMT_GSF:         strlcpy(out, "GSF",  sz); return;
+        case AFMT_MIDI:        strlcpy(out, "MIDI", sz); return;
         default: break;
     }
 
@@ -1454,7 +1472,9 @@ static void format_codec_badge(const struct mp3entry *id3, char *out, size_t sz)
     else if (dot && dot[1])
     {
         size_t i = 0;
-        for (const char *p = dot + 1; *p && i + 1 < sz && i < 6; p++, i++)
+        for (const char *p = dot + 1;
+             *p && *p != '#' && i + 1 < sz && i < 6;
+             p++, i++)
             out[i] = (char)toupper((unsigned char)*p);
         out[i] = '\0';
     }
@@ -1615,6 +1635,13 @@ void uipod_nowplaying_draw(void)
         format_mmss(el_sec, false, el_str, sizeof(el_str));
         format_mmss(rem_sec, true, rem_str, sizeof(rem_str));
 
+        struct UIPodRsNsfChannelDescTmp
+        {
+            struct uipod_rs_nsf_channel_desc descs[8];
+            struct UIPodRsNsfApuPill         pills[8];
+        } nsf_tmp;
+        memset(&nsf_tmp, 0, sizeof(nsf_tmp));
+
         struct UIPodRsNowPlaying np;
         memset(&np, 0, sizeof(np));
         np.bg_rgb  = (uint32_t)global_settings.bg_color;
@@ -1637,6 +1664,75 @@ void uipod_nowplaying_draw(void)
         np.art_rgb24           = s_has_art ? s_art_rgb : NULL;
         np.mono_album_art      = global_settings.mono_album_art;
         np.alt_layout          = s_alt_layout;
+        np.nsf_loop_progress   = -1.0f;
+
+        char dj_label_buf[64] = "";
+        struct uipod_rs_dj_telemetry dj_tel;
+        if (uipod_rs_dj_get_telemetry(&dj_tel) != 0)
+        {
+            if (dj_tel.mix_kind == 2 && dj_tel.bpm_a > 1.0f && dj_tel.bpm_b > 1.0f)
+            {
+                snprintf(dj_label_buf, sizeof(dj_label_buf),
+                         "DJ SYNC · %.0f→%.0f BPM",
+                         (double)dj_tel.bpm_a, (double)dj_tel.bpm_b);
+            }
+            else if (dj_tel.mix_kind == 3)
+            {
+                snprintf(dj_label_buf, sizeof(dj_label_buf), "DJ WASH › NEXT");
+            }
+            else
+            {
+                snprintf(dj_label_buf, sizeof(dj_label_buf), "FADE › NEXT");
+            }
+            np.dj_status_label    = dj_label_buf;
+            np.dj_progress        = dj_tel.progress;
+            np.dj_bass_swap_flash = (dj_tel.bass_swap_flash != 0);
+        }
+
+        int nsf_cflags = uipod_rs_nsf_get_active_chip_flags();
+        if (id3 && (id3->codectype == AFMT_NSF || nsf_cflags >= 0))
+        {
+            np.is_nsf = true;
+            if (nsf_cflags >= 0)
+                np.nsf_chip_badge = uipod_nsf_chip_badge_str((uint8_t)nsf_cflags);
+            else if (id3->comment && id3->comment[0])
+                np.nsf_chip_badge = id3->comment;
+            else
+                np.nsf_chip_badge = "2A03";
+
+            np.nsf_endless_loop = (uipod_rs_nsf_get_endless_loop() != 0);
+            if (s_loop_point_ms > 0 && len_ms > 0 && s_loop_point_ms < len_ms)
+                np.nsf_loop_progress = (float)s_loop_point_ms / (float)len_ms;
+
+            uint8_t desc_flags = (nsf_cflags >= 0) ? (uint8_t)nsf_cflags : 0;
+            size_t n_ch = uipod_rs_nsf_get_channel_descriptors(
+                desc_flags, nsf_tmp.descs, 8);
+            uint16_t mute_mask = uipod_rs_nsf_get_channel_mute_mask();
+            struct uipod_rs_apu_telemetry tel;
+            memset(&tel, 0, sizeof(tel));
+            bool have_tel = (uipod_rs_nsf_get_telemetry(&tel) != 0);
+            bool paused   = (audio_status() & AUDIO_STATUS_PAUSE) != 0;
+
+            for (size_t i = 0; i < n_ch && i < 8; i++)
+            {
+                bool muted = (mute_mask & (uint16_t)(1u << nsf_tmp.descs[i].bit_index)) != 0;
+                float vol = 0.0f;
+                bool active = false;
+                if (!muted && !paused && have_tel && i < (size_t)tel.channel_count)
+                {
+                    vol = tel.channels[i].volume;
+                    if (vol < 0.0f) vol = 0.0f;
+                    if (vol > 1.0f) vol = 1.0f;
+                    active = (tel.channels[i].active != 0 && vol > 0.02f);
+                }
+                nsf_tmp.pills[i].short_code = nsf_tmp.descs[i].short_code;
+                nsf_tmp.pills[i].active     = active;
+                nsf_tmp.pills[i].muted      = muted;
+                nsf_tmp.pills[i].volume     = vol;
+            }
+            np.nsf_channels      = nsf_tmp.pills;
+            np.nsf_channel_count = n_ch;
+        }
 
         int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
         sdl_gl_get_drawable_size(&win_w, &win_h);

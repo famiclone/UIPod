@@ -1,0 +1,12 @@
+[package]
+name = "uipod-plugin-pulsar-vanguard"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "pulsar_vanguard"
+crate-type = ["cdylib"]
+
+[dependencies]
+uipod-plugin-sdk = { path = "../../crates/uipod-plugin-sdk" }

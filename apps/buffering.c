@@ -158,7 +158,7 @@ enum
 
 /* Buffering thread */
 static void buffering_thread(void);
-static long buffering_stack[(DEFAULT_STACK_SIZE + 0x2000)/sizeof(long)];
+static long buffering_stack[(DEFAULT_STACK_SIZE + 0x40000)/sizeof(long)];
 static const char buffering_thread_name[] = "buffering";
 static unsigned int buffering_thread_id = 0;
 static struct event_queue buffering_queue SHAREDBSS_ATTR;

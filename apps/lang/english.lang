@@ -20374,3 +20374,255 @@
     *: "Subtitles"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT
+  desc: UIPod MIDI SoundFont selector label
+  user: core
+  <source>
+    *: "SoundFont"
+  </source>
+  <dest>
+    *: "SoundFont"
+  </dest>
+  <voice>
+    *: "SoundFont"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT_DEFAULT
+  desc: UIPod built-in default SoundFont row label
+  user: core
+  <source>
+    *: "Default (Mobile_0100_base)"
+  </source>
+  <dest>
+    *: "Default (Mobile_0100_base)"
+  </dest>
+  <voice>
+    *: "Default SoundFont"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_SOUNDFONT_FOLDERS
+  desc: UIPod Settings > Library > SoundFont Folders
+  user: core
+  <source>
+    *: "SoundFont Folders"
+  </source>
+  <dest>
+    *: "SoundFont Folders"
+  </dest>
+  <voice>
+    *: "SoundFont Folders"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_CROSSFADE
+  desc: UIPod Settings > Sound > Crossfade & Auto-DJ submenu
+  user: core
+  <source>
+    *: "Crossfade & Auto-DJ"
+  </source>
+  <dest>
+    *: "Crossfade & Auto-DJ"
+  </dest>
+  <voice>
+    *: "Crossfade and Auto DJ"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE
+  desc: Crossfade Mode setting label
+  user: core
+  <source>
+    *: "Crossfade Mode"
+  </source>
+  <dest>
+    *: "Crossfade Mode"
+  </dest>
+  <voice>
+    *: "Crossfade Mode"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_CLASSIC
+  desc: Classic equal-power crossfade mode
+  user: core
+  <source>
+    *: "Classic"
+  </source>
+  <dest>
+    *: "Classic"
+  </dest>
+  <voice>
+    *: "Classic"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_VINYL
+  desc: DJ Vinyl Sync crossfade mode
+  user: core
+  <source>
+    *: "DJ Vinyl"
+  </source>
+  <dest>
+    *: "DJ Vinyl"
+  </dest>
+  <voice>
+    *: "DJ Vinyl"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MODE_MASTER
+  desc: DJ Master Tempo WSOLA crossfade mode
+  user: core
+  <source>
+    *: "DJ Master Tempo"
+  </source>
+  <dest>
+    *: "DJ Master Tempo"
+  </dest>
+  <voice>
+    *: "DJ Master Tempo"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LENGTH
+  desc: DJ Transition Length setting label
+  user: core
+  <source>
+    *: "Transition Length"
+  </source>
+  <dest>
+    *: "Transition Length"
+  </dest>
+  <voice>
+    *: "Transition Length"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_4B
+  desc: 4 Bars (Short) transition length
+  user: core
+  <source>
+    *: "4 Bars (Short)"
+  </source>
+  <dest>
+    *: "4 Bars (Short)"
+  </dest>
+  <voice>
+    *: "4 Bars"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_8B
+  desc: 8 Bars (Club) transition length
+  user: core
+  <source>
+    *: "8 Bars (Club)"
+  </source>
+  <dest>
+    *: "8 Bars (Club)"
+  </dest>
+  <voice>
+    *: "8 Bars"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_LEN_12S
+  desc: 12s (Long) transition length
+  user: core
+  <source>
+    *: "12s (Long)"
+  </source>
+  <dest>
+    *: "12s (Long)"
+  </dest>
+  <voice>
+    *: "12 seconds"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_MAX_STRETCH
+  desc: Max Tempo Stretch setting label
+  user: core
+  <source>
+    *: "Max Tempo Stretch"
+  </source>
+  <dest>
+    *: "Max Tempo Stretch"
+  </dest>
+  <voice>
+    *: "Max Tempo Stretch"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_6
+  desc: +-6% tempo stretch limit
+  user: core
+  <source>
+    *: "±6%"
+  </source>
+  <dest>
+    *: "±6%"
+  </dest>
+  <voice>
+    *: "6 percent"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_10
+  desc: +-10% tempo stretch limit
+  user: core
+  <source>
+    *: "±10%"
+  </source>
+  <dest>
+    *: "±10%"
+  </dest>
+  <voice>
+    *: "10 percent"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_STRETCH_12
+  desc: +-12% tempo stretch limit
+  user: core
+  <source>
+    *: "±12%"
+  </source>
+  <dest>
+    *: "±12%"
+  </dest>
+  <voice>
+    *: "12 percent"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_KEEP_GAPLESS
+  desc: Keep Album Gapless setting label
+  user: core
+  <source>
+    *: "Keep Album Gapless"
+  </source>
+  <dest>
+    *: "Keep Album Gapless"
+  </dest>
+  <voice>
+    *: "Keep Album Gapless"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_DJ_QUICK_CUT
+  desc: Quick DJ Cut on Manual Next setting label
+  user: core
+  <source>
+    *: "Quick Cut on Next"
+  </source>
+  <dest>
+    *: "Quick Cut on Next"
+  </dest>
+  <voice>
+    *: "Quick Cut on Next"
+  </voice>
+</phrase>

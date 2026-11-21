@@ -1,0 +1,943 @@
+{
+  "meta": {
+    "project": "UIPod",
+    "design_file": "assets/icons/ui.figcraft",
+    "screens_page_id": 211,
+    "composite_page_id": 212,
+    "primitives_page_id": 1,
+    "tokens_file": "crates/uipod-ui/src/lib.rs",
+    "layout_file": "crates/uipod-ui/src/layout.rs",
+    "renderer_file": "crates/uipod-ui/src/renderer.rs",
+    "screenshot_cmd": "cargo run --offline -p uipod-ui --example render_preview -- /tmp"
+  },
+  "components": [
+    {
+      "id": "header",
+      "figcraft_screen": "Header",
+      "node_id": 3105,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "apps/uipod_rs_ui.h",
+        "apps/uipod_rs_ui_glue.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "menu_item",
+      "figcraft_screen": "MenuItem",
+      "node_id": 353,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "seekbar",
+      "figcraft_screen": "Seekbar",
+      "node_id": 623,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "battery",
+      "figcraft_screen": "Battery",
+      "node_id": 1564,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "volume_bar",
+      "figcraft_screen": "VolumeBar",
+      "node_id": 3152,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "volume_bar_popup",
+      "figcraft_screen": "VolumeBarPopup",
+      "node_id": 3214,
+      "page_id": 212,
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/ffi.rs",
+        "apps/uipod_rs_ui_glue.c",
+        "apps/misc.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "album_cover",
+      "figcraft_screen": "AlbumCover",
+      "node_id": 1401,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_nowplaying.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "scrollbar",
+      "figcraft_screen": "Scrollbar",
+      "node_id": 312,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "toggle",
+      "figcraft_screen": "toggle",
+      "node_id": 50,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_fx_64",
+      "figcraft_screen": "icon_fx_64",
+      "node_id": 3187,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_pause",
+      "figcraft_screen": "icon_pause",
+      "node_id": 10762,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_ff",
+      "figcraft_screen": "icon_ff",
+      "node_id": 10765,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_rew",
+      "figcraft_screen": "icon_rew",
+      "node_id": 10768,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "key",
+      "figcraft_screen": "Key",
+      "node_id": 10738,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_keyboard.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_filetype_nsf",
+      "figcraft_screen": "icon_filetype_nsf",
+      "node_id": 11409,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/lib.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_filetype_mid",
+      "figcraft_screen": "icon_filetype_mid",
+      "node_id": 11419,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/lib.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "icon_filetype_sf2",
+      "figcraft_screen": "icon_filetype_sf2",
+      "node_id": 11429,
+      "page_id": 1,
+      "code_files": [
+        "crates/uipod-ui/src/lib.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/renderer.rs"
+      ],
+      "status": "mapped"
+    }
+  ],
+  "screens": [
+    {
+      "id": "main_menu",
+      "figcraft_screen": "Main",
+      "node_id": 215,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/root_menu.c",
+        "apps/uipod_mainmenu.c",
+        "apps/uipod_mainmenu.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings",
+      "figcraft_screen": "Settings",
+      "node_id": 864,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/main_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_display",
+      "figcraft_screen": "Settings-Appearance",
+      "node_id": 1172,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/power_menu.c",
+        "apps/menus/theme_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_sound",
+      "figcraft_screen": "Settings-Sound",
+      "node_id": 3007,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "graphic_equalizer",
+      "figcraft_screen": "Graphic Equalizer",
+      "node_id": 3215,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/ffi.rs",
+        "apps/uipod_rs_ui.h",
+        "apps/uipod_rs_ui_glue.c",
+        "apps/menus/eq_menu.c",
+        "apps/menus/eq_menu.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "browse_files",
+      "figcraft_screen": "Browse",
+      "node_id": 694,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_folders.c",
+        "apps/tree.c",
+        "apps/filetree.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "directory",
+      "figcraft_screen": "Directory",
+      "node_id": 742,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_library_browse.c",
+        "apps/uipod_folders.c",
+        "apps/tree.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "sources",
+      "figcraft_screen": "Sources",
+      "node_id": 646,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/main_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "sources_navidrome",
+      "figcraft_screen": "Sources Navidrome",
+      "node_id": 1884,
+      "variant_node_ids": [
+        2731
+      ],
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_navidrome.c",
+        "apps/uipod_navidrome.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "sources_jellyfin",
+      "figcraft_screen": "Sources Jellyfin",
+      "node_id": 2277,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_jellyfin.c",
+        "apps/uipod_jellyfin.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "now_playing",
+      "figcraft_screen": "Now Playing",
+      "node_id": 233,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_nowplaying.c",
+        "apps/uipod_nowplaying.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "now_playing_alt",
+      "figcraft_screen": "Now Playing (Alt)",
+      "node_id": 1805,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_nowplaying.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "accounts",
+      "figcraft_screen": "Accounts",
+      "node_id": 3342,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/main_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "accounts_lastfm",
+      "figcraft_screen": "Accounts Last.fm",
+      "node_id": 3399,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_lastfm.c",
+        "apps/uipod_lastfm.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "lastfm_qr_auth",
+      "figcraft_screen": "Last.fm QR Auth",
+      "node_id": 3725,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/uipod_lastfm.c",
+        "crates/uipod-lastfm/src/qr.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "keyboard",
+      "figcraft_screen": "Keyboard",
+      "node_id": 4212,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_keyboard.c",
+        "apps/uipod_keyboard.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "downloads",
+      "figcraft_screen": "Downloads",
+      "node_id": 4134,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/uipod_downloads.c",
+        "apps/uipod_downloads.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "audio_visualizer",
+      "figcraft_screen": "Audio Visualizer",
+      "node_id": 4300,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/viz_gl.rs",
+        "crates/uipod-ui/src/viz_dsp.rs",
+        "apps/uipod_visualizer.c",
+        "apps/menus/visualizer_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "plugins_launcher",
+      "figcraft_screen": "Plugins",
+      "node_id": 4376,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/uipod_plugins.c",
+        "apps/uipod_plugins.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "hold_lock",
+      "figcraft_screen": "Hold Lock",
+      "node_id": 4486,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/uipod_hold.c",
+        "apps/uipod_hold.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "extras",
+      "figcraft_screen": "Extras",
+      "node_id": 4587,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/main_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "now_playing_context",
+      "figcraft_screen": "Now Playing Context",
+      "node_id": 4796,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/gui/wps.c",
+        "apps/uipod_nsf_ui.c",
+        "apps/uipod_midi.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_equalizer",
+      "figcraft_screen": "Settings-Equalizer",
+      "node_id": 5120,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/eq_menu.c",
+        "apps/menus/eq_menu.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_effects",
+      "figcraft_screen": "Settings-Effects",
+      "node_id": 5390,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/sound_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "customize_theme",
+      "figcraft_screen": "Customize Theme",
+      "node_id": 5677,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/power_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "main_menu_settings",
+      "figcraft_screen": "Main Menu Settings",
+      "node_id": 5924,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/uipod_mainmenu.c",
+        "apps/uipod_mainmenu.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_library",
+      "figcraft_screen": "Settings-Library",
+      "node_id": 6313,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/audio_folders_menu.c",
+        "apps/uipod_folders.c",
+        "apps/uipod_midi.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_power",
+      "figcraft_screen": "Settings-Power",
+      "node_id": 6582,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "apps/menus/power_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_tape_mode",
+      "figcraft_screen": "Settings-Tape Mode",
+      "node_id": 6846,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_reverb",
+      "figcraft_screen": "Settings-Reverb",
+      "node_id": 7103,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_delay",
+      "figcraft_screen": "Settings-Delay",
+      "node_id": 7328,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_chorus",
+      "figcraft_screen": "Settings-Chorus",
+      "node_id": 7552,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_flanger",
+      "figcraft_screen": "Settings-Flanger",
+      "node_id": 7743,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "settings_replaygain",
+      "figcraft_screen": "Settings-ReplayGain",
+      "node_id": 7951,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/menus/sound_menu.c",
+        "apps/settings_list.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "autoeq",
+      "figcraft_screen": "AutoEQ",
+      "node_id": 8125,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_autoeq.c",
+        "apps/uipod_autoeq.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "eq_presets",
+      "figcraft_screen": "Browse EQ Presets",
+      "node_id": 8350,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_autoeq.c",
+        "apps/menus/eq_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "visualizer_presets",
+      "figcraft_screen": "Visualization Presets",
+      "node_id": 8560,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_visualizer.c",
+        "crates/uipod-ui/src/viz_gl.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "visualizer_fullscreen",
+      "figcraft_screen": "Visualizer Fullscreen",
+      "node_id": 8840,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_visualizer.c",
+        "crates/uipod-ui/src/viz_gl.rs",
+        "crates/uipod-ui/src/viz_dsp.rs"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "playlists",
+      "figcraft_screen": "Playlists",
+      "node_id": 8875,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_playlists.c",
+        "apps/uipod_playlists.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "playlist_editor",
+      "figcraft_screen": "Playlist Editor",
+      "node_id": 9055,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_playlists.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "library_browse",
+      "figcraft_screen": "Library Browse",
+      "node_id": 9235,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_library_browse.c",
+        "apps/uipod_library.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "music_folders",
+      "figcraft_screen": "Music Folders",
+      "node_id": 9460,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_folders.c",
+        "apps/menus/audio_folders_menu.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "folder_picker",
+      "figcraft_screen": "Folder Picker",
+      "node_id": 9601,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_folders.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "plugins_category",
+      "figcraft_screen": "Plugins Category",
+      "node_id": 9764,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_plugins.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "plugin_system_menu",
+      "figcraft_screen": "Plugin System Menu",
+      "node_id": 9974,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_plugins.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "navidrome_browse",
+      "figcraft_screen": "Navidrome Browse",
+      "node_id": 10156,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_navidrome.c",
+        "apps/uipod_navidrome.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "jellyfin_browser",
+      "figcraft_screen": "Jellyfin Browser",
+      "node_id": 10320,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_jellyfin.c",
+        "apps/uipod_jellyfin.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "context_menu",
+      "figcraft_screen": "Context Menu",
+      "node_id": 10500,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_ui.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "confirm_dialog",
+      "figcraft_screen": "Confirm Dialog",
+      "node_id": 10695,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_ui.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "message_page",
+      "figcraft_screen": "Message Page",
+      "node_id": 10709,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_ui.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "video_player",
+      "figcraft_screen": "Video Player",
+      "node_id": 10724,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_video.c",
+        "apps/uipod_video.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "volume_popup",
+      "figcraft_screen": "Volume Popup",
+      "node_id": 10977,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "apps/uipod_rs_ui_glue.c",
+        "apps/misc.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "header_states",
+      "figcraft_screen": "Header States",
+      "node_id": 11019,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "apps/uipod_rs_ui.h",
+        "apps/uipod_rs_ui_glue.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "video_context_menu",
+      "figcraft_screen": "Context Menu - Video Player",
+      "node_id": 11301,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_video.c",
+        "firmware/target/hosted/sdl/retro-handheld/video-target.h",
+        "firmware/target/hosted/sdl/retro-handheld/video-target.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "nsf_channels",
+      "figcraft_screen": "NSF Channels",
+      "node_id": 11517,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/ffi.rs",
+        "apps/uipod_rs_ui_glue.c",
+        "apps/uipod_nsf_ui.c",
+        "apps/uipod_nsf_ui.h"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "nsf_container_browser",
+      "figcraft_screen": "NSF Container Browser",
+      "node_id": 11591,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_nsf_ui.c",
+        "apps/uipod_nsf_ui.h",
+        "apps/uipod_folders.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "now_playing_nsf",
+      "figcraft_screen": "Now Playing (NSF)",
+      "node_id": 11832,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "crates/uipod-ui/src/icons.rs",
+        "apps/uipod_nowplaying.c",
+        "apps/uipod_nsf_ui.c"
+      ],
+      "status": "mapped"
+    },
+    {
+      "id": "soundfont_picker",
+      "figcraft_screen": "SoundFont",
+      "node_id": 11909,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_midi.c",
+        "apps/uipod_midi.h",
+        "apps/gui/wps.c"
+      ],
+      "status": "mapped"
+    }
+  ]
+}

@@ -18,6 +18,10 @@ int uipod_podcast_settings(void);
 int uipod_audiobook_settings(void);
 int uipod_movies_settings(void);
 int uipod_television_settings(void);
+int uipod_soundfont_settings(void);
+
+int uipod_soundfont_folder_count(void);
+const char *uipod_soundfont_folder_path(int idx);
 
 /* root menu virtual-folder entries (root_menu items[] functions) */
 int uipod_music_browse(void *param);

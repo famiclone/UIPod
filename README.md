@@ -8,7 +8,7 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 
 - **Dynamic Native-HiDPI Rust UI (`uipod-ui`)**: Vector typography (**Geologica**), **38 four-shade iPod Mini themes** + live HEX palette editor, **6 screen transitions**, Bayer-dithered monochrome album art, and **English + Ukrainian** localization.
 - **Unified Multi-Source Library & Browse File Manager**:
-  - **Local**: Browse sits first on the Main Menu with last-folder memory and full file management (`Delete`, `Rename`, `Copy`, `Move`, `Info` via Text Viewer), plus watched folders for FLAC, MP3, Opus, Ogg, AAC/M4A, ALAC, WAV, `.m4b` audiobooks, `.cue` sheets, and H.264/MP4 video.
+  - **Local**: Browse sits first on the Main Menu with last-folder memory and full file management (`Delete`, `Rename`, `Copy`, `Move`, `Info` via Text Viewer), plus watched folders for FLAC, MP3, Opus, Ogg, AAC/M4A, ALAC, WAV, `.m4b` audiobooks, `.cue` sheets, `.nsf`/`.nsfe` NES/Famicom chiptunes (`2A03` + `VRC6` + `MMC5` with Music/SFX subtracks, live Now Playing APU channel meters, `Hold A → Channels` mute/solo mixer, and `Endless Loop`), `.gsf`/`.minigsf` GBA game audio, `.mid`/`.midi`/`.kar`/`.rmi` MIDI tracks (with built-in `Mobile_0100_base.sf2` and custom `.sf2` banks from `Settings → Library → SoundFont Folders` selectable via `Hold A → SoundFont`), and H.264/MP4 video.
   - **Navidrome / Subsonic (`Settings → Sources → Navidrome`)**: Streaming, sliding-window queue prefetching, Favourites playlist, and persistent background `Download` queue into `/mnt/SDCARD/Media/Music/navidrome`.
   - **Jellyfin (`Settings → Sources → Jellyfin`)**: Movies, TV Shows (`Seasons → Episodes`), and Music libraries with zero-CPU Direct Stream (`Static=true`), automatic server-side H.264/AAC transcoding, resume sync, and offline downloads.
   - **Video Player (`Hold A / MENU`)**: Hardware video playback with selectable **Aspect Mode** (`Fit` / `Crop` / `Stretch`), multi-track **Audio Track** switching, and external sidecar **`.srt` Subtitles**.
@@ -16,8 +16,9 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 - **Studio DSP, Graphic EQ & AutoEQ (`Settings → Sound`)**:
   - **10-Band Parametric & GPU Graphic EQ** (Preamp + 10 vertical band sliders with `X` quick Bypass) and a searchable offline **AutoEQ** headphone database.
   - **Stereo Effects Suite (`Settings → Sound → Effects`)**: Master `FX` toggle + **Speed (Texture Warp)** granular time-stretching (`1/16×–1.5×`), **Walkman Tape Mode** (Wow & Flutter, Hiss, Crinkles, Saturation, HF Roll-Off, Pause spin-down/up, Seek motor sound), **Reverb**, **Ping-Pong Delay**, **Chorus**, and **Flanger**.
+  - **Dual-Deck Smart DJ Crossfade (`Settings → Sound → Crossfade & Auto-DJ`)**: **Classic**, **DJ Vinyl**, and pitch-preserving WSOLA **DJ Master Tempo** transitions (`4 Bars` / `8 Bars` / `12s`, `±6%`–`±12%` stretch with octave folding) featuring Equal-Power center-phrase **Bass Swap** (`20 Hz ↔ 250 Hz`), automatic **Filter Wash + Ping-Pong Tail** fallback, native `.nsf` tick-rate tempo sync, **Keep Album Gapless**, **Quick Cut on Next (`R1`)**, and a live 4-shade Now Playing status pill (`DJ SYNC · BPM` / `DJ WASH`).
 - **10 Bayer-Dithered 4-Shade GPU Visualizers**: Cassette Deck, Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate, Star Warp, and LCD Plasma — synced to speaker & Bluetooth A2DP latency.
-- **Native Rust Plugins & Games (`Extras → Plugins`)**: Versioned `.uipod` SDK powering **Music Quiz**, **Sound Racer** (PCM & `.nsf` chiptune rhythm highway), **Tetris**, **Snake**, **Brick Breaker**, **2048**, **Stopwatch**, **LCD Plasma**, and **Text Viewer**.
+- **Native Rust Plugins & Games (`Extras → Plugins`)**: Versioned `.uipod` SDK powering **Music Quiz**, **Sound Racer** (PCM & `.nsf` chiptune rhythm highway), **Pulsar Vanguard** (music-synced Galaga shooter with `1/1`, `1/4`, and `1/8` auto-fire), **Tetris**, **Snake**, **Brick Breaker**, **2048**, **Stopwatch**, **LCD Plasma**, and **Text Viewer**.
 - **USB MTP & Handheld Power Care**: Live USB-C MTP `/mnt/SDCARD` file transfer without stopping music, Android background foreground-service playback with screen off, Sleep Timer, and TrimUI Brick AXP2202 Battery Charge Limit (`75%–95%`).
 
 ## Controls
@@ -39,15 +40,15 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 ## Installation & Web Simulator
 
 ### Try in Browser (WebAssembly + WebGL2)
-Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.6.0-web.zip` from Releases).
+Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.7.0-web.zip` from Releases).
 
 ### TrimUI Brick / Hammer (`tg5040` / NextUI)
-1. Download `UIPod-v0.6.0-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
+1. Download `UIPod-v0.7.0-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
 2. Extract `UIPod.pak` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak` (so `launch.sh` sits at `/mnt/SDCARD/Tools/tg5040/UIPod.pak/launch.sh`).
 3. On your TrimUI Brick, launch **Tools → UIPod**.
 
 ### Android Handhelds (`arm64-v8a`)
-1. Download `UIPod-v0.6.0-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
+1. Download `UIPod-v0.7.0-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
 2. Install on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped Android device.
 3. Grant media storage access to scan local folders, or configure Navidrome / Jellyfin / Last.fm in **Settings**.
 
@@ -57,8 +58,9 @@ Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages*
 Requires Docker (`tg5040` cross-toolchain + Rust `aarch64-unknown-linux-gnu` are built automatically from `Dockerfile.uipod`):
 
 ```sh
-./build.sh      # cross-compile Rust crates + firmware -> build-uipod/
-./package.sh    # assemble dist/UIPod.pak, dist/UIPod.pak.zip & dist/UIPod-<ver>-brick.zip
+./build.sh              # cross-compile Rust crates + firmware -> build-uipod/
+./package.sh            # assemble dist/UIPod.pak, dist/UIPod.pak.zip & dist/UIPod-<ver>-brick.zip
+./deploy-brick.sh       # push dist/UIPod.pak to TrimUI Brick over USB ADB (use -b to rebuild, -f for fast binary sync)
 ```
 
 ### Android (`arm64-v8a`)
@@ -84,7 +86,7 @@ Version metadata lives in `VERSION`, `pak.json`, `web/package.json`, and `pak/ui
 - **Tagged Release & GitHub Pages (`.github/workflows/release.yml`)**: Every `v*` tag builds the TrimUI Brick `.pak`, signed Android `arm64-v8a` `.apk`, and WebAssembly bundle (`UIPod-<ver>-web.zip`) in parallel, publishes the GitHub Release, and deploys the updated web page live to **GitHub Pages**:
   - From CLI:
     ```sh
-    ./scripts/bump-version.sh minor --tag   # or patch / major / v0.6.0
+    ./scripts/bump-version.sh minor --tag   # or patch / major / v0.7.0
     git push origin main --follow-tags
     ```
   - Or directly from GitHub UI: **Actions → Release → Run workflow** (`patch` / `minor` / `major`).

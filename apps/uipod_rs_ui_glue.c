@@ -445,6 +445,13 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
         rval_bufs[r][0] = '\0';
         ftag_bufs[r][0] = '\0';
 
+        char *embedded_vc = strchr(label_bufs[r], '\x1e');
+        if (embedded_vc)
+        {
+            *embedded_vc = '\0';
+            strlcpy(rval_bufs[r], embedded_vc + 1, sizeof(rval_bufs[r]));
+        }
+
         const struct uipod_svg_icon *svg_icon =
             list->callback_get_item_svg_icon
                 ? list->callback_get_item_svg_icon(idx, list->data)
@@ -472,16 +479,25 @@ bool uipod_gpu_render_synclist(struct gui_synclist *list)
             {
                 right_kind = 1;
             }
+            else if (indic[0] == '\x1e')
+            {
+                strlcpy(rval_bufs[r], indic + 1, sizeof(rval_bufs[r]));
+                right_kind = 6;
+            }
             else if (indic[0] == '\x1f')
             {
                 strlcpy(rval_bufs[r], indic + 1, sizeof(rval_bufs[r]));
-                right_kind = 5;
+                right_kind = chev ? 6 : 5;
             }
             else
             {
                 strlcpy(rval_bufs[r], indic, sizeof(rval_bufs[r]));
                 right_kind = 4;
             }
+        }
+        else if (embedded_vc)
+        {
+            right_kind = chev ? 6 : 5;
         }
         else if (chev)
         {
@@ -581,6 +597,46 @@ bool uipod_gpu_render_graphic_eq(const char *header_title,
     int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
     sdl_gl_get_drawable_size(&win_w, &win_h);
     bool ok = uipod_rs_ui_render_graphic_eq_gpu(&geq, (uint32_t)win_w, (uint32_t)win_h);
+    if (ok)
+        uipod_gpu_note_rendered_screen(true);
+    return ok;
+}
+
+bool uipod_gpu_render_nsf_channels(const char *header_title,
+                                   const struct UIPodRsNsfChannelRow *channels,
+                                   size_t channel_count,
+                                   const char *enable_all_label,
+                                   bool enable_all_selected,
+                                   const char *footer_hint,
+                                   size_t start_item,
+                                   size_t visible_items)
+{
+    if (!channels || channel_count == 0)
+        return false;
+
+    if (!uipod_gpu_ui_ensure_ready())
+        return false;
+
+    screens[SCREEN_MAIN].scroll_stop();
+
+    struct UIPodRsNsfChannels ch;
+    memset(&ch, 0, sizeof(ch));
+    ch.bg_rgb              = (uint32_t)global_settings.bg_color;
+    ch.fg_rgb              = (uint32_t)global_settings.fg_color;
+    ch.fg1_rgb             = (uint32_t)global_settings.fg1_color;
+    ch.fg2_rgb             = (uint32_t)global_settings.fg2_color;
+    uipod_gpu_fill_header(&ch.header, header_title);
+    ch.channels            = channels;
+    ch.channel_count       = channel_count;
+    ch.enable_all_label    = enable_all_label ? enable_all_label : "";
+    ch.enable_all_selected = enable_all_selected;
+    ch.footer_hint         = footer_hint ? footer_hint : "";
+    ch.start_item          = start_item;
+    ch.visible_items       = visible_items;
+
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+    bool ok = uipod_rs_ui_render_nsf_channels_gpu(&ch, (uint32_t)win_w, (uint32_t)win_h);
     if (ok)
         uipod_gpu_note_rendered_screen(true);
     return ok;

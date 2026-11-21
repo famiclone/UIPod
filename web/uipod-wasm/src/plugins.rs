@@ -4439,11 +4439,56 @@ impl SoundRacerGame {
             let high = (high_acc / frames as f32 * 3.5).clamp(0.0, 1.0);
             let pan = ((rms_r - rms_l) * 3.0).clamp(-1.0, 1.0);
 
+            let apu = uipod_codecs::get_nsf_apu_telemetry();
+            let (apu_lead, apu_bass, apu_perc, apu_pan) =
+                if uipod_codecs::get_nsf_active_chip_flags().is_some() && apu.channel_count > 0 {
+                    let vol = |idx: usize| -> f32 {
+                        let ch = &apu.channels[idx];
+                        if ch.active != 0 && ch.muted == 0 {
+                            ch.volume.clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        }
+                    };
+                    let trig = |idx: usize| -> bool {
+                        let ch = &apu.channels[idx];
+                        ch.active != 0 && ch.muted == 0 && ch.onset_trigger != 0
+                    };
+                    let p1 = vol(0);
+                    let p2 = vol(1);
+                    let exp1 = vol(5);
+                    let exp2 = vol(6);
+                    let lead = trig(0) || trig(1) || trig(5) || trig(6);
+                    let bass = trig(2) || trig(7) || vol(2) > 0.65;
+                    let perc = trig(3) || trig(4);
+                    let pan_est = ((p2 + exp2) - (p1 + exp1)).clamp(-1.0, 1.0);
+                    for (c, ch) in apu.channels[..(apu.channel_count as usize).min(8)]
+                        .iter()
+                        .enumerate()
+                    {
+                        if ch.muted == 0 && ch.active != 0 {
+                            let b0 = (c * 2).min(15);
+                            let b1 = (c * 2 + 1).min(15);
+                            let v = ch.volume.clamp(0.0, 1.0);
+                            self.live_bars[b0] = self.live_bars[b0].max(v);
+                            self.live_bars[b1] = self.live_bars[b1].max(v * 0.85);
+                        }
+                    }
+                    (lead, bass, perc, Some(pan_est))
+                } else {
+                    (false, false, false, None)
+                };
+
             self.energy_avg = self.energy_avg * 0.94 + energy * 0.06;
             let rel_int = (energy / (self.energy_avg.max(0.02) * 1.45)).clamp(0.05, 1.0);
             self.intensity = self.intensity * 0.88 + rel_int * 0.12;
-            self.target_curve = (pan * 1.4 + (high - low_acc) * 0.6).clamp(-1.0, 1.0);
-            self.live_kick = (self.live_kick * 0.72).max((low_acc * 1.25).clamp(0.0, 1.0));
+            let eff_pan = apu_pan.unwrap_or(pan);
+            self.target_curve = (eff_pan * 1.4 + (high - low_acc) * 0.6).clamp(-1.0, 1.0);
+            let mut kick_src = (low_acc * 1.25).clamp(0.0, 1.0);
+            if apu_perc || apu_bass {
+                kick_src = kick_src.max(0.88);
+            }
+            self.live_kick = (self.live_kick * 0.72).max(kick_src);
 
             let speed = 0.86 + self.intensity * 0.32;
             self.scroll_phase = (self.scroll_phase + dt * (3.0 + self.intensity * 4.2)).fract();
@@ -4454,21 +4499,25 @@ impl SoundRacerGame {
                 1 => 0.19,
                 _ => 0.13,
             };
-            let beat = energy > (self.energy_avg * 1.15).max(0.045);
+            let beat = apu_lead || apu_bass || apu_perc || energy > (self.energy_avg * 1.15).max(0.045);
             if self.spawn_cd <= 0.0 && (beat || self.spawn_cd < -0.32) {
                 self.spawn_cd = if beat { min_gap } else { min_gap + 0.12 };
-                let lane = if pan < -0.08 {
+                let lane = if apu_bass && !apu_lead {
+                    1
+                } else if eff_pan < -0.08 {
                     0
-                } else if pan > 0.08 {
+                } else if eff_pan > 0.08 {
                     2
                 } else {
                     self.rng.range(3)
                 };
-                let kind = if energy > self.energy_avg * 1.55 && self.rng.range(4) == 0 {
+                let kind = if (apu_perc && self.rng.range(3) == 0)
+                    || (energy > self.energy_avg * 1.55 && self.rng.range(4) == 0)
+                {
                     SrBlockKind::Spike
-                } else if !self.cluster_mode || energy > self.energy_avg * 1.28 {
+                } else if apu_bass || !self.cluster_mode || energy > self.energy_avg * 1.28 {
                     SrBlockKind::Heavy
-                } else if energy > self.energy_avg * 1.02 {
+                } else if apu_lead || energy > self.energy_avg * 1.02 {
                     SrBlockKind::Medium
                 } else {
                     SrBlockKind::Light

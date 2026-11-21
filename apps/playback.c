@@ -50,15 +50,15 @@
 #include "uipod_rs_jellyfin.h"
 #include "uipod_lastfm.h"
 #include "uipod_playlists.h"
+#include "uipod_rs_codecs.h"
+#include "uipod_dj.h"
 #include "tape_deck_fx.h"
 #include <stdio.h>
 
 
 
 
-#if defined(SDLAPP)
 #include <strings.h>  /* For strncasecmp() */
-#endif
 
 
 /* TODO: The audio thread really is doing multitasking of acting like a
@@ -1550,6 +1550,20 @@ static bool audio_load_cuesheet(struct track_info *infop,
    full at the time. To put any metadata after audio would make those handles
    unmovable.
 */
+static bool is_nsf_playback_path(const char *path)
+{
+    if (!path || !path[0])
+        return false;
+    const char *hash = strrchr(path, '#');
+    size_t base_len = hash ? (size_t)(hash - path) : strlen(path);
+    if ((base_len > 4 && strncasecmp(path + base_len - 4, ".nsf", 4) == 0) ||
+        (base_len > 5 && strncasecmp(path + base_len - 5, ".nsfe", 5) == 0))
+    {
+        return true;
+    }
+    return false;
+}
+
 static int audio_load_track(void)
 {
     struct track_info info;
@@ -1647,6 +1661,31 @@ static int audio_load_track(void)
                 else
                     uipod_jellyfin_prepare_track(path, false);
             }
+        }
+        else if (is_nsf_playback_path(path) &&
+                 track_list_count() > 0 &&
+                 !uipod_prefetch_allow_peek_offset(playlist_peek_offset) &&
+                 file_exists(path))
+        {
+            /* Keep NSF/NSFe RAM lookahead bounded to the active 3-track window
+             * (`uipod_prefetch_on_track_change` slides it automatically) instead
+             * of opening 128 tiny `.nsf` files in one burst on VFAT SD card! */
+            struct mp3entry *ub_id3 = id3_get(UNBUFFERED_ID3);
+            playlist_peek_offset--;
+            int ufd = open(path, O_RDONLY);
+            if (ufd >= 0)
+            {
+                id3_mutex_lock();
+                get_metadata(ub_id3, ufd, path);
+                id3_mutex_unlock();
+                close(ufd);
+            }
+            if (filling != STATE_FULL)
+            {
+                track_list_free_info(&info);
+                filling = STATE_FULL;
+            }
+            return LOAD_TRACK_OK;
         }
 
         /* Test for broken playlists by probing for the files */
@@ -2603,6 +2642,7 @@ static void audio_stop_playback(void)
     halt_decoding_track(true);
     pcmbuf_play_stop();
     codec_unload();
+    uipod_rs_nsf_reset_session();
 
     /* Save resume information  - "filling" might have been set to
        "STATE_ENDED" by caller in order to facilitate end of playlist */
@@ -2697,6 +2737,7 @@ static void audio_on_skip(void)
         return;
 
     /* Force codec to abort this track */
+    uipod_dj_note_skip_delta(toskip);
     tape_deck_fx_on_seek_or_stop();
     halt_decoding_track(true);
 
@@ -2792,6 +2833,7 @@ static void audio_on_dir_skip(int direction)
         return;
 
     /* Force codec to abort this track */
+    uipod_dj_note_skip_delta(0);
     tape_deck_fx_on_seek_or_stop();
     halt_decoding_track(true);
 
@@ -3060,6 +3102,7 @@ void audio_playback_handler(struct queue_event *ev)
         case SYS_USB_CONNECTED:
         case Q_AUDIO_STOP:
             LOGFQUEUE("playback < Q_AUDIO_STOP");
+            uipod_dj_reset();
             audio_stop_playback();
             if (ev->data != 0)
                 queue_clear(&audio_queue);
@@ -3082,6 +3125,7 @@ void audio_playback_handler(struct queue_event *ev)
 
         case Q_AUDIO_PRE_FF_REWIND:
             LOGFQUEUE("playback < Q_AUDIO_PRE_FF_REWIND");
+            uipod_dj_reset();
             audio_on_pre_ff_rewind();
             break;
 

@@ -75,6 +75,10 @@ void backlight_hw_brightness(int brightness)
     android_set_window_brightness(brightness);
 }
 
+void backlight_hw_complete_wake(void)
+{
+}
+
 #else /* !__ANDROID__ */
 
 #include <sys/types.h>
@@ -85,12 +89,14 @@ void backlight_hw_brightness(int brightness)
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <SDL.h>
+#include <SDL_thread.h>
 #include "config.h"
 #include "lcd.h"                /* lcd_set_panel_dark: stop presenting while dark */
 #include "backlight-target.h"
+#include "system-sdl.h"
 #include "sysfs.h"
 #include "panic.h"
-#include "lcd.h"
 
 typedef enum {
   BL_TYPE1 = 0,
@@ -146,51 +152,220 @@ static backlight_t get_type(void)
     return BL_TYPE1;
 }
 
+/* Offload dispdbg sysfs writes (especially LCD_ON/OFF_COMMAND, which stalls
+ * ~300ms inside sunxi disp2 MIPI-DSI init/sleep) onto a dedicated OS thread so
+ * cooperative Rockbox fibers (codec_thread / low-latency NSF & MIDI) never
+ * freeze while the panel powers down or up. */
+static SDL_mutex *s_bl_mtx = NULL;
+static SDL_cond  *s_bl_cond = NULL;
+static bool s_worker_ready = false;
+
+static bool s_want_on = true;
+static int  s_want_step = DEFAULT_BRIGHTNESS_SETTING;
+static bool s_present_done = true;
+
+static void hw_apply_brightness_sync(backlight_t type, int step)
+{
+    switch (type) {
+        case BL_TYPE1: set_type1_brightness(step * 15); break;
+        case BL_TYPE2: set_type2_brightness(step * get_type2_bl_step()); break;
+    }
+}
+
+static void hw_apply_off_sync(backlight_t type)
+{
+    switch (type) {
+        case BL_TYPE1: set_type1_brightness(0); break;
+        case BL_TYPE2: sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 1); break;
+    }
+    if (type == BL_TYPE1)
+        set_type1_lcd("LCD_OFF_COMMAND");
+}
+
+static int bl_worker_fn(void *arg)
+{
+    (void)arg;
+    bool hw_on = true;
+    int  hw_step = DEFAULT_BRIGHTNESS_SETTING;
+
+    for (;;)
+    {
+        SDL_LockMutex(s_bl_mtx);
+        while (!((!s_want_on && hw_on) ||
+                 (s_want_on && !hw_on) ||
+                 (s_want_on && hw_on && s_want_step != hw_step)))
+        {
+            SDL_CondWait(s_bl_cond, s_bl_mtx);
+        }
+
+        if (!s_want_on && hw_on)
+        {
+            SDL_UnlockMutex(s_bl_mtx);
+            hw_apply_off_sync(get_type());
+            hw_on = false;
+            hw_step = -1;
+            continue;
+        }
+
+        if (s_want_on && !hw_on)
+        {
+            s_present_done = false;
+            SDL_UnlockMutex(s_bl_mtx);
+
+            /* 1. Re-enable panel scanout (~300ms in kernel) while LED is still 0
+             *    and lcd_panel_is_dark() is still true (no dead-vsync swap). */
+            backlight_t type = get_type();
+            if (type == BL_TYPE1)
+                set_type1_lcd("LCD_ON_COMMAND");
+            hw_on = true;
+
+            SDL_LockMutex(s_bl_mtx);
+            if (!s_want_on)
+            {
+                SDL_UnlockMutex(s_bl_mtx);
+                continue;
+            }
+            SDL_UnlockMutex(s_bl_mtx);
+
+            /* 2. TCON now produces 60Hz vsync; ask backlight_thread on the
+             *    Rockbox/GL thread to flip lcd_set_panel_dark(false) and
+             *    present the up-to-date frame BEFORE lighting the LED. */
+            sim_enter_irq_handler();
+            backlight_notify_hw_woke();
+            sim_exit_irq_handler();
+
+            SDL_LockMutex(s_bl_mtx);
+            Uint32 deadline = SDL_GetTicks() + 50;
+            while (s_want_on && !s_present_done)
+            {
+                Uint32 now = SDL_GetTicks();
+                if ((Sint32)(deadline - now) <= 0)
+                    break;
+                SDL_CondWaitTimeout(s_bl_cond, s_bl_mtx, deadline - now);
+            }
+            if (!s_want_on)
+            {
+                SDL_UnlockMutex(s_bl_mtx);
+                continue;
+            }
+            int step = s_want_step;
+            SDL_UnlockMutex(s_bl_mtx);
+
+            if (type == BL_TYPE2)
+                sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 0);
+            hw_apply_brightness_sync(type, step);
+            hw_step = step;
+            continue;
+        }
+
+        /* Already on: apply updated brightness step */
+        int step = s_want_step;
+        SDL_UnlockMutex(s_bl_mtx);
+        hw_apply_brightness_sync(get_type(), step);
+        hw_step = step;
+    }
+    return 0;
+}
+
 bool backlight_hw_init(void)
 {
-    backlight_hw_on();
-    backlight_hw_brightness(DEFAULT_BRIGHTNESS_SETTING);
+    backlight_t type = get_type();
+    if (type == BL_TYPE1)
+        set_type1_lcd("LCD_ON_COMMAND");
+    lcd_set_panel_dark(false);
+    if (type == BL_TYPE2)
+        sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 0);
+    hw_apply_brightness_sync(type, DEFAULT_BRIGHTNESS_SETTING);
+
+    s_want_on = true;
+    s_want_step = DEFAULT_BRIGHTNESS_SETTING;
+    s_present_done = true;
+
+    s_bl_mtx = SDL_CreateMutex();
+    s_bl_cond = SDL_CreateCond();
+    if (s_bl_mtx && s_bl_cond &&
+        SDL_CreateThread(bl_worker_fn, "uipod-bl", NULL) != NULL)
+    {
+        s_worker_ready = true;
+    }
     return true;
 }
 
-static int last_bl = -1;
+static int last_bl = 1;
+
+void backlight_hw_complete_wake(void)
+{
+    if (!s_worker_ready)
+        return;
+
+    bool should_present = false;
+    SDL_LockMutex(s_bl_mtx);
+    if (s_want_on)
+        should_present = true;
+    SDL_UnlockMutex(s_bl_mtx);
+
+    if (should_present)
+        lcd_set_panel_dark(false);
+
+    SDL_LockMutex(s_bl_mtx);
+    s_present_done = true;
+    SDL_CondSignal(s_bl_cond);
+    SDL_UnlockMutex(s_bl_mtx);
+}
 
 void backlight_hw_on(void)
 {
-    if (last_bl != 1) {
-
-    /* Panel on first: the present below waits on its vsync. */
-    if (get_type() == BL_TYPE1)
-        set_type1_lcd("LCD_ON_COMMAND");
-
-    /* Present BEFORE lighting the panel: the surfaces were kept current while
-     * dark, so the panel comes up already showing them.  Lighting first would
-     * flash the frame from when it went dark until this present landed. */
-    lcd_set_panel_dark(false);
-
-    switch (get_type()) {
-        case BL_TYPE1: set_type1_brightness(15); break;
-        case BL_TYPE2: sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 0); break;
+    if (!s_worker_ready)
+    {
+        if (last_bl != 1)
+        {
+            backlight_t type = get_type();
+            if (type == BL_TYPE1)
+                set_type1_lcd("LCD_ON_COMMAND");
+            lcd_set_panel_dark(false);
+            switch (type) {
+                case BL_TYPE1: set_type1_brightness(15); break;
+                case BL_TYPE2: sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 0); break;
+            }
+            last_bl = 1;
+        }
+        return;
     }
 
-	  last_bl = 1;
-    }
+    bool already_awake = false;
+    SDL_LockMutex(s_bl_mtx);
+    if (!s_want_on)
+        s_want_step = MIN_BRIGHTNESS_SETTING;
+    else if (s_present_done)
+        already_awake = true;
+    s_want_on = true;
+    SDL_CondSignal(s_bl_cond);
+    SDL_UnlockMutex(s_bl_mtx);
+
+    if (already_awake)
+        lcd_set_panel_dark(false);
 }
 
 void backlight_hw_off(void)
 {
-    if (last_bl != 0) {
+    /* Mark dark immediately on the Rockbox thread so SDL/GL stops swapping
+     * before the worker disables the panel's TCON scanout. */
+    lcd_set_panel_dark(true);
 
-    switch (get_type()) {
-        case BL_TYPE1: set_type1_brightness(0); break;
-        case BL_TYPE2: sysfs_set_int(get_bl_env("SYSFS_BL_POWER"), 1); break;
+    if (!s_worker_ready)
+    {
+        if (last_bl != 0)
+        {
+            hw_apply_off_sync(get_type());
+            last_bl = 0;
+        }
+        return;
     }
 
-	last_bl = 0;
-    lcd_set_panel_dark(true);    /* dark: stop presenting to a panel that is off */
-    if (get_type() == BL_TYPE1)
-        set_type1_lcd("LCD_OFF_COMMAND");
-    }
+    SDL_LockMutex(s_bl_mtx);
+    s_want_on = false;
+    SDL_CondSignal(s_bl_cond);
+    SDL_UnlockMutex(s_bl_mtx);
 }
 
 void backlight_hw_brightness(int brightness)
@@ -201,11 +376,16 @@ void backlight_hw_brightness(int brightness)
     if (brightness < MIN_BRIGHTNESS_SETTING)
         brightness = MIN_BRIGHTNESS_SETTING;
 
-    switch (get_type()) {
-          case BL_TYPE1: set_type1_brightness(brightness * 15); break;        
-          case BL_TYPE2: set_type2_brightness(brightness * get_type2_bl_step()); break;
+    if (!s_worker_ready)
+    {
+        hw_apply_brightness_sync(get_type(), brightness);
+        return;
     }
 
+    SDL_LockMutex(s_bl_mtx);
+    s_want_step = brightness;
+    SDL_CondSignal(s_bl_cond);
+    SDL_UnlockMutex(s_bl_mtx);
 }
 
 #endif /* !__ANDROID__ */

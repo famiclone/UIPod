@@ -68,7 +68,6 @@ include $(RBCODECLIB_DIR)/codecs/libtta/libtta.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libay.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libgbs.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libhes.make
-include $(RBCODECLIB_DIR)/codecs/libgme/libnsf.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libsgc.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libvgm.make
 include $(RBCODECLIB_DIR)/codecs/libgme/libkss.make
@@ -211,7 +210,6 @@ $(CODECDIR)/ay.codec : $(CODECDIR)/libay.a
 $(CODECDIR)/vtx.codec : $(CODECDIR)/libayumi.a
 $(CODECDIR)/gbs.codec : $(CODECDIR)/libgbs.a
 $(CODECDIR)/hes.codec : $(CODECDIR)/libhes.a
-$(CODECDIR)/nsf.codec : $(CODECDIR)/libnsf.a $(CODECDIR)/libemu2413.a
 $(CODECDIR)/sgc.codec : $(CODECDIR)/libsgc.a $(CODECDIR)/libemu2413.a
 $(CODECDIR)/vgm.codec : $(CODECDIR)/libvgm.a $(CODECDIR)/libemu2413.a
 $(CODECDIR)/kss.codec : $(CODECDIR)/libkss.a $(CODECDIR)/libemu2413.a

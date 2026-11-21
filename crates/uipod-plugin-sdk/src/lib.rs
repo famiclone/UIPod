@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 6;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 7;
 
 /// Symbol name exported by every `.uipod` shared library.
 pub const UIPOD_PLUGIN_ENTRY_SYMBOL: &[u8] = b"uipod_plugin_descriptor\0";
@@ -111,6 +111,121 @@ pub struct PluginTheme {
     pub fg: u32,
     pub fg1: u32,
     pub fg2: u32,
+}
+
+/// Real-time state of a single hardware APU sound channel (`2A03` + `VRC6`/`MMC5`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PluginChannelState {
+    pub active: u8,
+    pub muted: u8,
+    pub onset_trigger: u8,
+    pub duty_or_mode: u8,
+    pub volume: f32,
+    pub freq_hz: f32,
+}
+
+/// Lock-free 60 FPS hardware APU channel telemetry snapshot passed from host to `.uipod` plugins.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PluginApuTelemetry {
+    /// `1` when an `.nsf` / `.nsfe` chiptune is actively providing APU telemetry, `0` otherwise.
+    pub has_apu_telemetry: u8,
+    pub channel_count: u8,
+    pub chip_flags: u8,
+    pub reserved: u8,
+    pub mute_mask: u16,
+    pub pad: u16,
+    pub channels: [PluginChannelState; 8],
+}
+
+impl PluginApuTelemetry {
+    #[inline]
+    pub const fn is_available(&self) -> bool {
+        self.has_apu_telemetry != 0
+    }
+
+    #[inline]
+    pub fn channel(&self, idx: usize) -> Option<&PluginChannelState> {
+        let count = (self.channel_count as usize).min(8);
+        if self.is_available() && idx < count {
+            Some(&self.channels[idx])
+        } else {
+            None
+        }
+    }
+
+    /// Returns audible `[0.0..=1.0]` amplitude of channel `idx` (`0.0` when muted or inactive).
+    #[inline]
+    pub fn audible_volume(&self, idx: usize) -> f32 {
+        match self.channel(idx) {
+            Some(c) if c.active != 0 && c.muted == 0 => c.volume.clamp(0.0, 1.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Returns `true` if channel `idx` triggered a fresh note/envelope onset on this frame.
+    #[inline]
+    pub fn audible_onset(&self, idx: usize) -> bool {
+        matches!(
+            self.channel(idx),
+            Some(c) if c.active != 0 && c.muted == 0 && c.onset_trigger != 0
+        )
+    }
+
+    /// Combined melodic lead trigger (`2A03 Pulse 1/2` + expansion `Pulse 1/2`) in `[0.0..=1.0]`.
+    pub fn lead_trigger(&self) -> f32 {
+        if !self.is_available() {
+            return 0.0;
+        }
+        let mut v = 0.0f32;
+        for idx in [0usize, 1, 5, 6] {
+            let mut ch_v = self.audible_volume(idx);
+            if self.audible_onset(idx) {
+                ch_v = (ch_v + 0.35).min(1.0);
+            }
+            v = v.max(ch_v);
+        }
+        v
+    }
+
+    /// Combined bassline trigger (`2A03 Triangle` + `VRC6 Sawtooth`) in `[0.0..=1.0]`.
+    pub fn bass_trigger(&self) -> f32 {
+        if !self.is_available() {
+            return 0.0;
+        }
+        let mut tri = self.audible_volume(2);
+        if self.audible_onset(2) {
+            tri = (tri + 0.40).min(1.0);
+        }
+        // VRC6 Sawtooth sits at index 7 when VRC6 (`bit 0`) is active
+        let saw = if (self.chip_flags & 1) != 0 {
+            let mut s = self.audible_volume(7);
+            if self.audible_onset(7) {
+                s = (s + 0.35).min(1.0);
+            }
+            s
+        } else {
+            0.0
+        };
+        tri.max(saw)
+    }
+
+    /// Combined percussion trigger (`2A03 Noise` + `2A03 DPCM`) in `[0.0..=1.0]`.
+    pub fn percussion_trigger(&self) -> f32 {
+        if !self.is_available() {
+            return 0.0;
+        }
+        let mut ns = self.audible_volume(3);
+        if self.audible_onset(3) {
+            ns = (ns + 0.45).min(1.0);
+        }
+        let mut dp = self.audible_volume(4);
+        if self.audible_onset(4) {
+            dp = (dp + 0.50).min(1.0);
+        }
+        ns.max(dp)
+    }
 }
 
 /// Snapshot of button edges, held buttons, and system requests from a single poll step.
@@ -309,6 +424,9 @@ pub struct UIPodPluginApi {
         out_h: *mut f32,
     ),
     pub get_responsive_size: unsafe extern "C" fn(out_w: *mut f32, out_h: *mut f32),
+
+    /* ---- Hardware APU Channel Telemetry Extension (v7+) ---- */
+    pub audio_get_apu_telemetry: unsafe extern "C" fn(out: *mut PluginApuTelemetry) -> bool,
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -726,6 +844,21 @@ impl<'a> HostContext<'a> {
         (self.api.audio_stop)();
     }
 
+    /// Reads the latest 60 FPS hardware APU channel telemetry (`has_apu_telemetry == 1` when an
+    /// `.nsf` / `.nsfe` chiptune is active; `has_apu_telemetry == 0` for FLAC/MP3/etc. or older hosts).
+    #[inline]
+    pub fn audio_apu_telemetry(&self) -> PluginApuTelemetry {
+        if self.api.api_version < 7 {
+            return PluginApuTelemetry::default();
+        }
+        let mut out = PluginApuTelemetry::default();
+        let ok = unsafe { (self.api.audio_get_apu_telemetry)(&mut out) };
+        if !ok {
+            out.has_apu_telemetry = 0;
+        }
+        out
+    }
+
     /// Total number of deduplicated Music tracks available in UIPod's library.
     #[inline]
     pub fn library_track_count(&self) -> usize {
@@ -789,7 +922,7 @@ where
         return -1;
     }
     let api_ref = &*api;
-    if api_ref.api_version != UIPOD_PLUGIN_API_VERSION {
+    if api_ref.api_version < 6 || api_ref.api_version > UIPOD_PLUGIN_API_VERSION {
         return -2;
     }
     let mut ctx = HostContext::from_raw(api_ref);
@@ -872,4 +1005,66 @@ macro_rules! uipod_declare_plugin {
             entry: $entry_fn,
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::{align_of, size_of};
+
+    #[test]
+    fn verify_plugin_apu_telemetry_c_abi_and_triggers() {
+        assert_eq!(UIPOD_PLUGIN_API_VERSION, 7);
+        assert_eq!(size_of::<PluginChannelState>(), 12);
+        assert_eq!(align_of::<PluginChannelState>(), 4);
+        assert_eq!(size_of::<PluginApuTelemetry>(), 8 + 8 * 12);
+
+        let mut tel = PluginApuTelemetry::default();
+        assert!(!tel.is_available());
+        assert_eq!(tel.lead_trigger(), 0.0);
+        assert_eq!(tel.bass_trigger(), 0.0);
+        assert_eq!(tel.percussion_trigger(), 0.0);
+
+        tel.has_apu_telemetry = 1;
+        tel.channel_count = 8;
+        tel.channels[0] = PluginChannelState {
+            active: 1,
+            muted: 0,
+            onset_trigger: 1,
+            duty_or_mode: 2,
+            volume: 0.75,
+            freq_hz: 440.0,
+        };
+        tel.channels[2] = PluginChannelState {
+            active: 1,
+            muted: 0,
+            onset_trigger: 1,
+            duty_or_mode: 0,
+            volume: 0.9,
+            freq_hz: 110.0,
+        };
+        tel.channels[3] = PluginChannelState {
+            active: 1,
+            muted: 0,
+            onset_trigger: 1,
+            duty_or_mode: 0,
+            volume: 0.6,
+            freq_hz: 0.0,
+        };
+
+        assert!(tel.is_available());
+        assert!((tel.audible_volume(0) - 0.75).abs() < 1e-6);
+        assert!(tel.lead_trigger() > 0.7);
+        assert!(tel.bass_trigger() > 0.8);
+        assert!(tel.percussion_trigger() > 0.5);
+
+        // Muted channels must suppress audible volume and rhythm triggers
+        tel.channels[0].muted = 1;
+        tel.channels[2].muted = 1;
+        tel.channels[3].muted = 1;
+        assert_eq!(tel.audible_volume(0), 0.0);
+        assert_eq!(tel.lead_trigger(), 0.0);
+        assert_eq!(tel.bass_trigger(), 0.0);
+        assert_eq!(tel.percussion_trigger(), 0.0);
+    }
 }

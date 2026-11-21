@@ -61,6 +61,9 @@
 #include "wps.h"
 #include "uipod_visualizer.h"
 #include "uipod_nowplaying.h"
+#include "uipod_midi.h"
+#include "uipod_nsf_ui.h"
+#include "uipod_rs_codecs.h"
 #include "uipod_ui.h"
 #include "statusbar-skinned.h"
 #include "skin_engine/wps_internals.h"
@@ -495,8 +498,12 @@ static int wps_page_poll(struct uipod_page *p, int timeout)
     if (w->button && !IS_SYSEVENT(w->button) )
         storage_spin();
 
-    long button = get_action(CONTEXT_WPS|ALLOW_SOFTLOCK,
-                             lcd_panel_is_dark() ? HZ : HZ/5);
+    struct uipod_rs_dj_telemetry dj_tel;
+    bool dj_live = (uipod_rs_dj_get_telemetry(&dj_tel) != 0);
+    int poll_tmo = lcd_panel_is_dark()
+        ? HZ
+        : ((dj_live || uipod_rs_nsf_get_active_chip_flags() >= 0) ? (HZ / 15) : (HZ / 5));
+    long button = get_action(CONTEXT_WPS|ALLOW_SOFTLOCK, poll_tmo);
 
     /* Exit if audio has stopped playing. This happens e.g. at end of
        playlist or if using the sleep timer. */
@@ -512,7 +519,7 @@ static int wps_page_poll(struct uipod_page *p, int timeout)
  * is an inline knob: LEFT/RIGHT (or A) cycle Off/5/10.../90 min and arm the
  * timer live; the value shows minutes left.  Opened like the context menu
  * (gwps_leave_wps -> menu -> restore) so it themes. */
-enum { NP_PAUSE = 0, NP_SHUFFLE, NP_ADD_TO_PLAYLIST, NP_START_VIZ };
+enum { NP_PAUSE = 0, NP_SHUFFLE, NP_ADD_TO_PLAYLIST, NP_START_VIZ, NP_SOUNDFONT };
 
 static const int np_sleep_min[] = { 0, 5, 10, 15, 30, 45, 60, 75, 90 };
 #define NP_SLEEP_N ((int)(sizeof np_sleep_min / sizeof np_sleep_min[0]))
@@ -570,19 +577,6 @@ static void np_pause_cycle(void *ctx, int dir)
 }
 static const struct menu_value_cb np_pause_value =
     { np_pause_get, np_pause_cycle, NULL };
-static const char *np_mono_art_get(void *ctx, char *buf, int len)
-{
-    (void)ctx; (void)buf; (void)len;
-    return uipod_toggle_str(global_settings.mono_album_art);
-}
-static void np_mono_art_cycle(void *ctx, int dir)
-{
-    (void)ctx; (void)dir;
-    global_settings.mono_album_art = !global_settings.mono_album_art;
-    settings_save();
-}
-static const struct menu_value_cb np_mono_art_value =
-    { np_mono_art_get, np_mono_art_cycle, NULL };
 
 static const char *np_large_art_get(void *ctx, char *buf, int len)
 {
@@ -612,10 +606,78 @@ static void np_effects_cycle(void *ctx, int dir)
 static const struct menu_value_cb np_effects_value =
     { np_effects_get, np_effects_cycle, NULL };
 
+static int np_soundfont_cb(int action, const struct menu_item_ex *this_item,
+                           struct gui_synclist *this_list)
+{
+    (void)this_item;
+    (void)this_list;
+    if (action == ACTION_REQUEST_MENUITEM)
+    {
+        struct wps_state *st = get_wps_state();
+        bool uses_sf2 = st && st->id3 &&
+                        (st->id3->codectype == AFMT_MIDI ||
+                         uipod_midi_is_midi_path(st->id3->path));
+        if (!uses_sf2)
+            return ACTION_EXIT_MENUITEM;
+    }
+    return action;
+}
+
+static int np_nsf_cb(int action, const struct menu_item_ex *this_item,
+                     struct gui_synclist *this_list)
+{
+    (void)this_item;
+    (void)this_list;
+    if (action == ACTION_REQUEST_MENUITEM)
+    {
+        struct wps_state *st = get_wps_state();
+        bool is_nsf = (uipod_rs_nsf_get_active_chip_flags() >= 0) ||
+                      (st && st->id3 && st->id3->codectype == AFMT_NSF);
+        if (!is_nsf)
+            return ACTION_EXIT_MENUITEM;
+    }
+    return action;
+}
+
+static char *np_nsf_endless_label(int selected_item,
+                                  void *data,
+                                  char *buffer,
+                                  size_t buffer_len)
+{
+    (void)selected_item;
+    (void)data;
+    bool uk = strcmp((const char *)global_settings.lang_file, "ukrainian") == 0;
+    snprintf(buffer, buffer_len, "%s", uk ? "Нескінченний цикл" : "Endless Loop");
+    return buffer;
+}
+
+static const char *np_nsf_endless_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return uipod_toggle_str(uipod_rs_nsf_get_endless_loop() != 0);
+}
+
+static void np_nsf_endless_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    int cur = uipod_rs_nsf_get_endless_loop();
+    uipod_rs_nsf_set_endless_loop(cur == 0 ? 1 : 0);
+}
+
+static const struct menu_value_cb np_nsf_endless_value =
+    { np_nsf_endless_get, np_nsf_endless_cycle, NULL };
+
 MENUITEM_VALUE(np_pause, "", &np_pause_value, Icon_NOICON);
+MENUITEM_FUNCTION_DYNTEXT(np_nsf_channels, MENU_SHOW_CHEVRON,
+                          uipod_nsf_channels_menu_fn,
+                          uipod_nsf_channels_menu_label, NULL, NULL,
+                          np_nsf_cb, Icon_NOICON);
+MENUITEM_VALUE_DYNTEXT_CB(np_nsf_endless, &np_nsf_endless_value,
+                          np_nsf_endless_label, np_nsf_cb, Icon_NOICON);
 MENUITEM_VALUE(np_effects, ID2P(LANG_UIPOD_EFFECTS), &np_effects_value, Icon_NOICON);
+MENUITEM_RETURNVALUE_CHEVRON(np_soundfont, ID2P(LANG_UIPOD_SOUNDFONT), NP_SOUNDFONT,
+                             np_soundfont_cb, Icon_NOICON);
 MENUITEM_VALUE(np_sleeptimer, ID2P(LANG_SLEEP_TIMER), &np_sleep_value, Icon_NOICON);
-MENUITEM_VALUE(np_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &np_mono_art_value, Icon_NOICON);
 MENUITEM_VALUE(np_large_art, ID2P(LANG_UIPOD_LARGE_ART), &np_large_art_value, Icon_NOICON);
 /* Shuffle: an action, not a mode -- every pick reshuffles the live queue. */
 MENUITEM_RETURNVALUE(np_shuffle, ID2P(LANG_SHUFFLE), NP_SHUFFLE,
@@ -626,9 +688,10 @@ MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_UIPOD_START_VISUALIZER), NP_START_VIZ, NU
 /* Repeat: an inline setting row (LEFT/RIGHT cycle, applied live to the
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
+
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
-          &np_pause, &np_effects, &np_shuffle, &np_repeat, &np_sleeptimer,
-          &np_mono_art, &np_large_art, &np_addpl, &np_viz);
+          &np_pause, &np_nsf_channels, &np_nsf_endless, &np_effects, &np_soundfont,
+          &np_shuffle, &np_repeat, &np_sleeptimer, &np_large_art, &np_addpl, &np_viz);
 
 static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                                                    int button)
@@ -666,6 +729,8 @@ static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                     uipod_queue_reshuffle();
                     uipod_transition_arm_back();   /* slide back, as B does */
                 }
+                else if (sel == NP_SOUNDFONT)
+                    uipod_midi_pick_soundfont();
                 else if (sel == NP_ADD_TO_PLAYLIST &&
                          state->id3 && state->id3->path[0])
                     uipod_playlists_pick(state->id3->path, FILE_ATTR_AUDIO);
@@ -712,16 +777,31 @@ static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                 play_hop(1);
                 break;
 
-            /* L2 / R2: previous / next chapter (m4b audiobooks; no-op when
-             * the track has no chapters). */
+            /* L2 / R2: previous / next chapter for cuesheet/m4b audiobooks,
+             * or +/-15s in-track seek for standard audio & .nsf#idx subtracks. */
             case ACTION_TP_CHAP_PREV:
             case ACTION_TP_CHAP_NEXT:
-                if ((audio_status() & AUDIO_STATUS_PLAY) && state->id3
-                    && state->id3->cuesheet)
+                if ((audio_status() & AUDIO_STATUS_PLAY) && state->id3)
                 {
-                    curr_cuesheet_skip(state->id3->cuesheet,
-                                       button == ACTION_TP_CHAP_NEXT ? 1 : -1,
-                                       state->id3->elapsed);
+                    if (state->id3->cuesheet)
+                    {
+                        curr_cuesheet_skip(state->id3->cuesheet,
+                                           button == ACTION_TP_CHAP_NEXT ? 1 : -1,
+                                           state->id3->elapsed);
+                    }
+                    else
+                    {
+                        long delta  = (button == ACTION_TP_CHAP_NEXT) ? 15000L : -15000L;
+                        long target = (long)state->id3->elapsed + delta;
+                        long max_ms = (long)state->id3->length;
+                        if (target < 0)
+                            target = 0;
+                        if (max_ms > 0 && target > max_ms)
+                            target = max_ms;
+                        state->id3->elapsed = (unsigned long)target;
+                        audio_pre_ff_rewind();
+                        audio_ff_rewind(target);
+                    }
                     w->update = true;
                 }
                 break;

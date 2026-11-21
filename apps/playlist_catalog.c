@@ -36,12 +36,14 @@
 #include "yesno.h"
 #include "filetypes.h"
 #include "playlist_catalog.h"
+#include "uipod_library.h"
 #include "uipod_navidrome.h"
 
 /* Use for recursive directory search */
 struct add_track_context {
     int fd;
     int count;
+    int nsf_containers;
 };
 
 /* we need playlist_dir_length for easy removal of playlist dir prefix */
@@ -96,18 +98,46 @@ static void display_insert_count(int count)
     splashf(0, str(LANG_PLAYLIST_INSERT_COUNT), count, str(LANG_OFF_ABORT));
 }
 
+static bool catalog_is_bare_nsf(const char *path)
+{
+    if (!path || strchr(path, '#') != NULL)
+        return false;
+    const char *dot = strrchr(path, '.');
+    if (!dot)
+        return false;
+    return strcasecmp(dot, ".nsf") == 0 || strcasecmp(dot, ".nsfe") == 0;
+}
+
+static bool write_uri_to_playlist_cb(const char *uri, void *context)
+{
+    struct add_track_context *c = (struct add_track_context *)context;
+    if (fdprintf(c->fd, "%s\n", uri) <= 0)
+        return false;
+    (c->count)++;
+    if (((c->count) % PLAYLIST_DISPLAY_COUNT) == 0)
+        display_insert_count(c->count);
+    return true;
+}
+
 /* Add specified track into playlist.  Callback from directory insert */
 static int add_track_to_playlist(char* filename, void* context)
 {
-    struct add_track_context* c = (struct add_track_context*) context;
+    struct add_track_context *c = (struct add_track_context *)context;
+    yield();
+    if (catalog_is_bare_nsf(filename))
+    {
+        c->nsf_containers++;
+        if (c->nsf_containers <= 8)
+            uipod_library_expand_nsf_music(filename, false,
+                                           write_uri_to_playlist_cb, context);
+        else
+            uipod_library_expand_nsf_fast(filename, false,
+                                          write_uri_to_playlist_cb, context);
+        return 0;
+    }
 
-    if (fdprintf(c->fd, "%s\n", filename) <= 0)
+    if (!write_uri_to_playlist_cb(filename, context))
         return -1;
-
-    (c->count)++;
-
-    if (((c->count)%PLAYLIST_DISPLAY_COUNT) == 0)
-        display_insert_count(c->count);
 
     return 0;
 }
@@ -135,9 +165,19 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
 
     if ((sel_attr & FILE_ATTR_MASK) == FILE_ATTR_AUDIO)
     {
-        /* append the selected file */
-        if (fdprintf(fd, "%s\n", sel) > 0)
-            result = 0;
+        if (catalog_is_bare_nsf(sel))
+        {
+            struct add_track_context c = { .fd = fd, .count = 0 };
+            if (uipod_library_expand_nsf_music(sel, true,
+                                               write_uri_to_playlist_cb, &c) > 0)
+                result = 0;
+        }
+        else
+        {
+            /* append the selected file or `<file.nsf>#<idx>` URI */
+            if (fdprintf(fd, "%s\n", sel) > 0)
+                result = 0;
+        }
     }
     else if ((sel_attr & FILE_ATTR_MASK) == FILE_ATTR_M3U)
     {

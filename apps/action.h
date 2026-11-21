@@ -365,6 +365,7 @@ enum {
     ACTION_TP_CHAP_PREV, /* UIPod: L2 -> previous chapter (m4b audiobooks) */
     ACTION_TP_CHAP_NEXT, /* UIPod: R2 -> next chapter (m4b audiobooks) */
     ACTION_TP_VIDEO_ASPECT, /* UIPod: X -> next video aspect ratio */
+    ACTION_TP_LIST_PLAY, /* UIPod: START in browser -> play highlighted .nsf / track / folder */
 
     LAST_ACTION_PLACEHOLDER, /* custom actions should be this + something */
 };

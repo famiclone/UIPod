@@ -273,6 +273,24 @@ struct menu_value_cb {
         {MT_FUNCTION_CALL_W_PARAM|MENU_HAS_DESC|MENU_FUNC_USEPARAM|MENU_VALUE_ITEM, \
          { .function_param = & name##__}, {.callback_and_desc = & name##_}};
 
+#define MENUITEM_VALUE_CB(name, str, value_cb, callback, icon)                 \
+    static const struct menu_callback_with_desc name##_ =                      \
+        {callback, str, icon};                                                 \
+    static const struct menu_func_param name##__ =                             \
+        {{NULL}, (void*)(value_cb)};                                           \
+    const struct menu_item_ex name =                                           \
+        {MT_FUNCTION_CALL_W_PARAM|MENU_HAS_DESC|MENU_FUNC_USEPARAM|MENU_VALUE_ITEM, \
+         { .function_param = & name##__}, {.callback_and_desc = & name##_}};
+
+#define MENUITEM_VALUE_DYNTEXT_CB(name, value_cb, text_callback, callback, icon) \
+    static const struct menu_get_name_and_icon name##_ =                       \
+        {callback, text_callback, NULL, NULL, icon};                           \
+    static const struct menu_func_param name##__ =                             \
+        {{NULL}, (void*)(value_cb)};                                           \
+    const struct menu_item_ex name =                                           \
+        {MT_FUNCTION_CALL_W_PARAM|MENU_DYNAMIC_DESC|MENU_FUNC_USEPARAM|MENU_VALUE_ITEM, \
+         { .function_param = & name##__}, {.menu_get_name_and_icon = & name##_}};
+
 /*  Use this to actually create a menu. the ... argument is a list of pointers
     to any of the above macro'd variables.
     (It can also have other menus in the list.) */
