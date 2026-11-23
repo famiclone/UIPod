@@ -12,10 +12,12 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use config::{ListenBrainzConfig, ParsedLbUrl};
+use config::{
+    format_auth_header_value, normalize_base_url, sanitize_token, ListenBrainzConfig, ParsedLbUrl,
+};
 use json::{
-    decode_submit_response, decode_validate_token, encode_playing_now_json, encode_scrobbles_json,
-    extract_error_message, LbApiError, NowPlayingMeta,
+    decode_error_body, decode_submit_response, decode_validate_token, encode_playing_now_json,
+    encode_scrobbles_json, LbApiError, NowPlayingMeta,
 };
 use queue::{ActiveTrackSession, QueuedScrobble, ScrobbleQueue};
 
@@ -121,15 +123,16 @@ impl RequestFailure {
     }
 }
 
-fn build_lb_headers(token: &str, is_post: bool) -> String {
-    let clean_tok: String = token
-        .trim()
-        .chars()
-        .filter(|&c| c != '\r' && c != '\n')
-        .collect();
+fn build_lb_headers(raw_token: &str, is_post: bool) -> Result<String, RequestFailure> {
+    let auth_val = format_auth_header_value(raw_token).ok_or_else(|| {
+        RequestFailure::Api(LbApiError {
+            code: 401,
+            message: "Set User Token first".to_string(),
+        })
+    })?;
     let mut hdr = String::with_capacity(192);
-    hdr.push_str("Authorization: Token ");
-    hdr.push_str(&clean_tok);
+    hdr.push_str("Authorization: ");
+    hdr.push_str(&auth_val);
     hdr.push_str("\r\nAccept: application/json\r\n");
     if is_post {
         hdr.push_str("Content-Type: application/json\r\n");
@@ -137,7 +140,7 @@ fn build_lb_headers(token: &str, is_post: bool) -> String {
     hdr.push_str("User-Agent: ");
     hdr.push_str(LB_USER_AGENT);
     hdr.push_str("\r\n");
-    hdr
+    Ok(hdr)
 }
 
 impl Transport {
@@ -153,7 +156,7 @@ impl Transport {
     ) -> Result<Vec<u8>, RequestFailure> {
         let is_post = method.eq_ignore_ascii_case("POST");
         let pq = url.endpoint_path(endpoint_suffix);
-        let hdrs = build_lb_headers(token, is_post);
+        let hdrs = build_lb_headers(token, is_post)?;
 
         let c_host =
             CString::new(url.host.as_str()).map_err(|_| RequestFailure::Network("Invalid host".into()))?;
@@ -205,16 +208,44 @@ impl Transport {
             Vec::new()
         };
 
+        if status > 0 && (status < 200 || status >= 300) {
+            if let Some(mut api_err) = decode_error_body(&resp_bytes) {
+                if api_err.code <= 0 {
+                    api_err.code = status;
+                }
+                eprintln!(
+                    "[uipod-listenbrainz] {} {}{} -> HTTP {} (code {}): {}",
+                    method, url.host, pq, status, api_err.code, api_err.message
+                );
+                return Err(RequestFailure::Api(LbApiError {
+                    code: api_err.code,
+                    message: format!("HTTP {status}: {}", api_err.message),
+                }));
+            }
+
+            let msg = if status == 404 || status == 405 {
+                format!("Wrong server URL (HTTP {status} on {})", url.host)
+            } else if status == 401 || status == 403 {
+                format!("HTTP {status} on {} (check token or server URL)", url.host)
+            } else {
+                format!("HTTP {status} ({})", url.host)
+            };
+            eprintln!(
+                "[uipod-listenbrainz] {} {}{} -> {} (non-JSON response, {} bytes)",
+                method,
+                url.host,
+                pq,
+                msg,
+                resp_bytes.len()
+            );
+            return Err(RequestFailure::HttpStatus(status, msg));
+        }
+
         if rc != 0 {
             return Err(RequestFailure::Network(c_buf_to_string(
                 &err_buf,
                 "Connection failed",
             )));
-        }
-
-        if status < 200 || status >= 300 {
-            let msg = extract_error_message(&resp_bytes).unwrap_or_else(|| format!("HTTP {status}"));
-            return Err(RequestFailure::HttpStatus(status, msg));
         }
 
         Ok(resp_bytes)
@@ -453,25 +484,29 @@ fn sync_now_with(
         let Ok(mut st) = state.lock() else {
             return -2;
         };
-        if !st.cfg.enabled || !st.cfg.is_authenticated() || st.auth_invalid {
-            let msg = if st.auth_invalid {
-                "Invalid ListenBrainz token"
-            } else {
-                "Not signed in to ListenBrainz"
-            };
-            write_c_str(err_buf, err_cap, msg);
-            return -2;
-        }
         let np = if st.cfg.now_playing {
             st.pending_np.take()
         } else {
             st.pending_np = None;
             None
         };
+        if !st.cfg.enabled || !st.cfg.is_authenticated() || st.auth_invalid {
+            let msg = if st.auth_invalid {
+                if st.last_error.is_empty() {
+                    "Invalid ListenBrainz token"
+                } else {
+                    st.last_error.as_str()
+                }
+            } else {
+                "Not signed in to ListenBrainz"
+            };
+            write_c_str(err_buf, err_cap, msg);
+            return -2;
+        }
         (st.cfg.clone(), np)
     };
 
-    let parsed_url = match ParsedLbUrl::parse(cfg_snapshot.effective_api_url()) {
+    let parsed_url = match ParsedLbUrl::parse(&cfg_snapshot.effective_api_url()) {
         Ok(u) => u,
         Err(e) => {
             write_c_str(err_buf, err_cap, &e);
@@ -689,7 +724,7 @@ pub unsafe extern "C" fn tp_listenbrainz_get_config(out_cfg: *mut TpLbConfigC) -
         user_token: [0; 128],
         username: [0; 96],
     };
-    write_fixed_c(&mut c.api_url, st.cfg.effective_api_url());
+    write_fixed_c(&mut c.api_url, &st.cfg.effective_api_url());
     write_fixed_c(&mut c.user_token, &st.cfg.clean_token());
     write_fixed_c(&mut c.username, &st.cfg.username);
     unsafe { *out_cfg = c };
@@ -708,19 +743,16 @@ pub unsafe extern "C" fn tp_listenbrainz_set_config(in_cfg: *const TpLbConfigC) 
     let Ok(mut st) = g.state.lock() else {
         return false;
     };
-    let new_url = read_fixed_c(&c.api_url).trim().to_string();
-    let new_token = read_fixed_c(&c.user_token).trim().to_string();
-    let token_changed = new_token != st.cfg.user_token || new_url != st.cfg.effective_api_url();
+    let new_url = normalize_base_url(&read_fixed_c(&c.api_url));
+    let new_token = sanitize_token(&read_fixed_c(&c.user_token));
+    let token_changed =
+        new_token != st.cfg.clean_token() || new_url != st.cfg.effective_api_url();
 
     st.cfg.enabled = c.enabled != 0;
     st.cfg.now_playing = c.now_playing != 0;
     st.cfg.scrobble_streaming = c.scrobble_streaming != 0;
     st.cfg.allow_self_signed = c.allow_self_signed != 0;
-    st.cfg.api_url = if new_url.is_empty() {
-        config::DEFAULT_API_URL.to_string()
-    } else {
-        new_url
-    };
+    st.cfg.api_url = new_url;
     st.cfg.user_token = new_token;
     if token_changed && st.cfg.user_token.is_empty() {
         st.cfg.username.clear();
@@ -979,19 +1011,23 @@ mod tests {
 
     #[derive(Clone, Debug)]
     struct CapturedReq {
+        is_https: bool,
+        host: String,
+        port: u16,
         method: String,
         path: String,
         headers: String,
         body: String,
     }
 
+    static TEST_SERIAL: Mutex<()> = Mutex::new(());
     static MOCK_REQS: Mutex<Vec<CapturedReq>> = Mutex::new(Vec::new());
     static MOCK_RESPS: Mutex<Vec<(i32, i32, String)>> = Mutex::new(Vec::new());
 
     unsafe extern "C" fn mock_http_req(
-        _is_https: u8,
-        _host: *const c_char,
-        _port: u16,
+        is_https: u8,
+        host: *const c_char,
+        port: u16,
         method: *const c_char,
         path_and_query: *const c_char,
         extra_headers: *const c_char,
@@ -1012,6 +1048,9 @@ mod tests {
             String::new()
         };
         MOCK_REQS.lock().unwrap().push(CapturedReq {
+            is_https: is_https != 0,
+            host: c_str_to_string(host),
+            port,
             method: c_str_to_string(method),
             path: c_str_to_string(path_and_query),
             headers: c_str_to_string(extra_headers),
@@ -1019,11 +1058,14 @@ mod tests {
         });
 
         let (rc, status, resp_body) = MOCK_RESPS.lock().unwrap().remove(0);
-        if rc != 0 {
+        if status <= 0 && rc != 0 {
             write_c_str(err_buf, err_cap, &resp_body);
             return rc;
         }
         unsafe { *out_status = status };
+        if rc != 0 {
+            write_c_str(err_buf, err_cap, &format!("HTTP {status}"));
+        }
         let bytes = resp_body.into_bytes().into_boxed_slice();
         let len = bytes.len();
         let raw = Box::into_raw(bytes) as *mut u8;
@@ -1031,7 +1073,7 @@ mod tests {
             *out_data = raw;
             *out_len = len;
         }
-        0
+        rc
     }
 
     unsafe extern "C" fn mock_http_free(ptr: *mut u8) {
@@ -1064,6 +1106,7 @@ mod tests {
 
     #[test]
     fn test_end_to_end_validate_playing_now_and_import_and_errors() {
+        let _guard = TEST_SERIAL.lock().unwrap();
         MOCK_REQS.lock().unwrap().clear();
         MOCK_RESPS.lock().unwrap().clear();
 
@@ -1239,5 +1282,105 @@ mod tests {
         );
         assert_eq!(flushed_after_400, 1);
         assert_eq!(state.lock().unwrap().queue.len(), 0);
+    }
+
+    #[test]
+    fn test_c_transport_401_error_body_and_url_rewrite_end_to_end() {
+        let _guard = TEST_SERIAL.lock().unwrap();
+        MOCK_REQS.lock().unwrap().clear();
+        MOCK_RESPS.lock().unwrap().clear();
+
+        // Simulate user setting `https://listenbrainz.org/` (without `api.`) and a messy
+        // `"Bearer my-clean-tok"\r\n` token — must hit `https://api.listenbrainz.org`
+        // with exact `Authorization: Token my-clean-tok\r\n`.
+        let (transport, state) = make_test_state("  \"Bearer my-clean-tok\"\r\n", "");
+        {
+            let mut st = state.lock().unwrap();
+            st.cfg.api_url = "https://listenbrainz.org/".to_string();
+            st.queue.enqueue(QueuedScrobble {
+                artist: "Boards of Canada".into(),
+                track: "Roygbiv".into(),
+                album: "Music Has the Right to Children".into(),
+                album_artist: String::new(),
+                track_number: 10,
+                duration_ms: 149_000,
+                timestamp: 1_763_890_900,
+            });
+        }
+
+        {
+            let mut resps = MOCK_RESPS.lock().unwrap();
+            resps.push((
+                0,
+                200,
+                r#"{"code":200,"message":"Token valid.","valid":true,"user_name":"boc_fan"}"#
+                    .into(),
+            ));
+            resps.push((0, 200, r#"{"status":"ok"}"#.into()));
+        }
+
+        let mut err = [0 as c_char; 160];
+        let flushed = sync_now_with(
+            &transport,
+            &state,
+            1_763_891_200,
+            std::ptr::null_mut(),
+            err.as_mut_ptr(),
+            err.len(),
+            0,
+        );
+        assert_eq!(flushed, 1);
+
+        let reqs = MOCK_REQS.lock().unwrap().clone();
+        assert_eq!(reqs.len(), 2);
+        for r in &reqs {
+            assert!(r.is_https);
+            assert_eq!(r.host, "api.listenbrainz.org");
+            assert_eq!(r.port, 443);
+            assert!(
+                r.headers.contains("Authorization: Token my-clean-tok\r\n"),
+                "unexpected headers: {:?}",
+                r.headers
+            );
+        }
+        assert_eq!(reqs[0].path, "/1/validate-token");
+        assert_eq!(reqs[1].path, "/1/submit-listens");
+
+        // Now simulate real C `retrohh_http_request` behavior on HTTP 401:
+        // returns `rc = -1` AND `out_status = 401` with JSON error body!
+        // Must NOT be misclassified as transient `rc = -1`; must parse JSON error and set `auth_invalid`.
+        MOCK_RESPS.lock().unwrap().push((
+            -1,
+            401,
+            r#"{"code": 401, "error": "Invalid authorization token."}"#.into(),
+        ));
+        let vrc = validate_token_with(&transport, &state, err.as_mut_ptr(), err.len());
+        assert_eq!(vrc, -2);
+        assert!(state.lock().unwrap().auth_invalid);
+        let err_msg = c_str_to_string(err.as_ptr());
+        assert!(
+            err_msg.contains("401") && err_msg.contains("Invalid authorization token."),
+            "unexpected 401 message: {err_msg}"
+        );
+
+        // Simulate wrong custom server URL returning non-JSON HTML 404 (`rc = -1`, `status = 404`):
+        // must report wrong server URL without marking token invalid!
+        {
+            let mut st = state.lock().unwrap();
+            st.auth_invalid = false;
+            st.cfg.api_url = "https://wrong-host.local/not-lb".to_string();
+        }
+        MOCK_RESPS
+            .lock()
+            .unwrap()
+            .push((-1, 404, "<html><body>404 Not Found</body></html>".into()));
+        let vrc_404 = validate_token_with(&transport, &state, err.as_mut_ptr(), err.len());
+        assert_eq!(vrc_404, -2);
+        assert!(!state.lock().unwrap().auth_invalid);
+        let err_404 = c_str_to_string(err.as_ptr());
+        assert!(
+            err_404.contains("Wrong server URL") && err_404.contains("404"),
+            "unexpected 404 message: {err_404}"
+        );
     }
 }

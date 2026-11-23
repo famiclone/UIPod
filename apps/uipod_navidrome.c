@@ -622,16 +622,29 @@ static void sync_on_playlist(void *vctx, const char *playlist_name,
     }
 }
 
+static uint32_t s_nav_sync_hud = 0;
+
 static void sync_on_progress(void *vctx, uint32_t synced_tracks)
 {
     (void)vctx;
-    char widest[64], msg[64];
-    snprintf(widest, sizeof(widest), "%s 99999", str(LANG_UIPOD_NAV_SYNCING));
-    snprintf(msg, sizeof(msg), "%s %u", str(LANG_UIPOD_NAV_SYNCING),
-             (unsigned)synced_tracks);
-    uipod_fullscreen_message(msg, widest);
+    char det[32];
+    snprintf(det, sizeof(det), "%u", (unsigned)synced_tracks);
+    if (s_nav_sync_hud == 0)
+        s_nav_sync_hud = uipod_hud_progress_begin(str(LANG_UIPOD_NAV_SYNCING), det, -1.0f);
+    else
+        uipod_hud_progress_update(s_nav_sync_hud, str(LANG_UIPOD_NAV_SYNCING), det, -1.0f);
     backlight_on();
     yield();
+}
+
+static void nav_end_sync_hud(void)
+{
+    if (s_nav_sync_hud != 0)
+    {
+        uint32_t h = s_nav_sync_hud;
+        s_nav_sync_hud = 0;
+        uipod_hud_progress_end(h);
+    }
 }
 
 static uint8_t sync_cancel_bridge(void *vctx)
@@ -648,7 +661,7 @@ bool uipod_navidrome_sync(bool show_summary_splash)
         return false;
     }
 
-    uipod_fullscreen_message(str(LANG_UIPOD_NAV_CONNECTING), NULL);
+    s_nav_sync_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_CONNECTING), NULL);
     backlight_on();
 
     mutex_lock(&s_nav_db_mutex);
@@ -656,6 +669,7 @@ bool uipod_navidrome_sync(bool show_summary_splash)
     {
         mutex_unlock(&s_nav_db_mutex);
         splash(HZ * 3 / 2, ID2P(LANG_FAILED));
+        nav_end_sync_hud();
         return false;
     }
 
@@ -676,6 +690,7 @@ bool uipod_navidrome_sync(bool show_summary_splash)
         nav_db_exec("ROLLBACK;");
         mutex_unlock(&s_nav_db_mutex);
         splash(HZ * 3 / 2, ID2P(LANG_FAILED));
+        nav_end_sync_hud();
         return false;
     }
 
@@ -698,6 +713,7 @@ bool uipod_navidrome_sync(bool show_summary_splash)
         mutex_unlock(&s_nav_db_mutex);
         if (!ctx.cancel.cancelled)
             splashf(HZ * 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        nav_end_sync_hud();
         return false;
     }
 
@@ -710,6 +726,7 @@ bool uipod_navidrome_sync(bool show_summary_splash)
 
     if (show_summary_splash)
         splashf(HZ * 3 / 2, str(LANG_UIPOD_NAV_SYNCED_FMT), (int)total);
+    nav_end_sync_hud();
     return true;
 }
 
@@ -718,9 +735,10 @@ bool uipod_navidrome_sync_favourites(bool show_summary_splash)
     if (!tp_navidrome_is_configured() || uipod_offline_mode_get())
         return false;
 
+    uint32_t fav_hud = 0;
     if (show_summary_splash)
     {
-        uipod_fullscreen_message(str(LANG_UIPOD_NAV_CONNECTING), NULL);
+        fav_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_CONNECTING), NULL);
         backlight_on();
     }
 
@@ -728,6 +746,7 @@ bool uipod_navidrome_sync_favourites(bool show_summary_splash)
     if (!s_nav_db)
     {
         mutex_unlock(&s_nav_db_mutex);
+        uipod_hud_progress_end(fav_hud);
         return false;
     }
 
@@ -762,6 +781,7 @@ bool uipod_navidrome_sync_favourites(bool show_summary_splash)
         mutex_unlock(&s_nav_db_mutex);
         if (show_summary_splash && !ctx.cancel.cancelled)
             splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(fav_hud);
         return false;
     }
 
@@ -779,6 +799,7 @@ bool uipod_navidrome_sync_favourites(bool show_summary_splash)
 
     if (show_summary_splash)
         splashf(HZ, str(LANG_UIPOD_NAV_SYNCED_FMT), (int)fav_cnt);
+    uipod_hud_progress_end(fav_hud);
     return true;
 }
 
@@ -1059,9 +1080,10 @@ bool uipod_navidrome_prepare_track(const char *path, bool ui_blocking)
                                  cover_id, sizeof(cover_id), NULL))
         return false;
 
+    uint32_t buf_hud = 0;
     if (ui_blocking)
     {
-        uipod_fullscreen_message(str(LANG_UIPOD_NAV_BUFFERING), NULL);
+        buf_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_BUFFERING), NULL);
         backlight_on();
     }
 
@@ -1081,8 +1103,10 @@ bool uipod_navidrome_prepare_track(const char *path, bool ui_blocking)
     {
         if (ui_blocking && !cancel.cancelled)
             splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(buf_hud);
         return false;
     }
+    uipod_hud_progress_end(buf_hud);
     return file_exists(path);
 }
 

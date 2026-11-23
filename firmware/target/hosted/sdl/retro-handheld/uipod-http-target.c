@@ -1030,15 +1030,19 @@ static int perform_http_stream_ex(
 
         const char *xhdr = extra_headers ? extra_headers : "";
         bool has_custom_ua = false;
+        bool has_custom_accept = false;
         for (const char *p = xhdr; *p; p++)
         {
-            if ((p == xhdr || p[-1] == '\n') && strncasecmp(p, "User-Agent:", 11) == 0)
+            if (p == xhdr || p[-1] == '\n')
             {
-                has_custom_ua = true;
-                break;
+                if (strncasecmp(p, "User-Agent:", 11) == 0)
+                    has_custom_ua = true;
+                else if (strncasecmp(p, "Accept:", 7) == 0)
+                    has_custom_accept = true;
             }
         }
         const char *ua_hdr = has_custom_ua ? "" : "User-Agent: UIPod/1.0\r\n";
+        const char *acc_hdr = has_custom_accept ? "" : "Accept: */*\r\n";
         char req_hdr[12288];
         bool default_port = (cur_https && cur_port == 443) || (!cur_https && cur_port == 80);
         int req_len = default_port
@@ -1046,20 +1050,20 @@ static int perform_http_stream_ex(
                        "%s %s HTTP/1.1\r\n"
                        "Host: %s\r\n"
                        "%s"
-                       "Accept: */*\r\n"
+                       "%s"
                        "Accept-Encoding: identity\r\n"
                        "%s%s"
                        "Connection: close\r\n\r\n",
-                       verb, cur_pq, cur_host, ua_hdr, cl_hdr, xhdr)
+                       verb, cur_pq, cur_host, ua_hdr, acc_hdr, cl_hdr, xhdr)
             : snprintf(req_hdr, sizeof(req_hdr),
                        "%s %s HTTP/1.1\r\n"
                        "Host: %s:%u\r\n"
                        "%s"
-                       "Accept: */*\r\n"
+                       "%s"
                        "Accept-Encoding: identity\r\n"
                        "%s%s"
                        "Connection: close\r\n\r\n",
-                       verb, cur_pq, cur_host, (unsigned)cur_port, ua_hdr, cl_hdr, xhdr);
+                       verb, cur_pq, cur_host, (unsigned)cur_port, ua_hdr, acc_hdr, cl_hdr, xhdr);
 
         if (req_len <= 0 || (size_t)req_len >= sizeof(req_hdr))
         {
@@ -1151,7 +1155,8 @@ static int perform_http_stream_ex(
             continue;
         }
 
-        if (status_code < 200 || status_code >= 300)
+        bool non_2xx = (status_code < 200 || status_code >= 300);
+        if (non_2xx && !out_status)
         {
             if (hdr_fn)
                 hdr_fn(sink_ctx, status_code, hbuf, hdr_len, false, 0);
@@ -1188,14 +1193,22 @@ static int perform_http_stream_ex(
         if (hdr_fn && !hdr_fn(sink_ctx, status_code, hbuf, hdr_len, is_chunked, content_length))
         {
             conn_close(&conn);
-            final_rc = 0;
+            final_rc = non_2xx ? -1 : 0;
             break;
         }
 
         if (is_head || status_code == 204 || content_length == 0)
         {
             conn_close(&conn);
-            final_rc = 0;
+            if (non_2xx)
+            {
+                put_err(err_buf, err_cap, "HTTP %d", status_code);
+                final_rc = -1;
+            }
+            else
+            {
+                final_rc = 0;
+            }
             break;
         }
 
@@ -1258,7 +1271,16 @@ static int perform_http_stream_ex(
             }
 
             conn_close(&conn);
-            final_rc = ok ? 0 : -1;
+            if (non_2xx)
+            {
+                if (ok)
+                    put_err(err_buf, err_cap, "HTTP %d", status_code);
+                final_rc = -1;
+            }
+            else
+            {
+                final_rc = ok ? 0 : -1;
+            }
             break;
         }
         else
@@ -1411,7 +1433,16 @@ static int perform_http_stream_ex(
             }
 
             conn_close(&conn);
-            final_rc = ok ? 0 : -1;
+            if (non_2xx)
+            {
+                if (ok)
+                    put_err(err_buf, err_cap, "HTTP %d", status_code);
+                final_rc = -1;
+            }
+            else
+            {
+                final_rc = ok ? 0 : -1;
+            }
             break;
         }
     }
@@ -1480,7 +1511,15 @@ int32_t retrohh_http_request(
         NULL, mem_sink_cb, &ms, NULL, NULL, err_buf, err_cap);
     if (rc != 0)
     {
-        free(ms.buf);
+        if (out_status && *out_status > 0 && ms.buf && ms.len > 0)
+        {
+            *out_data = ms.buf;
+            *out_len = ms.len;
+        }
+        else
+        {
+            free(ms.buf);
+        }
         return rc;
     }
     if (!ms.buf)

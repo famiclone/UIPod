@@ -24,8 +24,6 @@
 #include "uipod_rs_ui.h"
 #include "uipod_keyboard.h"
 
-#define KBD_FONT_PATH   FONT_DIR "/67-Geologica.fnt"
-
 /* QWERTY character rows (lowercase base; capslock upcases letters at draw/insert). */
 static const char *const kbd_alpha_rows_plain[4] =
 {
@@ -179,11 +177,7 @@ static const char *visible_tail(struct screen *s, const char *text, int maxw)
 static void draw_sw_fallback(struct kbd_page *p, struct viewport *vp)
 {
     if (p->fid < 0)
-    {
-        p->fid = font_load(KBD_FONT_PATH);
-        if (p->fid < 0)
-            p->fid = FONT_UI;
-    }
+        p->fid = FONT_UI;
 
     struct screen *s = p->s;
     s->setfont(p->fid);

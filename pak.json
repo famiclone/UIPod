@@ -1,6 +1,6 @@
 {
   "name": "UIPod",
-  "version": "v0.8.2",
+  "version": "v0.9.0",
   "type": "TOOL",
   "description": "An iPod-inspired offline, Navidrome & Jellyfin media player for the TrimUI Brick/Hammer with GPU UI and visualizations.",
   "author": "famiclone",
@@ -13,6 +13,7 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.9.0": "- Added Unified Stacked HUD overlay system with choreographed floating cards for Volume, multi-line Toasts, live Progress bars, and non-destructive Confirmation dialogs across Firmware, Android, and WebAssembly\n- Migrated all remaining video HUD, .srt subtitle, Hold lock, and message screens to crisp vector Geologica typography and pruned ~42 MB of legacy bitmap fonts from TrimUI Brick .pak and Android .apk packages\n- Hardened ListenBrainz authentication and endpoint handling with automatic token sanitization (stripping quotes, whitespace, and scheme prefixes) and canonical API URL normalization\n- Synced 1:1 Stacked HUD confirmation, progress, and toast behavior in the WebAssembly simulator",
     "v0.8.2": "- Fixed Video Settings context menu (Hold A / MENU) input freeze and flicker-free GPU overlay transition during active video playback, with reliable pause/resume and clean Hold-button release handling\n- Hardened hardware video player (tplayerslave / ffprobe / ffmpeg) child process lifecycle with PR_SET_PDEATHSIG, FD_CLOEXEC, and orphan cleanup so background video processes never outlive UIPod\n- Synced 1:1 Video Settings (Aspect Fit, Audio Track, Subtitles) and EN/UA localization parity in the WebAssembly simulator, and hardened deploy-brick.sh process termination & auto-repackaging",
     "v0.8.1": "- Replaced the legacy blocking \"Nothing to resume\" modal with a non-blocking floating HUD toast that keeps the active menu cursor intact\n- Unified Volume and toast HUD overlays in uipod-ui with shared backdrop/border styling, smooth top-slide entrance/exit curves, and jitter-free timer coexistence across Firmware and WebAssembly",
     "v0.8.0": "- Added pure-Rust ListenBrainz scrobbling client (Settings -> Accounts -> ListenBrainz) with User Token validation, custom Server URL support for self-hosted Maloja/Koito instances, live Now Playing status, and local/chiptune/streaming scrobbling\n- Added independent persistent offline scrobble queue (listenbrainz_queue.tsv) with batched import uploads, exponential retry backoff, and automatic malformed-record isolation so Last.fm and ListenBrainz scrobble concurrently without blocking each other\n- Updated Settings -> Accounts with live right-aligned connection status summaries (@username, Signed in, Invalid token, Off) for both Last.fm and ListenBrainz, plus full English/Ukrainian localization and 1:1 WebAssembly simulator parity",

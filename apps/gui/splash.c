@@ -343,6 +343,32 @@ void splashf(int ticks, const char *fmt, ...)
     /* If fmt is a lang ID then get the corresponding string (which
        still might contain % place holders). */
     fmt = P2STR((unsigned char *)fmt);
+
+    if (uipod_rs_ui_is_ready() || uipod_gpu_ui_ensure_ready())
+    {
+        char msg_buf[512];
+        va_start(ap, fmt);
+        int n = vsnprintf(msg_buf, sizeof(msg_buf), fmt ? fmt : "", ap);
+        va_end(ap);
+        if (n > 0)
+        {
+            if (ticks <= 0)
+            {
+                uipod_hud_progress_set_transient(msg_buf, NULL, -1.0f);
+            }
+            else
+            {
+                long ms = ((long)ticks * 1000L) / HZ;
+                if (ms < 1600L)
+                    ms = 1600L;
+                else if (ms > 3500L)
+                    ms = 3500L;
+                uipod_hud_toast_ex(NULL, msg_buf, (uint32_t)ms);
+            }
+        }
+        return;
+    }
+
     FOR_NB_SCREENS(i)
     {
         struct screen * screen = &(screens[i]);
@@ -387,6 +413,37 @@ void splash_progress(int current, int total, const char *fmt, ...)
     /* If fmt is a lang ID then get the corresponding string (which
        still might contain % place holders). */
     fmt = P2STR((unsigned char *)fmt);
+
+    if (uipod_rs_ui_is_ready() || uipod_gpu_ui_ensure_ready())
+    {
+        if (total > 0 && current >= total)
+        {
+            uipod_hud_progress_clear_transient();
+            return;
+        }
+        char msg_buf[512];
+        char det_buf[32];
+        va_start(ap, fmt);
+        int n = vsnprintf(msg_buf, sizeof(msg_buf), fmt ? fmt : "", ap);
+        va_end(ap);
+        if (n > 0)
+        {
+            float prog = -1.0f;
+            det_buf[0] = '\0';
+            if (total > 0)
+            {
+                if (current < 0)
+                    current = 0;
+                prog = (float)current / (float)total;
+                if (prog > 1.0f)
+                    prog = 1.0f;
+                snprintf(det_buf, sizeof(det_buf), "%d%%",
+                         (int)(prog * 100.0f + 0.5f));
+            }
+            uipod_hud_progress_set_transient(msg_buf, det_buf, prog);
+        }
+        return;
+    }
     FOR_NB_SCREENS(i)
     {
         struct screen * screen = &(screens[i]);

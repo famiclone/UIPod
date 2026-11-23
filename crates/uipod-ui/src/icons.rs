@@ -626,6 +626,47 @@ pub fn draw_speaker_loud_32<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32,
     canvas.fill_path(&path, &Paint::color(color));
 }
 
+#[inline]
+pub fn color_with_alpha(mut c: Color, alpha: f32) -> Color {
+    c.a = (c.a * alpha.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    c
+}
+
+/// Draws the shared 4-shade iPod Mini HUD card container (`bg` interior + `4px` inside `fg2` border)
+/// with zero double-blending at fractional `alpha`.
+pub fn draw_hud_card_frame<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    stroke_w: f32,
+    bg: Color,
+    fg2: Color,
+    alpha: f32,
+) {
+    let a = alpha.clamp(0.0, 1.0);
+    if a <= 0.001 {
+        return;
+    }
+    let s = stroke_w.min(w * 0.5).min(h * 0.5);
+    let iw = (w - s * 2.0).max(0.0);
+    let ih = (h - s * 2.0).max(0.0);
+    if iw > 0.0 && ih > 0.0 {
+        fill_rounded_rect(
+            canvas,
+            x + s,
+            y + s,
+            iw,
+            ih,
+            (radius - s).max(0.0),
+            color_with_alpha(bg, a),
+        );
+    }
+    stroke_rounded_rect_inside(canvas, x, y, w, h, radius, s, color_with_alpha(fg2, a));
+}
+
 /// Draws `VolumeBarPopup` (`[3214]`: `527x72`, `r=16`, `padding=16`, `bg` fill + `4px` inside `fg2` stroke).
 pub fn draw_volume_popup<R: Renderer>(
     canvas: &mut Canvas<R>,
@@ -637,11 +678,30 @@ pub fn draw_volume_popup<R: Renderer>(
     fg1: Color,
     fg2: Color,
 ) {
+    draw_volume_popup_alpha(canvas, x, y, level, bg, fg, fg1, fg2, 1.0);
+}
+
+/// Alpha-aware `VolumeBarPopup` renderer used by the Unified Stacked HUD System.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_volume_popup_alpha<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    x: f32,
+    y: f32,
+    level: f32,
+    bg: Color,
+    fg: Color,
+    fg1: Color,
+    fg2: Color,
+    alpha: f32,
+) {
     use crate::layout::volume_popup_spec as vp;
 
+    let a = alpha.clamp(0.0, 1.0);
+    if a <= 0.001 {
+        return;
+    }
     let clamped = level.clamp(0.0, 1.0);
-    fill_rounded_rect(canvas, x, y, vp::WIDTH, vp::HEIGHT, vp::CORNER_RADIUS, bg);
-    stroke_rounded_rect_inside(
+    draw_hud_card_frame(
         canvas,
         x,
         y,
@@ -649,12 +709,18 @@ pub fn draw_volume_popup<R: Renderer>(
         vp::HEIGHT,
         vp::CORNER_RADIUS,
         vp::STROKE_WIDTH,
+        bg,
         fg2,
+        a,
     );
+
+    let c_fg = color_with_alpha(fg, a);
+    let c_fg1 = color_with_alpha(fg1, a);
+    let c_fg2 = color_with_alpha(fg2, a);
 
     let bar_x = x + vp::INNER_INSET;
     let bar_y = y + vp::INNER_INSET;
-    draw_speaker_silent_32(canvas, bar_x, bar_y, fg2);
+    draw_speaker_silent_32(canvas, bar_x, bar_y, c_fg2);
 
     let track_x = bar_x + vp::TRACK_OFFSET_X;
     let track_y = bar_y + vp::TRACK_OFFSET_Y;
@@ -666,7 +732,7 @@ pub fn draw_volume_popup<R: Renderer>(
         vp::TRACK_HEIGHT,
         vp::TRACK_HEIGHT * 0.5,
         vp::STROKE_WIDTH,
-        fg1,
+        c_fg1,
     );
     if clamped > 0.001 {
         let max_fill = vp::TRACK_WIDTH - vp::STROKE_WIDTH * 2.0;
@@ -679,11 +745,11 @@ pub fn draw_volume_popup<R: Renderer>(
             fill_w,
             fill_h,
             fill_h * 0.5,
-            fg,
+            c_fg,
         );
     }
 
-    draw_speaker_loud_32(canvas, bar_x + vp::LOUD_ICON_OFFSET_X, bar_y, fg2);
+    draw_speaker_loud_32(canvas, bar_x + vp::LOUD_ICON_OFFSET_X, bar_y, c_fg2);
 }
 
 /// Draws `icon_arrow_64` (`[1590]`/`[1589]`: `40x40` download arrow rotated 180° at `(x+52, y+52)`).

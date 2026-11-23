@@ -172,10 +172,7 @@ bool warn_on_pl_erase(void)
         if (gui_syncyesno_run(&message, NULL, NULL) == YESNO_YES)
             return true;
         else
-        {
-            splash(HZ, ID2P(LANG_CANCEL));
             return false;
-        }
     }
     else
         return true;

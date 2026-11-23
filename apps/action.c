@@ -1070,7 +1070,8 @@ static int global_playpause_action(int context, int button, int action)
 
     int base = TP_CTX_BASE(context);
     if (base == CONTEXT_WPS || base == CONTEXT_TP_VIDEO ||
-        (context & CONTEXT_PLUGIN) != 0 || uipod_plugins_menu_driven_active())
+        (context & CONTEXT_PLUGIN) != 0 || uipod_plugins_menu_driven_active() ||
+        uipod_hud_has_confirm())
     {
         s_start_solo = false;
         return action;
@@ -1154,8 +1155,8 @@ static int tp_hold(int button, int action, int btn, int secondary,
 
 static int global_home_action(int context, int button, int action)
 {
-    if (TP_CTX_BASE(context) == CONTEXT_KEYBOARD)
-        return action;                           /* keyboard: B stays "abort" */
+    if (TP_CTX_BASE(context) == CONTEXT_KEYBOARD || uipod_hud_has_confirm())
+        return action;                           /* keyboard / confirm HUD: B stays cancel */
     return tp_hold(button, action, BUTTON_B, ACTION_TP_HOME, &home_tick,
                    &home_fired);
 }
@@ -1286,10 +1287,13 @@ int action_set_keymap_handle(int handle, int count)
 int get_custom_action(int context, int timeout,
                       const struct button_mapping* (*get_context_map)(int))
 {
-    if (timeout != TIMEOUT_NOBLOCK && uipod_gpu_is_volume_popup_active())
+    if (timeout != TIMEOUT_NOBLOCK)
+        uipod_hud_progress_clear_transient();
+
+    if (timeout != TIMEOUT_NOBLOCK && uipod_hud_is_animating())
     {
         long deadline = (timeout > 0) ? (current_tick + timeout) : 0;
-        while (uipod_gpu_is_volume_popup_active())
+        while (uipod_hud_is_animating())
         {
             int step_tmo = 1;
             if (timeout > 0)
@@ -1297,7 +1301,7 @@ int get_custom_action(int context, int timeout,
                 long rem = deadline - current_tick;
                 if (rem <= 0)
                 {
-                    (void)uipod_gpu_tick_volume_popup();
+                    (void)uipod_hud_tick();
                     return ACTION_NONE;
                 }
                 if (rem < step_tmo)
@@ -1309,13 +1313,13 @@ int get_custom_action(int context, int timeout,
             int action = get_action_worker(&action_last, &current);
             action = do_backlight(&action_last, &current, action);
             action = apply_global_actions(&current, action);
-            (void)uipod_gpu_tick_volume_popup();
+            (void)uipod_hud_tick();
 
             if (action != ACTION_NONE)
                 return action;
         }
 
-        (void)uipod_gpu_tick_volume_popup();
+        (void)uipod_hud_tick();
         if (timeout > 0)
         {
             long rem = deadline - current_tick;
@@ -1332,7 +1336,7 @@ int get_custom_action(int context, int timeout,
 
     action = do_backlight(&action_last, &current, action);
     action = apply_global_actions(&current, action);
-    (void)uipod_gpu_tick_volume_popup();
+    (void)uipod_hud_tick();
 
     return action;
 }

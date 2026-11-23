@@ -135,14 +135,11 @@ fn render_native_plugin_menu(
     ui.render_list_to_fbo(&state);
 }
 
-fn render_splash_pill(ui: &mut UiEngine, theme: ThemeColors, msg: &str) {
-    let w = (ui.plugin_measure_text(msg, 30.0, 2) + 72.0).clamp(280.0, 860.0);
-    let h = 84.0f32;
-    let x = (1024.0 - w) * 0.5;
-    let y = (768.0 - h) * 0.5;
-    ui.plugin_fill_rect(x, y, w, h, 14.0, theme.bg_rgb);
-    ui.plugin_stroke_rect(x, y, w, h, 14.0, 4.0, theme.fg_rgb);
-    ui.plugin_draw_text(512.0, y + h * 0.5, msg, 30.0, 2, 1, theme.fg_rgb);
+fn flush_plugin_splash_to_hud(ui: &mut UiEngine, splash: &mut Option<(String, f32)>) {
+    if let Some((msg, _)) = splash.take() {
+        let now_ms = ui.hud_clock_ms();
+        ui.hud_toast("plugin_toast", &msg, 1400, now_ms);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -221,16 +218,34 @@ impl ActivePlugin {
     ) {
         match self {
             Self::MusicQuiz(g) => g.render(ui, theme, header, uk),
-            Self::SoundRacer(g) => g.render(ui, theme, header, uk),
-            Self::Tetris(g) => g.render(ui, theme, header, uk),
-            Self::Snake(g) => g.render(ui, theme, header, uk),
-            Self::Game2048(g) => g.render(ui, theme, header, uk),
-            Self::BrickBreaker(g) => g.render(ui, theme, header, uk),
+            Self::SoundRacer(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk);
+            }
+            Self::Tetris(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk);
+            }
+            Self::Snake(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk);
+            }
+            Self::Game2048(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk);
+            }
+            Self::BrickBreaker(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk);
+            }
             Self::Stopwatch(a) => {
                 ui.plugin_begin(theme, theme.bg_rgb, Some(header));
                 a.render(ui, theme, uk);
             }
-            Self::TextViewer(v) => v.render(ui, theme, header, uk),
+            Self::TextViewer(v) => {
+                flush_plugin_splash_to_hud(ui, &mut v.splash);
+                v.render(ui, theme, header, uk);
+            }
         }
     }
 }
@@ -973,9 +988,7 @@ impl TetrisPlugin {
                     &rows,
                     sel,
                 );
-                if let Some((ref msg, _)) = self.splash {
-                    render_splash_pill(ui, t, msg);
-                }
+                let _ = &self.splash;
                 return;
             }
             SubMenuMode::None => {}
@@ -1215,9 +1228,7 @@ impl TetrisPlugin {
             );
         }
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }
 
@@ -1632,9 +1643,7 @@ impl SnakePlugin {
                     &rows,
                     sel,
                 );
-                if let Some((ref msg, _)) = self.splash {
-                    render_splash_pill(ui, t, msg);
-                }
+                let _ = &self.splash;
                 return;
             }
             SubMenuMode::None => {}
@@ -1864,9 +1873,7 @@ impl SnakePlugin {
             }
         }
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }
 
@@ -2164,9 +2171,7 @@ impl Plugin2048 {
                     &rows,
                     sel,
                 );
-                if let Some((ref msg, _)) = self.splash {
-                    render_splash_pill(ui, t, msg);
-                }
+                let _ = &self.splash;
                 return;
             }
             SubMenuMode::None => {}
@@ -2315,9 +2320,7 @@ impl Plugin2048 {
             );
         }
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }
 
@@ -2694,9 +2697,7 @@ impl BrickBreakerPlugin {
                     &rows,
                     sel,
                 );
-                if let Some((ref msg, _)) = self.splash {
-                    render_splash_pill(ui, t, msg);
-                }
+                let _ = &self.splash;
                 return;
             }
             SubMenuMode::None => {}
@@ -2775,9 +2776,7 @@ impl BrickBreakerPlugin {
             ui.plugin_draw_text(BRK_AX + BRK_AW * 0.5, by + 32.0, msg, 30.0, 2, 1, t.fg_rgb);
         }
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }
 
@@ -3374,9 +3373,7 @@ impl TextViewerApp {
             );
         }
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }
 
@@ -4661,9 +4658,7 @@ impl SoundRacerGame {
                     &rows,
                     sel,
                 );
-                if let Some((ref msg, _)) = self.splash {
-                    render_splash_pill(ui, t, msg);
-                }
+                let _ = &self.splash;
                 return;
             }
             SrMenu::None => {}
@@ -4948,8 +4943,6 @@ impl SoundRacerGame {
             t.fg2_rgb,
         );
 
-        if let Some((ref msg, _)) = self.splash {
-            render_splash_pill(ui, t, msg);
-        }
+        let _ = &self.splash;
     }
 }

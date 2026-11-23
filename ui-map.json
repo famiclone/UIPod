@@ -74,6 +74,7 @@
       "node_id": 3214,
       "page_id": 212,
       "code_files": [
+        "crates/uipod-ui/src/hud.rs",
         "crates/uipod-ui/src/layout.rs",
         "crates/uipod-ui/src/renderer.rs",
         "crates/uipod-ui/src/ffi.rs",
@@ -825,9 +826,12 @@
       "node_id": 10695,
       "tokens_file": "crates/uipod-ui/src/lib.rs",
       "code_files": [
+        "crates/uipod-ui/src/hud.rs",
         "crates/uipod-ui/src/layout.rs",
         "crates/uipod-ui/src/renderer.rs",
-        "apps/uipod_ui.c"
+        "apps/uipod_rs_ui_glue.c",
+        "apps/uipod_ui.c",
+        "apps/gui/yesno.c"
       ],
       "status": "mapped"
     },
@@ -862,12 +866,15 @@
       "node_id": 10977,
       "tokens_file": "crates/uipod-ui/src/lib.rs",
       "code_files": [
+        "crates/uipod-ui/src/hud.rs",
         "crates/uipod-ui/src/layout.rs",
         "crates/uipod-ui/src/renderer.rs",
         "crates/uipod-ui/src/icons.rs",
         "crates/uipod-ui/src/ffi.rs",
         "apps/uipod_rs_ui.h",
         "apps/uipod_rs_ui_glue.c",
+        "apps/gui/splash.c",
+        "apps/gui/yesno.c",
         "apps/misc.c",
         "apps/menu.c",
         "apps/root_menu.c"

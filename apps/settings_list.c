@@ -178,7 +178,7 @@ static const char graphic_numeric[] = "graphic,numeric";
   #define DEFAULT_FONT_HEIGHT 27
 #else
   #define DEFAULT_FONT_HEIGHT 76
-  #define DEFAULT_FONTNAME "76-Geologica"
+  #define DEFAULT_FONTNAME "-"
 #endif
 #ifndef DEFAULT_FONTNAME
 /* ugly expansion needed */

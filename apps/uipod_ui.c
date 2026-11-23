@@ -78,6 +78,31 @@ void uipod_header_refresh(void)
 void uipod_centered_message(const char *question, const char *detail,
                               const char *footer)
 {
+    const char *lines[3];
+    uint8_t roles[3];
+    size_t n = 0;
+
+    if (detail && detail[0])
+    {
+        lines[n] = detail;
+        roles[n] = 1;
+        n++;
+    }
+    if (question)
+    {
+        lines[n] = question;
+        roles[n] = 0;
+        n++;
+    }
+    if (footer && footer[0])
+    {
+        lines[n] = footer;
+        roles[n] = 1;
+        n++;
+    }
+    if (n > 0 && uipod_gpu_render_text_block(NULL, true, lines, roles, n, false))
+        return;
+
     uipod_gpu_prepare_cpu_fallback();
     FOR_NB_SCREENS(i)
     {
@@ -121,6 +146,9 @@ void uipod_centered_message(const char *question, const char *detail,
 
 void uipod_fullscreen_message(const char *msg, const char *widest)
 {
+    if (msg && msg[0] && uipod_gpu_render_text_block(NULL, false, &msg, NULL, 1, false))
+        return;
+
     uipod_gpu_prepare_cpu_fallback();
     if (!widest)
         widest = msg;
@@ -182,6 +210,9 @@ static const int confirm_allowed[] = { ACTION_STD_OK, ACTION_STD_CANCEL, -1 };
 
 bool uipod_confirm(const char *question, const char *detail)
 {
+    if (uipod_rs_ui_is_ready() || uipod_gpu_ui_ensure_ready())
+        return uipod_hud_confirm(question, detail);
+
     struct confirm_page p =
     {
         .base = { .vt = &confirm_vtable, .context = CONTEXT_STD,
@@ -292,8 +323,20 @@ struct message_page
 
 static void message_draw(struct uipod_page *self)
 {
-    uipod_gpu_prepare_cpu_fallback();
     struct message_page *p = (struct message_page *)self;
+    if (p->nrows > 0 && p->nrows <= 16)
+    {
+        const char *resolved[16];
+        for (int i = 0; i < p->nrows; i++)
+            resolved[i] = (const char *)P2STR((const unsigned char *)p->rows[i]);
+        if (uipod_gpu_render_text_block(p->base.title, true, resolved, NULL,
+                                        (size_t)p->nrows, true))
+        {
+            return;
+        }
+    }
+
+    uipod_gpu_prepare_cpu_fallback();
     struct screen *s = &screens[SCREEN_MAIN];
     struct viewport vp = {0};
 

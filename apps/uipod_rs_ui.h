@@ -248,6 +248,40 @@ bool   uipod_rs_ui_present_fade_rgb_gpu(uint32_t win_w,
                                         uint32_t win_h,
                                         float fade,
                                         uint32_t target_rgb);
+/* Unified Stacked HUD System Rust ABI (`crates/uipod-ui/src/ffi.rs`) */
+void     uipod_rs_hud_volume(float level_norm, uint64_t now_ms);
+void     uipod_rs_hud_toast(const char *key,
+                            const char *message,
+                            uint64_t hold_ms,
+                            uint64_t now_ms);
+uint32_t uipod_rs_hud_progress_begin(const char *title,
+                                     const char *detail,
+                                     float progress,
+                                     uint64_t now_ms);
+bool     uipod_rs_hud_progress_update(uint32_t handle,
+                                      const char *title,
+                                      const char *detail,
+                                      float progress,
+                                      uint64_t now_ms);
+bool     uipod_rs_hud_progress_end(uint32_t handle, uint64_t now_ms);
+uint32_t uipod_rs_hud_confirm_push(const char *question,
+                                   const char *detail,
+                                   const char *confirm_label,
+                                   const char *cancel_label,
+                                   uint64_t now_ms);
+bool     uipod_rs_hud_confirm_resolve(uint32_t id, uint64_t now_ms);
+bool     uipod_rs_hud_has_confirm(void);
+void     uipod_rs_hud_set_clock(uint64_t now_ms);
+bool     uipod_rs_hud_needs_tick(uint64_t now_ms);
+bool     uipod_rs_hud_is_visible(uint64_t now_ms);
+bool     uipod_rs_hud_render_over_screen(uint32_t win_w,
+                                         uint32_t win_h,
+                                         uint32_t bg_rgb,
+                                         uint32_t fg_rgb,
+                                         uint32_t fg1_rgb,
+                                         uint32_t fg2_rgb,
+                                         uint64_t now_ms);
+
 void   uipod_rs_ui_trigger_volume_popup(float level_norm, uint64_t now_ms);
 void   uipod_rs_ui_trigger_hud_toast(const char *message, uint64_t now_ms);
 void   uipod_rs_ui_set_volume_popup_clock(uint64_t now_ms);
@@ -351,6 +385,48 @@ bool uipod_gpu_render_nsf_channels(const char *header_title,
                                    const char *footer_hint,
                                    size_t start_item,
                                    size_t visible_items);
+bool uipod_gpu_render_text_block(const char *header_title,
+                                 bool show_header,
+                                 const char *const *lines,
+                                 const uint8_t *line_roles,
+                                 size_t line_count,
+                                 bool left_align_block);
+bool uipod_gpu_render_video_overlay(int panel_kind,
+                                    float progress_norm,
+                                    const char *left_text,
+                                    const char *center_text,
+                                    const char *right_text,
+                                    const char *sub_line1,
+                                    const char *sub_line2);
+enum uipod_hud_confirm_res
+{
+    UIPOD_CONFIRM_NO  = 0,
+    UIPOD_CONFIRM_YES = 1,
+    UIPOD_CONFIRM_USB = 2,
+};
+
+/* Unified Stacked HUD System C API (`apps/uipod_rs_ui_glue.c`) */
+void     uipod_hud_volume(void);
+void     uipod_hud_toast(const char *message);
+void     uipod_hud_toast_ex(const char *key, const char *message, uint32_t hold_ms);
+uint32_t uipod_hud_progress_begin(const char *title, const char *detail, float progress);
+uint32_t uipod_hud_progress_begin_blocking(const char *title, const char *detail);
+void     uipod_hud_progress_update(uint32_t handle,
+                                   const char *title,
+                                   const char *detail,
+                                   float progress);
+void     uipod_hud_progress_end(uint32_t handle);
+void     uipod_hud_progress_set_transient(const char *title, const char *detail, float progress);
+void     uipod_hud_progress_clear_transient(void);
+bool     uipod_hud_confirm(const char *question, const char *detail);
+int      uipod_hud_confirm_ex(const char *question,
+                              const char *detail,
+                              int timeout_ticks,
+                              int default_res);
+bool     uipod_hud_has_confirm(void);
+bool     uipod_hud_is_animating(void);
+bool     uipod_hud_tick(void);
+
 void uipod_gpu_notify_volume_changed(void);
 void uipod_gpu_notify_hud_toast(const char *message);
 bool uipod_gpu_is_volume_popup_active(void);

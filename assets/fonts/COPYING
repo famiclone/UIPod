@@ -1,10 +1,10 @@
-Licenses for the fonts Trimpod ships.  Three faces are distributed: Geologica
-(the UI Variable Font, as 58/67/76px Rockbox .fnt rasterizations at wght=680,
-SHRP=0, CRSV=0), the PixelMplus Japanese glyphs merged into all three .fnt
-sizes, and Schumacher Clean (the fallback system font, compiled into the binary
-from 08-Schumacher-Clean.bdf).
+Licenses for the fonts UIPod ships.  Three faces are distributed: Geologica
+(embedded as static Regular/Medium/SemiBold/Bold .ttf weights in `uipod-ui`),
+PixelMplus12-Regular.ttf (runtime CJK/Japanese fallback font), and Schumacher
+Clean (the fallback Rockbox system font, compiled into the binary from
+08-Schumacher-Clean.bdf).
 
------ Geologica (58/67/76-Geologica.fnt, Geologica[CRSV,SHRP,slnt,wght].ttf) ----
+----- Geologica (Geologica-{Regular,Medium,SemiBold,Bold}.ttf) ----
 
 Copyright 2020 The Geologisk Project Authors (https://github.com/monokromskriftforlag/geologisk)
 
@@ -99,10 +99,10 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
------ PixelMplus (Japanese glyphs merged into the Geologica .fnt files) ----
+----- PixelMplus (PixelMplus12-Regular.ttf runtime CJK fallback) ----
 
-The Japanese (kana/kanji/fullwidth) glyphs in the .fnt files are rasterized
-from PixelMplus12-Regular by Itou Hiroki (https://github.com/itouhiro/PixelMplus),
+Japanese/CJK (kana/kanji/fullwidth) glyphs are rendered via the runtime fallback
+font PixelMplus12-Regular by Itou Hiroki (https://github.com/itouhiro/PixelMplus),
 a pixel-style outline conversion of the M+ bitmap fonts.
 Copyright (C) 2013 M+ Font Project.  Distributed under the M+ FONT LICENSE:
 

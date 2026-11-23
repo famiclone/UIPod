@@ -40,15 +40,13 @@ echo ">> Injecting 1ST_GEN_REMIX theme"
 cp -a "$THEME/wps/." "$PAK/uipod/wps/"
 cp -a "$THEME/themes/." "$PAK/uipod/themes/"
 
-echo ">> Pruning stock Rockbox fonts (only Geologica ships; Font menu removed)"
-# The build zip bundles the whole upstream font set (Terminus, Adobe-Helvetica, ...).
-# Nothing references them (themes are hardcoded to Geologica), so drop them all.
+echo ">> Pruning stock Rockbox bitmap fonts (Geologica .ttf is embedded in uipod-ui)"
 rm -f "$PAK/uipod/fonts/"*.fnt "$PAK/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 
-echo ">> Injecting Geologica HiDPI & CJK fallback fonts (see assets/fonts)"
-# Geologica-*.ttf are embedded directly into `uipod` via Rust `include_bytes!`;
-# only Rockbox `.fnt` skin fonts + runtime CJK fallback `PixelMplus12` ship on disk.
-cp -a "$ROOT"/assets/fonts/*.fnt "$PAK/uipod/fonts/"
+echo ">> Injecting runtime CJK fallback font & font licenses (see assets/fonts)"
+# Geologica-{Regular,Medium,SemiBold,Bold}.ttf are embedded into `uipod` via Rust `include_bytes!`;
+# only the runtime CJK fallback `PixelMplus12-Regular.ttf` ships on disk.
+mkdir -p "$PAK/uipod/fonts"
 cp -a "$ROOT/assets/fonts/PixelMplus12-Regular.ttf" "$PAK/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$PAK/uipod/fonts/COPYING-fonts.txt"
 

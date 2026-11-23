@@ -16,10 +16,6 @@
 # Disable Title
 %?Lt<|>
 
-# Preload Fonts
-%Fl(2,58-Geologica.fnt)
-%Fl(3,67-Geologica.fnt)
-
 # Preload Images (only USB screen bitmaps are needed)
 %xl(sad_mac,sad_mac.bmp,0,0)
 %xl(battery,battery.bmp,0,0,5)
@@ -41,11 +37,11 @@
 %Vl(usbScreen,0,0,1024,768,-)
 
 # Time / Battery (numerical)
-%Vl(usbScreen,128,30,740,76,3)
+%Vl(usbScreen,128,30,740,76,1)
 %t(10)%ac%?cf<%ac%cH|%cl>:%cM%?cf<| %cP>;%t(10)%acBattery: %bl%%
 
 # Battery
-%Vl(usbScreen,885,30,120,54,2)
+%Vl(usbScreen,885,30,120,54,1)
 %?if(%bl, >, 75)<%xd(battery,5)|%?if(%bl, >, 50)<%xd(battery,4)|%?if(%bl, >, 25)<%xd(battery,3)|%?if(%bl, >, 10)<%xd(battery,2)|%xd(battery,1)>>>>
 
 # Line
@@ -57,7 +53,7 @@
 %xd(sad_mac)
 
 # USB Text
-%Vl(usbScreen,16,304,672,86,3)
+%Vl(usbScreen,16,304,672,86,1)
 %acUSB CONNECTED%Vs(invert)
 
 # USB Eject Box
@@ -65,5 +61,5 @@
 %dr(0,0,672,3)%dr(0,0,3,86)%dr(669,0,3,86)%dr(0,83,672,3)
 
 # Eject Warning
-%Vl(usbScreen,19,430,666,58,2)
+%Vl(usbScreen,19,430,666,58,1)
 %ac%t(1)! EJECT BEFORE DISCONNECTING !;%t(.1)%ac

@@ -291,6 +291,39 @@ impl Default for DspConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingConfirm {
+    RemoveLibraryFolder { kind: u8, idx: usize },
+    ClearLastFmCache,
+    SignOutLastFm,
+    ClearListenBrainzCache,
+    SignOutListenBrainz,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimProgressKind {
+    LibraryRescan,
+    ServerSync { is_jellyfin: bool },
+    ScrobbleSync { is_lb: bool },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SimProgressTask {
+    pub handle: u32,
+    pub kind: SimProgressKind,
+    pub elapsed_sec: f32,
+    pub duration_sec: f32,
+}
+
+const DEFAULT_LIBRARY_ROOTS: [&str; 6] = [
+    "/mnt/SDCARD/Media/Music",
+    "/mnt/SDCARD/Media/Podcasts",
+    "/mnt/SDCARD/Media/Audiobooks",
+    "/mnt/SDCARD/Media/Videos",
+    "/mnt/SDCARD/Media/TV",
+    "/mnt/SDCARD/SoundFonts",
+];
+
 pub struct UIPodApp {
     pub tracks: Vec<Track>,
     pub current_track: usize,
@@ -378,6 +411,11 @@ pub struct UIPodApp {
 
     pub outbound_cmds: Vec<String>,
     pub user_playlist_uris: Vec<String>,
+    pub library_folders: [Vec<String>; 6],
+    pub lfm_cached_scrobbles: u32,
+    pub lb_cached_scrobbles: u32,
+    pub pending_confirms: Vec<(u32, PendingConfirm)>,
+    pub sim_progress: Option<SimProgressTask>,
     pub state_dirty: bool,
 }
 
@@ -462,8 +500,203 @@ impl UIPodApp {
             pending_np_skip: 0,
             outbound_cmds: Vec::new(),
             user_playlist_uris: Vec::new(),
+            library_folders: [
+                vec![DEFAULT_LIBRARY_ROOTS[0].to_string()],
+                vec![DEFAULT_LIBRARY_ROOTS[1].to_string()],
+                vec![DEFAULT_LIBRARY_ROOTS[2].to_string()],
+                vec![DEFAULT_LIBRARY_ROOTS[3].to_string()],
+                vec![DEFAULT_LIBRARY_ROOTS[4].to_string()],
+                vec![DEFAULT_LIBRARY_ROOTS[5].to_string()],
+            ],
+            lfm_cached_scrobbles: 3,
+            lb_cached_scrobbles: 2,
+            pending_confirms: Vec::new(),
+            sim_progress: None,
             state_dirty: true,
         }
+    }
+
+    fn spawn_confirm(
+        &mut self,
+        question_en: &str,
+        question_uk: &str,
+        detail: &str,
+        action: PendingConfirm,
+        ui: &mut UiEngine,
+    ) {
+        let q = if self.uk { question_uk } else { question_en };
+        let ok_lbl = self.tr("Confirm", "Підтвердити");
+        let cancel_lbl = self.tr("Cancel", "Скасувати");
+        let id = ui.hud_confirm_push(q, detail, ok_lbl, cancel_lbl, self.clock_ms);
+        if id != 0 {
+            self.pending_confirms.push((id, action));
+        }
+    }
+
+    fn execute_confirm_action(&mut self, action: PendingConfirm, ui: &mut UiEngine) {
+        match action {
+            PendingConfirm::RemoveLibraryFolder { kind, idx } => {
+                let k = (kind as usize).min(5);
+                if idx < self.library_folders[k].len() {
+                    self.library_folders[k].remove(idx);
+                    if let Some(Screen::LibraryFolderList { sel, .. }) = self.stack.last_mut() {
+                        let max_row = self.library_folders[k].len();
+                        if *sel > max_row {
+                            *sel = max_row;
+                        }
+                    }
+                    self.state_dirty = true;
+                }
+            }
+            PendingConfirm::ClearLastFmCache => {
+                self.lfm_cached_scrobbles = 0;
+                self.state_dirty = true;
+            }
+            PendingConfirm::SignOutLastFm => {
+                self.lfm_api_key.clear();
+                self.lfm_api_secret.clear();
+                self.state_dirty = true;
+            }
+            PendingConfirm::ClearListenBrainzCache => {
+                self.lb_cached_scrobbles = 0;
+                self.state_dirty = true;
+            }
+            PendingConfirm::SignOutListenBrainz => {
+                self.lb_user_token.clear();
+                self.state_dirty = true;
+            }
+        }
+        let _ = ui;
+    }
+
+    fn start_sim_progress(&mut self, kind: SimProgressKind, duration_sec: f32, ui: &mut UiEngine) {
+        if let Some(prev) = self.sim_progress.take() {
+            ui.hud_progress_end(prev.handle, self.clock_ms);
+        }
+        let (title, det, init_prog) = match kind {
+            SimProgressKind::LibraryRescan => (
+                self.tr("Scanning Library", "Сканування бібліотеки"),
+                "0%",
+                Some(0.0),
+            ),
+            SimProgressKind::ServerSync { is_jellyfin } => (
+                if is_jellyfin {
+                    self.tr("Syncing Jellyfin", "Синхронізація Jellyfin")
+                } else {
+                    self.tr("Syncing Navidrome", "Синхронізація Navidrome")
+                },
+                "0",
+                None,
+            ),
+            SimProgressKind::ScrobbleSync { is_lb } => (
+                if is_lb {
+                    self.tr("Syncing ListenBrainz...", "Синхронізація ListenBrainz...")
+                } else {
+                    self.tr("Syncing Last.fm...", "Синхронізація Last.fm...")
+                },
+                "",
+                None,
+            ),
+        };
+        let handle = ui.hud_progress_begin(title, det, init_prog, self.clock_ms);
+        if handle != 0 {
+            self.sim_progress = Some(SimProgressTask {
+                handle,
+                kind,
+                elapsed_sec: 0.0,
+                duration_sec: duration_sec.max(0.25),
+            });
+        }
+    }
+
+    fn tick_sim_progress(&mut self, dt: f32, ui: &mut UiEngine) {
+        let Some(mut task) = self.sim_progress else {
+            return;
+        };
+        task.elapsed_sec += dt;
+        let ratio = (task.elapsed_sec / task.duration_sec).clamp(0.0, 1.0);
+        if ratio >= 1.0 {
+            self.sim_progress = None;
+            match task.kind {
+                SimProgressKind::LibraryRescan => {
+                    ui.hud_progress_update(
+                        task.handle,
+                        self.tr("Scanning Library", "Сканування бібліотеки"),
+                        "100%",
+                        Some(1.0),
+                        self.clock_ms,
+                    );
+                    ui.hud_progress_end(task.handle, self.clock_ms);
+                }
+                SimProgressKind::ServerSync { is_jellyfin } => {
+                    let msg = if is_jellyfin {
+                        format!(
+                            "{} 4 + {}",
+                            self.tr("Synced", "Синхронізовано"),
+                            self.tracks.len()
+                        )
+                    } else {
+                        format!(
+                            "{}: {}",
+                            self.tr("Synced tracks", "Синхронізовано треків"),
+                            self.tracks.len()
+                        )
+                    };
+                    ui.hud_toast("server_sync_done", &msg, 2000, self.clock_ms);
+                    ui.hud_progress_end(task.handle, self.clock_ms);
+                }
+                SimProgressKind::ScrobbleSync { is_lb } => {
+                    let count = if is_lb {
+                        let c = self.lb_cached_scrobbles;
+                        self.lb_cached_scrobbles = 0;
+                        c
+                    } else {
+                        let c = self.lfm_cached_scrobbles;
+                        self.lfm_cached_scrobbles = 0;
+                        c
+                    };
+                    let msg = format!(
+                        "{}: {}",
+                        self.tr("Synced scrobbles", "Відправлено скроблів"),
+                        count
+                    );
+                    ui.hud_toast("scrobble_sync_done", &msg, 2000, self.clock_ms);
+                    ui.hud_progress_end(task.handle, self.clock_ms);
+                    self.state_dirty = true;
+                }
+            }
+            return;
+        }
+
+        match task.kind {
+            SimProgressKind::LibraryRescan => {
+                let pct = (ratio * 100.0).round() as u32;
+                let det = format!("{pct}%");
+                ui.hud_progress_update(
+                    task.handle,
+                    self.tr("Scanning Library", "Сканування бібліотеки"),
+                    &det,
+                    Some(ratio),
+                    self.clock_ms,
+                );
+            }
+            SimProgressKind::ServerSync { is_jellyfin } => {
+                let n = ((self.tracks.len() as f32) * ratio).round() as usize;
+                let det = if is_jellyfin {
+                    format!("{} + {n}", ((4.0 * ratio).round() as usize))
+                } else {
+                    format!("{n}")
+                };
+                let title = if is_jellyfin {
+                    self.tr("Syncing Jellyfin", "Синхронізація Jellyfin")
+                } else {
+                    self.tr("Syncing Navidrome", "Синхронізація Navidrome")
+                };
+                ui.hud_progress_update(task.handle, title, &det, None, self.clock_ms);
+            }
+            SimProgressKind::ScrobbleSync { .. } => {}
+        }
+        self.sim_progress = Some(task);
     }
 
     #[inline]
@@ -733,7 +966,7 @@ impl UIPodApp {
     pub fn adjust_volume(&mut self, delta: i32, ui: &mut UiEngine) {
         self.volume_step = (self.volume_step + delta).clamp(0, 40);
         let norm = self.volume_step as f32 / 40.0;
-        ui.trigger_volume_popup(norm, self.clock_ms);
+        ui.hud_volume(norm, self.clock_ms);
         self.outbound_cmds.push(format!(
             r#"{{"type":"volume","norm":{norm:.3},"db":{}}}"#,
             self.volume_db()
@@ -1137,7 +1370,7 @@ impl UIPodApp {
     }
 
     pub fn button_long_press(&mut self, mask: u32, ui: &mut UiEngine) {
-        if self.hold_locked {
+        if self.hold_locked || ui.hud_has_active_confirm() {
             return;
         }
         if (mask & btn::B) != 0 {
@@ -1443,6 +1676,40 @@ impl UIPodApp {
         {
             let step = ((dt * 1000.0).round() as u32).max(1);
             *pos_ms = (*pos_ms + step) % (*dur_ms).max(1000);
+        }
+
+        // While one or more Confirmation HUD cards are active, strictly route A / B to the
+        // topmost Confirmation and block all underlying menu navigation (while hardware VOL +/-
+        // and Hold switch continue to pass through via `volume_step` / `set_hold`).
+        if ui.hud_has_active_confirm() {
+            self.b_hold_sec = 0.0;
+            self.a_hold_sec = 0.0;
+            self.repeat_timer = 0.0;
+            self.pending_np_skip = 0;
+            self.cancel_seek_if_active();
+
+            let pressed = self.pending_pressed;
+            self.pending_pressed = 0;
+
+            if let Some(top_id) = ui.hud_top_confirm_id() {
+                if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    ui.hud_confirm_resolve(top_id, self.clock_ms);
+                    if let Some(pos) = self
+                        .pending_confirms
+                        .iter()
+                        .position(|(cid, _)| *cid == top_id)
+                    {
+                        let (_, act) = self.pending_confirms.remove(pos);
+                        self.execute_confirm_action(act, ui);
+                    }
+                } else if (pressed & btn::B) != 0 {
+                    self.emit_click();
+                    ui.hud_confirm_resolve(top_id, self.clock_ms);
+                    self.pending_confirms.retain(|(cid, _)| *cid != top_id);
+                }
+            }
+            return;
         }
 
         // 1. Firmware `650 ms` `Hold B` -> Home (`apps/action.c` `global_home_action`)
@@ -1770,6 +2037,13 @@ impl UIPodApp {
                                 } {
                                     self.emit_play_track(idx);
                                     self.push_screen(Screen::NowPlaying, ui);
+                                } else {
+                                    ui.hud_toast(
+                                        "no_music",
+                                        self.tr("No music found", "Музику не знайдено"),
+                                        2000,
+                                        self.clock_ms,
+                                    );
                                 }
                             }
                         },
@@ -2126,6 +2400,12 @@ impl UIPodApp {
                             self.push_screen(Screen::NowPlaying, ui);
                         }
                         1 => {
+                            ui.hud_toast(
+                                "added_queue",
+                                self.tr("Added to queue", "Додано в чергу"),
+                                1800,
+                                self.clock_ms,
+                            );
                             self.pop_screen(ui);
                         }
                         2 => {
@@ -2139,6 +2419,12 @@ impl UIPodApp {
                                 }
                             }
                             self.state_dirty = true;
+                            ui.hud_toast(
+                                "added_playlist",
+                                self.tr("Added to playlist", "Додано до плейлиста"),
+                                2000,
+                                self.clock_ms,
+                            );
                             self.pop_screen(ui);
                         }
                         3 => {
@@ -2383,6 +2669,17 @@ impl UIPodApp {
                                 } else {
                                     (self.sleep_idx + 1) % n
                                 };
+                                let val_lbl = if self.sleep_idx == 0 {
+                                    self.tr("Off", "Вимк.")
+                                } else {
+                                    SLEEP_TIMERS[self.sleep_idx]
+                                };
+                                let msg = format!(
+                                    "{}: {}",
+                                    self.tr("Sleep Timer", "Таймер сну"),
+                                    val_lbl
+                                );
+                                ui.hud_toast("sleep_timer", &msg, 1800, self.clock_ms);
                             }
                             NpCtxAction::LargeArt => {
                                 self.alt_now_playing = !self.alt_now_playing;
@@ -2399,6 +2696,12 @@ impl UIPodApp {
                                     }
                                 }
                                 self.state_dirty = true;
+                                ui.hud_toast(
+                                    "added_playlist",
+                                    self.tr("Added to playlist", "Додано до плейлиста"),
+                                    2000,
+                                    self.clock_ms,
+                                );
                                 self.pop_screen(ui);
                             }
                             NpCtxAction::StartViz => {
@@ -3223,6 +3526,34 @@ impl UIPodApp {
                                 ui,
                             );
                         }
+                        3 => {
+                            let url = if is_jellyfin {
+                                self.jellyfin_url.trim()
+                            } else {
+                                self.navidrome_url.trim()
+                            };
+                            if self.offline_mode {
+                                ui.hud_toast(
+                                    "offline_mode",
+                                    self.tr("Offline Mode enabled", "Увімкнено офлайн-режим"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else if url.is_empty() {
+                                ui.hud_toast(
+                                    "server_cfg_needed",
+                                    self.tr("Configure server URL first", "Спочатку вкажіть адресу сервера"),
+                                    2000,
+                                    self.clock_ms,
+                                );
+                            } else {
+                                self.start_sim_progress(
+                                    SimProgressKind::ServerSync { is_jellyfin },
+                                    0.9,
+                                    ui,
+                                );
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -3252,12 +3583,67 @@ impl UIPodApp {
                             self.lfm_enabled = !self.lfm_enabled;
                             self.state_dirty = true;
                         }
+                        1 if !is_dir => {
+                            if !self.lfm_api_key.is_empty() {
+                                let detail = self.lfm_api_key.clone();
+                                self.spawn_confirm(
+                                    "Sign out of Last.fm?",
+                                    "Вийти з Last.fm?",
+                                    &detail,
+                                    PendingConfirm::SignOutLastFm,
+                                    ui,
+                                );
+                            } else {
+                                self.push_screen(Screen::LastFmQrAuth, ui);
+                            }
+                        }
                         2 if !is_dir => {
                             self.push_screen(Screen::LastFmQrAuth, ui);
                         }
                         4 => {
                             self.lfm_streaming = !self.lfm_streaming;
                             self.state_dirty = true;
+                        }
+                        5 if !is_dir => {
+                            if self.offline_mode {
+                                ui.hud_toast(
+                                    "offline_mode",
+                                    self.tr("Offline Mode enabled", "Увімкнено офлайн-режим"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else if self.lfm_cached_scrobbles == 0 {
+                                ui.hud_toast(
+                                    "scrobble_empty",
+                                    self.tr("No cached scrobbles", "Кеш скроблів порожній"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else {
+                                self.start_sim_progress(
+                                    SimProgressKind::ScrobbleSync { is_lb: false },
+                                    0.75,
+                                    ui,
+                                );
+                            }
+                        }
+                        6 if !is_dir => {
+                            if self.lfm_cached_scrobbles == 0 {
+                                ui.hud_toast(
+                                    "scrobble_empty",
+                                    self.tr("No cached scrobbles", "Кеш скроблів порожній"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else {
+                                self.spawn_confirm(
+                                    "Clear cached scrobbles?",
+                                    "Очистити кеш скроблів?",
+                                    "",
+                                    PendingConfirm::ClearLastFmCache,
+                                    ui,
+                                );
+                            }
                         }
                         7 if !is_dir => {
                             let cur = self.lfm_api_key.clone();
@@ -3312,6 +3698,15 @@ impl UIPodApp {
                             self.lb_enabled = !self.lb_enabled;
                             self.state_dirty = true;
                         }
+                        1 if !is_dir && !self.lb_user_token.trim().is_empty() => {
+                            self.spawn_confirm(
+                                "Sign out of ListenBrainz?",
+                                "Вийти з ListenBrainz?",
+                                "",
+                                PendingConfirm::SignOutListenBrainz,
+                                ui,
+                            );
+                        }
                         1 | 2 | 7 if !is_dir => {
                             let cur = self.lb_user_token.clone();
                             self.push_screen(
@@ -3334,6 +3729,47 @@ impl UIPodApp {
                         4 => {
                             self.lb_streaming = !self.lb_streaming;
                             self.state_dirty = true;
+                        }
+                        5 if !is_dir => {
+                            if self.offline_mode {
+                                ui.hud_toast(
+                                    "offline_mode",
+                                    self.tr("Offline Mode enabled", "Увімкнено офлайн-режим"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else if self.lb_cached_scrobbles == 0 {
+                                ui.hud_toast(
+                                    "scrobble_empty",
+                                    self.tr("No cached scrobbles", "Кеш скроблів порожній"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else {
+                                self.start_sim_progress(
+                                    SimProgressKind::ScrobbleSync { is_lb: true },
+                                    0.75,
+                                    ui,
+                                );
+                            }
+                        }
+                        6 if !is_dir => {
+                            if self.lb_cached_scrobbles == 0 {
+                                ui.hud_toast(
+                                    "scrobble_empty",
+                                    self.tr("No cached scrobbles", "Кеш скроблів порожній"),
+                                    1800,
+                                    self.clock_ms,
+                                );
+                            } else {
+                                self.spawn_confirm(
+                                    "Clear cached scrobbles?",
+                                    "Очистити кеш скроблів?",
+                                    "",
+                                    PendingConfirm::ClearListenBrainzCache,
+                                    ui,
+                                );
+                            }
                         }
                         8 if !is_dir => {
                             let cur = self.lb_api_url.clone();
@@ -3370,13 +3806,39 @@ impl UIPodApp {
                             },
                             ui,
                         );
+                    } else {
+                        self.start_sim_progress(SimProgressKind::LibraryRescan, 0.95, ui);
                     }
                 }
             }
 
-            Screen::LibraryFolderList { mut sel, .. } => {
-                if self.nav_list(pressed, &mut sel, 2, ui) {
+            Screen::LibraryFolderList { kind, mut sel } => {
+                let k = (kind as usize).min(5);
+                let row_count = self.library_folders[k].len() + 1;
+                if self.nav_list(pressed, &mut sel, row_count, ui) {
                     self.set_top_sel(sel);
+                } else if (pressed & btn::A) != 0 {
+                    self.emit_click();
+                    if sel < self.library_folders[k].len() {
+                        let folder_path = self.library_folders[k][sel].clone();
+                        self.spawn_confirm(
+                            "Remove this folder?",
+                            "Видалити цю теку?",
+                            &folder_path,
+                            PendingConfirm::RemoveLibraryFolder { kind, idx: sel },
+                            ui,
+                        );
+                    } else {
+                        let base = DEFAULT_LIBRARY_ROOTS[k];
+                        let candidate = if !self.library_folders[k].iter().any(|p| p == base) {
+                            base.to_string()
+                        } else {
+                            format!("{base}_{}", self.library_folders[k].len() + 1)
+                        };
+                        self.library_folders[k].push(candidate);
+                        self.set_top_sel(self.library_folders[k].len() - 1);
+                        self.state_dirty = true;
+                    }
                 }
             }
 
@@ -3854,7 +4316,8 @@ impl UIPodApp {
         self.clock_ms = self
             .clock_ms
             .saturating_add(((dt * 1000.0).round() as u64).max(1));
-        ui.set_volume_popup_clock(self.clock_ms);
+        ui.hud_set_clock(self.clock_ms);
+        self.tick_sim_progress(dt, ui);
         if self.trans_t < 1.0 {
             self.trans_t = (self.trans_t + dt * 4.6).min(1.0);
         }
@@ -5019,12 +5482,12 @@ impl UIPodApp {
                     (
                         self.tr("Sync Cached Scrobbles", "Відправити кеш скроблів").to_string(),
                         FileIconKind::None,
-                        OwnedRight::Value("0".into()),
+                        OwnedRight::Value(self.lfm_cached_scrobbles.to_string()),
                     ),
                     (
                         self.tr("Clear Cached Scrobbles", "Очистити кеш скроблів").to_string(),
                         FileIconKind::None,
-                        OwnedRight::Value("0".into()),
+                        OwnedRight::Value(self.lfm_cached_scrobbles.to_string()),
                     ),
                     ("API Key".to_string(), FileIconKind::None, OwnedRight::Value(key_lbl)),
                     ("API Secret".to_string(), FileIconKind::None, OwnedRight::Value(sec_lbl)),
@@ -5083,12 +5546,12 @@ impl UIPodApp {
                     (
                         self.tr("Sync Cached Scrobbles", "Відправити кеш скроблів").to_string(),
                         FileIconKind::None,
-                        OwnedRight::Value("0".into()),
+                        OwnedRight::Value(self.lb_cached_scrobbles.to_string()),
                     ),
                     (
                         self.tr("Clear Cached Scrobbles", "Очистити кеш скроблів").to_string(),
                         FileIconKind::None,
-                        OwnedRight::Value("0".into()),
+                        OwnedRight::Value(self.lb_cached_scrobbles.to_string()),
                     ),
                     (
                         self.tr("User Token", "Токен користувача").to_string(),
@@ -5208,18 +5671,24 @@ impl UIPodApp {
             }
 
             Screen::LibraryFolderList { kind, sel } => {
-                let (title, path) = match kind {
-                    0 => (self.tr("Music Folders", "Теки музики"), "/mnt/SDCARD/Media/Music"),
-                    1 => (self.tr("Podcast Folders", "Теки подкастів"), "/mnt/SDCARD/Media/Podcasts"),
-                    2 => (self.tr("Audiobook Folders", "Теки аудіокниг"), "/mnt/SDCARD/Media/Audiobooks"),
-                    3 => (self.tr("Movie Folders", "Теки відео"), "/mnt/SDCARD/Media/Videos"),
-                    4 => (self.tr("Television Folders", "Теки серіалів"), "/mnt/SDCARD/Media/TV"),
-                    _ => (self.tr("SoundFont Folders", "Теки саундфонтів"), "/mnt/SDCARD/SoundFonts"),
+                let title = match kind {
+                    0 => self.tr("Music Folders", "Теки музики"),
+                    1 => self.tr("Podcast Folders", "Теки подкастів"),
+                    2 => self.tr("Audiobook Folders", "Теки аудіокниг"),
+                    3 => self.tr("Movie Folders", "Теки відео"),
+                    4 => self.tr("Television Folders", "Теки серіалів"),
+                    _ => self.tr("SoundFont Folders", "Теки саундфонтів"),
                 };
-                let items = vec![
-                    (path.to_string(), FileIconKind::Folder, OwnedRight::None),
-                    ("+ Add Folder".to_string(), FileIconKind::AddFolder, OwnedRight::None),
-                ];
+                let k = (kind as usize).min(5);
+                let mut items: Vec<(String, FileIconKind, OwnedRight)> = self.library_folders[k]
+                    .iter()
+                    .map(|p| (p.clone(), FileIconKind::Folder, OwnedRight::None))
+                    .collect();
+                items.push((
+                    self.tr("+ Add Folder", "+ Додати теку").to_string(),
+                    FileIconKind::AddFolder,
+                    OwnedRight::None,
+                ));
                 self.render_list(ui, title, &items, sel);
             }
 

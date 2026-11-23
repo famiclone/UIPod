@@ -818,11 +818,8 @@ static void host_show_splash(const char *message, uint32_t duration_ms)
 {
     if (!message || !message[0])
         return;
-    sync_gpu_fbo_to_rockbox_fb_if_needed();
-    long ticks = (long)((duration_ms * (uint32_t)HZ + 999u) / 1000u);
-    if (ticks < HZ / 4)
-        ticks = HZ / 4;
-    splash(ticks, message);
+    uint32_t hold_ms = duration_ms < 1400u ? 1400u : duration_ms;
+    uipod_hud_toast_ex("plugin_toast", message, hold_ms);
 }
 
 static uint32_t host_audio_status(void)

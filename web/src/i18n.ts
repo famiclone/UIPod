@@ -59,24 +59,24 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     plugins_sdk_desc:
       'Prepared for browser-based .uipod plugin testing, custom shader presets, and theme bundles.',
     sec_arch_title: 'Features',
-    f_ui_title: '1024×768 Rust Vector UI',
+    f_ui_title: 'Vector UI & Stacked HUD',
     f_ui_desc:
-      'Rendered in pure Rust with taffy layouts, femtovg vector graphics, Geologica typography, 38 four-shade themes, 6 screen transitions, and Bayer-dithered monochrome album art — running identically on TrimUI Brick, Android OpenGL ES 3.0, and WebAssembly.',
+      'Crisp Geologica vector typography, responsive handheld layouts, 38 four-shade iPod Mini themes, 6 screen transitions, Bayer-dithered album art, and choreographed floating HUD cards for volume, toasts, progress, and confirmations.',
     f_android_title: 'Android Handheld Port (arm64-v8a)',
     f_android_desc:
-      'Native APK for Android 8.0+ retro handhelds (Retroid, Odin, Anbernic, Ayaneo). Exact centered 4:3 OLED frame, background foreground-service playback with screen off, hardware MediaPlayer video for Movies/Jellyfin, and physical gamepad + volume rocker sync.',
-    f_viz_title: '10 Bayer-Dithered Visualizers',
+      'Native APK for Android 8.0+ retro handhelds (Retroid, Odin, Anbernic, Ayaneo) with responsive multi-aspect framing, screen-off background playback, hardware video with .srt subtitles, and gamepad + volume rocker sync.',
+    f_viz_title: '10 Four-Shade Visualizers',
     f_viz_desc:
-      'Two-pass ping-pong FBO feedback shaders driven by a 1024-pt FFT: Cassette Deck (spinning reels + 28-segment LED meter), centered Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate, Star Warp, and LCD Plasma.',
-    f_lib_title: 'Unified Library, Subtitles & Last.fm',
+      'Audio-reactive presets synced to output latency: Cassette Deck, Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, Cyber Horizon, Liquid Metal, Chladni Plate, Star Warp, and LCD Plasma.',
+    f_lib_title: 'Unified Library, Chiptunes & Scrobbling',
     f_lib_desc:
-      'Browse file manager (Delete, Rename, Copy, Move, Info), deduplicated SQLite library across Local, Navidrome, and Jellyfin with offline downloads, video .srt subtitles + audio track switching, and Last.fm QR Sign-In with offline scrobble cache.',
-    f_dsp_title: 'Graphic EQ, Tape Mode & Stereo FX',
+      'SD file manager, unified Local + Navidrome + Jellyfin library with offline downloads, .nsf NES chiptunes, .gsf GBA audio, MIDI with custom SoundFonts, video .srt subtitles, and concurrent Last.fm & ListenBrainz scrobbling.',
+    f_dsp_title: 'Graphic EQ, Smart DJ & Stereo FX',
     f_dsp_desc:
-      'Rockbox 32-bit DSP core with GPU 10-band Graphic EQ, offline AutoEQ database, granular Speed stretching (1/16×–1.5×), Walkman Tape Mode, and stereo Reverb, Ping-Pong Delay, Chorus, and Flanger.',
-    f_plg_title: 'Native Rust Plugins (.uipod)',
+      '10-band Graphic EQ, offline AutoEQ headphone profiles, Dual-Deck Smart DJ Crossfade (Vinyl & Master Tempo sync with Bass Swap), Speed stretch, Walkman Tape Mode, Reverb, Ping-Pong Delay, Chorus, and Flanger.',
+    f_plg_title: 'Built-In Games & Utilities',
     f_plg_desc:
-      'Versioned C-ABI plugin runtime powering Music Quiz, Sound Racer (with .nsf / chiptune support & cached song maps), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.',
+      '60 FPS handheld plugins: Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.',
     sec_ctrl_title: 'Controls',
     sec_inst_title: 'Installation',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',
@@ -145,24 +145,24 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     plugins_sdk_desc:
       'Підготовлено для тестування .uipod плагінів у браузері, власних шейдерів і наборів тем.',
     sec_arch_title: 'Можливості',
-    f_ui_title: 'Векторний Rust UI 1024×768',
+    f_ui_title: 'Векторний UI та Stacked HUD',
     f_ui_desc:
-      'Рендеринг на чистому Rust (taffy + femtovg), шрифт Geologica, 38 чотиривідтінкових тем, 6 переходів екранів і Bayer-дизеринг обкладинок — працює однаково на TrimUI Brick, Android OpenGL ES 3.0 та WebAssembly.',
+      'Чітка векторна типографіка Geologica, адаптивні макети під різні екрани, 38 чотиривідтінкових тем, 6 переходів, Bayer-дизеринг обкладинок і плаваючі HUD-картки гучності, тостів, прогресу й підтверджень.',
     f_android_title: 'Нативний порт на Android (arm64-v8a)',
     f_android_desc:
-      'Нативний APK для Android 8.0+ консолей (Retroid, Odin, Anbernic, Ayaneo). Точний 4:3 OLED-фрейм, фонове відтворення з вимкненим екраном через Foreground Service, апаратне відео MediaPlayer для фільмів і Jellyfin, синхронізація кнопок гучності й геймпада.',
-    f_viz_title: '10 Bayer-візуалізаторів на GLSL',
+      'Нативний APK для Android 8.0+ консолей (Retroid, Odin, Anbernic, Ayaneo): адаптивне кадрування, фонове відтворення з вимкненим екраном, апаратне відео з .srt субтитрами та синхронізація кнопок гучності й геймпада.',
+    f_viz_title: '10 чотиривідтінкових візуалізаторів',
     f_viz_desc:
-      'Двопрохідний ping-pong FBO рушій на 1024-точковому FFT: Касетна дека (бобіни + 28-сегментний LED-метр), Стерео VU-метр, Звуковий вихор, Осцилограф, Спектр-матриця, Кібер-горизонт, Рідкий метал, Хладні-резонанс, Зоряний стрибок та LCD Плазма.',
-    f_lib_title: 'Єдина бібліотека, субтитри й Last.fm',
+      'Аудіореактивні пресети із синхронізацією затримки: Касетна дека, Стерео VU-метр, Звуковий вихор, Осцилограф, Спектр-матриця, Кібер-горизонт, Рідкий метал, Хладні-резонанс, Зоряний стрибок та LCD Плазма.',
+    f_lib_title: 'Бібліотека, чіптюн і скроблінг',
     f_lib_desc:
-      'Файловий менеджер (Видалити, Перейменувати, Копіювати, Перемістити, Інфо), єдиний SQLite-індекс для локальних тек, Navidrome і Jellyfin з офлайн-завантаженням, .srt субтитри й вибір аудіодоріжки у відео, та вхід у Last.fm за QR-кодом з офлайн-кешем скроблінгу.',
-    f_dsp_title: 'Графічний EQ, Касета й Стерео FX',
+      'Файловий менеджер, єдина бібліотека Local + Navidrome + Jellyfin з офлайн-завантаженнями, .nsf NES-чіптюн, .gsf GBA-аудіо, MIDI з власними SoundFont, .srt субтитри у відео та одночасний скроблінг Last.fm і ListenBrainz.',
+    f_dsp_title: 'Графічний EQ, Smart DJ та Стерео FX',
     f_dsp_desc:
-      'На базі 32-бітного DSP Rockbox: GPU 10-смуговий графічний EQ з офлайн-базою AutoEQ, гранулярне сповільнення Speed (1/16×–1.5×), емуляція касетної деки та стереоефекти Reverb, Ping-Pong Delay, Chorus і Flanger.',
-    f_plg_title: 'Нативні Rust-плагіни (.uipod)',
+      '10-смуговий графічний EQ, офлайн-база AutoEQ, Dual-Deck Smart DJ Crossfade (Vinyl і Master Tempo з Bass Swap), розтягування Speed, емуляція касетної деки, Reverb, Ping-Pong Delay, Chorus і Flanger.',
+    f_plg_title: 'Вбудовані ігри та утиліти',
     f_plg_desc:
-      'Версіонований C-ABI рантайм для Music Quiz, Sound Racer (із підтримкою .nsf / чіптюну та кешем трас), Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma та Text Viewer.',
+      'Швидкі 60 FPS плагіни: Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma та Text Viewer.',
     sec_ctrl_title: 'Керування',
     sec_inst_title: 'Встановлення',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',

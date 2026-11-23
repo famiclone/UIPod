@@ -244,7 +244,7 @@ cp -a "$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox/wps/." "$APK_WORK/assets/uipod/
 cp -a "$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox/themes/." "$APK_WORK/assets/uipod/themes/"
 
 rm -f "$APK_WORK/assets/uipod/fonts/"*.fnt "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
-cp -a "$ROOT"/assets/fonts/*.fnt "$APK_WORK/assets/uipod/fonts/"
+mkdir -p "$APK_WORK/assets/uipod/fonts"
 cp -a "$ROOT/assets/fonts/PixelMplus12-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt"
 

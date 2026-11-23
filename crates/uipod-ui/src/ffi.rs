@@ -1518,17 +1518,24 @@ pub unsafe extern "C" fn uipod_rs_ui_plugin_begin_ex(
     true
 }
 
+// ---- Unified Stacked HUD System C ABI (`uipod_rs_hud_*`) --------------------
+
 #[no_mangle]
-pub extern "C" fn uipod_rs_ui_trigger_volume_popup(level_norm: f32, now_ms: u64) {
+pub extern "C" fn uipod_rs_hud_volume(level_norm: f32, now_ms: u64) {
     if let Ok(mut guard) = SYNC_ENGINE.lock() {
         if let Some(wrap) = guard.as_mut() {
-            wrap.0.trigger_volume_popup(level_norm, now_ms);
+            wrap.0.hud_volume(level_norm, now_ms);
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn uipod_rs_ui_trigger_hud_toast(message: *const c_char, now_ms: u64) {
+pub unsafe extern "C" fn uipod_rs_hud_toast(
+    key: *const c_char,
+    message: *const c_char,
+    hold_ms: u64,
+    now_ms: u64,
+) {
     if message.is_null() {
         return;
     }
@@ -1536,34 +1543,141 @@ pub unsafe extern "C" fn uipod_rs_ui_trigger_hud_toast(message: *const c_char, n
     if msg.trim().is_empty() {
         return;
     }
+    let k = cstr_lossy(key);
     if let Ok(mut guard) = SYNC_ENGINE.lock() {
         if let Some(wrap) = guard.as_mut() {
-            wrap.0.trigger_hud_toast(&msg, now_ms);
+            wrap.0.hud_toast(&k, &msg, hold_ms, now_ms);
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn uipod_rs_ui_set_volume_popup_clock(now_ms: u64) {
+pub unsafe extern "C" fn uipod_rs_hud_progress_begin(
+    title: *const c_char,
+    detail: *const c_char,
+    progress: f32,
+    now_ms: u64,
+) -> u32 {
+    let t = cstr_lossy(title);
+    let d = cstr_lossy(detail);
+    let prog = (progress >= 0.0).then_some(progress);
     if let Ok(mut guard) = SYNC_ENGINE.lock() {
         if let Some(wrap) = guard.as_mut() {
-            wrap.0.set_volume_popup_clock(now_ms);
+            return wrap.0.hud_progress_begin(&t, &d, prog, now_ms);
         }
     }
+    0
 }
 
 #[no_mangle]
-pub extern "C" fn uipod_rs_ui_is_volume_popup_animating(now_ms: u64) -> bool {
+pub unsafe extern "C" fn uipod_rs_hud_progress_update(
+    handle: u32,
+    title: *const c_char,
+    detail: *const c_char,
+    progress: f32,
+    now_ms: u64,
+) -> bool {
+    if handle == 0 {
+        return false;
+    }
+    let t = cstr_lossy(title);
+    let d = cstr_lossy(detail);
+    let prog = (progress >= 0.0).then_some(progress);
     if let Ok(mut guard) = SYNC_ENGINE.lock() {
         if let Some(wrap) = guard.as_mut() {
-            return wrap.0.is_volume_popup_animating(now_ms);
+            return wrap.0.hud_progress_update(handle, &t, &d, prog, now_ms);
         }
     }
     false
 }
 
 #[no_mangle]
-pub extern "C" fn uipod_rs_ui_render_volume_popup_over_screen(
+pub extern "C" fn uipod_rs_hud_progress_end(handle: u32, now_ms: u64) -> bool {
+    if handle == 0 {
+        return false;
+    }
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.hud_progress_end(handle, now_ms);
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_hud_confirm_push(
+    question: *const c_char,
+    detail: *const c_char,
+    confirm_label: *const c_char,
+    cancel_label: *const c_char,
+    now_ms: u64,
+) -> u32 {
+    let q = cstr_lossy(question);
+    let d = cstr_lossy(detail);
+    let a = cstr_lossy(confirm_label);
+    let b = cstr_lossy(cancel_label);
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.hud_confirm_push(&q, &d, &a, &b, now_ms);
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_confirm_resolve(id: u32, now_ms: u64) -> bool {
+    if id == 0 {
+        return false;
+    }
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.hud_confirm_resolve(id, now_ms);
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_has_confirm() -> bool {
+    if let Ok(guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_ref() {
+            return wrap.0.hud_has_active_confirm();
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_set_clock(now_ms: u64) {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.hud_set_clock(now_ms);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_needs_tick(now_ms: u64) -> bool {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.hud_needs_tick(now_ms);
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_is_visible(now_ms: u64) -> bool {
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            return wrap.0.hud_is_visible(now_ms);
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_hud_render_over_screen(
     win_w: u32,
     win_h: u32,
     bg_rgb: u32,
@@ -1590,6 +1704,39 @@ pub extern "C" fn uipod_rs_ui_render_volume_popup_over_screen(
         },
         now_ms,
     )
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_trigger_volume_popup(level_norm: f32, now_ms: u64) {
+    uipod_rs_hud_volume(level_norm, now_ms);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_trigger_hud_toast(message: *const c_char, now_ms: u64) {
+    uipod_rs_hud_toast(std::ptr::null(), message, 0, now_ms);
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_set_volume_popup_clock(now_ms: u64) {
+    uipod_rs_hud_set_clock(now_ms);
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_is_volume_popup_animating(now_ms: u64) -> bool {
+    uipod_rs_hud_needs_tick(now_ms)
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_render_volume_popup_over_screen(
+    win_w: u32,
+    win_h: u32,
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+    now_ms: u64,
+) -> bool {
+    uipod_rs_hud_render_over_screen(win_w, win_h, bg_rgb, fg_rgb, fg1_rgb, fg2_rgb, now_ms)
 }
 
 // ---- 4-Shade Audio-Reactive Visualizer C ABI (`uipod_rs_viz_*`) ------------

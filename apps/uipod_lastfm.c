@@ -599,7 +599,7 @@ static bool lfm_run_qr_auth(void)
         return false;
     }
 
-    uipod_fullscreen_message(str(LANG_UIPOD_LFM_SYNCING), NULL);
+    uint32_t req_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_LFM_SYNCING), NULL);
 
     char token[96];
     char url[256];
@@ -613,8 +613,10 @@ static bool lfm_run_qr_auth(void)
                                      err, sizeof(err)) != 0)
     {
         splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(req_hud);
         return false;
     }
+    uipod_hud_progress_end(req_hud);
 
     uint8_t qr_modules[LFM_QR_MAX_DIM * LFM_QR_MAX_DIM];
     memset(qr_modules, 0, sizeof(qr_modules));
@@ -706,13 +708,14 @@ static bool lfm_run_password_login(TpLfmConfigC *cfg)
     if (uipod_kbd_input_ex(pass, sizeof(pass), true) != 0 || !pass[0])
         return false;
 
-    uipod_fullscreen_message(str(LANG_UIPOD_LFM_SYNCING), NULL);
+    uint32_t login_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_LFM_SYNCING), NULL);
 
     char err[160];
     err[0] = '\0';
     if (tp_lastfm_login_password(user, pass, err, sizeof(err)) != 0)
     {
         splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(login_hud);
         return false;
     }
 
@@ -721,6 +724,7 @@ static bool lfm_run_password_login(TpLfmConfigC *cfg)
     lfm_wake_worker(true);
     splashf(HZ * 3 / 2, "%s: @%s", str(LANG_UIPOD_LFM_SIGNED_IN),
             cfg->username[0] ? cfg->username : user);
+    uipod_hud_progress_end(login_hud);
     return true;
 }
 
@@ -943,7 +947,7 @@ static enum uipod_page_result lfm_on_action(struct uipod_page *self, int action)
                 break;
             }
 
-            uipod_fullscreen_message(str(LANG_UIPOD_LFM_SYNCING), NULL);
+            uint32_t sync_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_LFM_SYNCING), NULL);
             bool cfg_upd = false;
             char err[160];
             err[0] = '\0';
@@ -955,6 +959,7 @@ static enum uipod_page_result lfm_on_action(struct uipod_page *self, int action)
                 splashf(HZ * 3 / 2, str(LANG_UIPOD_LFM_SYNC_DONE), (int)flushed);
             else
                 splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+            uipod_hud_progress_end(sync_hud);
             break;
         }
 

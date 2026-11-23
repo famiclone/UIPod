@@ -1577,6 +1577,7 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
             }
 
             bool ok = false;
+            uint32_t op_hud = 0;
             if (is_move)
             {
                 if (rename(path, dst_path) == 0)
@@ -1585,14 +1586,14 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
                 }
                 else
                 {
-                    uipod_fullscreen_message(str(LANG_UIPOD_MOVING), NULL);
+                    op_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_MOVING), chosen);
                     if (copy_path_recursive(path, dst_path, 0))
                         ok = delete_path_recursive(path, 0);
                 }
             }
             else
             {
-                uipod_fullscreen_message(str(LANG_UIPOD_COPYING), NULL);
+                op_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_COPYING), chosen);
                 ok = copy_path_recursive(path, dst_path, 0);
             }
 
@@ -1624,6 +1625,7 @@ static enum uipod_page_result browse_file_context(struct picker_page *p,
                 music_load(p);
                 splash(HZ, ID2P(LANG_UIPOD_FILE_OP_FAILED));
             }
+            uipod_hud_progress_end(op_hud);
             break;
         }
 

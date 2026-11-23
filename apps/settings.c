@@ -829,9 +829,11 @@ void settings_apply(bool read_disk)
     if (read_disk)
     {
         char buf[MAX_PATH];
-        /* fonts need to be loaded before the WPS */
+        /* fonts need to be loaded before the WPS (skip legacy *-Geologica .fnt;
+         * uipod-ui renders vector Geologica .ttf directly) */
         if (global_settings.font_file[0]
-            && global_settings.font_file[0] != '-') {
+            && global_settings.font_file[0] != '-'
+            && strstr((const char *)global_settings.font_file, "Geologica") == NULL) {
             int font_ui = screens[SCREEN_MAIN].getuifont();
             snprintf(buf, sizeof buf, FONT_DIR "/%s.fnt",
                      global_settings.font_file);

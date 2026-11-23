@@ -13,12 +13,13 @@ use glow::HasContext;
 use imgref::ImgRef;
 use rgb::RGBA8;
 
+use crate::hud::{HudCardPayload, HudRenderItem, HudStack};
 use crate::icons::{
-    draw_arrow_down_64, draw_arrow_s, draw_battery, draw_chevron_left_s, draw_chevron_s,
-    draw_filetype_icon, draw_fx_64, draw_header_source_icon, draw_hold_lock, draw_icon_note_scaled,
-    draw_infinity_badge, draw_play_mode_icon, draw_scrollbar_v, draw_seekbar_track_h,
-    draw_seekbar_track_h_with_loop, draw_toggle, draw_volume_popup, fill_rounded_rect,
-    stroke_rounded_rect_inside,
+    color_with_alpha, draw_arrow_down_64, draw_arrow_s, draw_battery, draw_chevron_left_s,
+    draw_chevron_s, draw_filetype_icon, draw_fx_64, draw_header_source_icon, draw_hold_lock,
+    draw_hud_card_frame, draw_icon_note_scaled, draw_infinity_badge, draw_play_mode_icon,
+    draw_scrollbar_v, draw_seekbar_track_h, draw_seekbar_track_h_with_loop, draw_toggle,
+    draw_volume_popup, draw_volume_popup_alpha, fill_rounded_rect, stroke_rounded_rect_inside,
 };
 use crate::layout::{
     compute_header_layout, compute_header_layout_sized, compute_list_layout_sized,
@@ -186,97 +187,6 @@ pub fn quantize_mono_art_4shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum HudPopupPayload {
-    Volume(f32),
-    Toast(String),
-}
-
-#[derive(Clone, Debug)]
-struct HudPopupState {
-    payload: HudPopupPayload,
-    open_ms: u64,
-    last_trigger_ms: u64,
-    clock_ms: u64,
-    active: bool,
-}
-
-impl Default for HudPopupState {
-    fn default() -> Self {
-        Self {
-            payload: HudPopupPayload::Volume(0.8),
-            open_ms: 0,
-            last_trigger_ms: 0,
-            clock_ms: 0,
-            active: false,
-        }
-    }
-}
-
-impl HudPopupState {
-    fn arm(&mut self, payload: HudPopupPayload, now_ms: u64) {
-        use crate::layout::hud_toast_spec as ht;
-
-        let cur_prog = self.compute_progress(now_ms).unwrap_or(0.0);
-        if cur_prog >= 0.995 {
-            self.open_ms = now_ms.saturating_sub(ht::SLIDE_IN_MS as u64);
-        } else if cur_prog > 0.001 {
-            let u = (1.0 - (1.0 - cur_prog).clamp(0.0, 1.0).cbrt()).clamp(0.0, 1.0);
-            self.open_ms = now_ms.saturating_sub((u * ht::SLIDE_IN_MS).round() as u64);
-        } else {
-            self.open_ms = now_ms;
-        }
-        self.payload = payload;
-        self.last_trigger_ms = now_ms;
-        self.clock_ms = now_ms;
-        self.active = true;
-    }
-
-    fn trigger_volume(&mut self, level_norm: f32, now_ms: u64) {
-        self.arm(HudPopupPayload::Volume(level_norm.clamp(0.0, 1.0)), now_ms);
-    }
-
-    fn trigger_toast(&mut self, message: &str, now_ms: u64) {
-        let trimmed = message.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        self.arm(HudPopupPayload::Toast(trimmed.to_string()), now_ms);
-    }
-
-    fn set_clock(&mut self, now_ms: u64) {
-        self.clock_ms = now_ms;
-    }
-
-    fn compute_progress(&mut self, now_ms: u64) -> Option<f32> {
-        use crate::layout::hud_toast_spec as ht;
-
-        if !self.active {
-            return None;
-        }
-        self.clock_ms = now_ms;
-        let hold_end = self.last_trigger_ms.saturating_add(ht::HOLD_MS);
-        if now_ms < hold_end {
-            let el_in = now_ms.saturating_sub(self.open_ms) as f32;
-            let u = (el_in / ht::SLIDE_IN_MS).clamp(0.0, 1.0);
-            Some(1.0 - (1.0 - u).powi(3))
-        } else {
-            let el_out = (now_ms - hold_end) as f32;
-            if el_out >= ht::SLIDE_OUT_MS {
-                self.active = false;
-                None
-            } else {
-                let u = (el_out / ht::SLIDE_OUT_MS).clamp(0.0, 1.0);
-                Some(1.0 - u.powi(3))
-            }
-        }
-    }
-
-    fn is_animating(&mut self, now_ms: u64) -> bool {
-        self.compute_progress(now_ms).is_some()
-    }
-}
-
 /// Pure-Rust GPU UI engine backed by `taffy` + `femtovg` on OpenGL ES 3.0.
 pub struct UiEngine {
     canvas: Canvas<OpenGl>,
@@ -297,7 +207,7 @@ pub struct UiEngine {
     art_hash: Option<u64>,
     art_rgba_scratch: Vec<RGBA8>,
     last_theme: ThemeColors,
-    hud_popup: HudPopupState,
+    hud_stack: HudStack,
 }
 
 impl UiEngine {
@@ -412,7 +322,7 @@ impl UiEngine {
             art_hash: None,
             art_rgba_scratch: vec![RGBA8::new(0, 0, 0, 255); 256 * 256],
             last_theme: ThemeColors::default(),
-            hud_popup: HudPopupState::default(),
+            hud_stack: HudStack::default(),
         };
 
         // Set constant 1024x768 canvas size once, warm up FBO creation, then sync back to Screen.
@@ -2927,7 +2837,8 @@ impl UiEngine {
             self.canvas.fill_path(&hq, &p_hdr);
         }
 
-        self.draw_volume_popup_on_screen_internal(win_w, win_h, self.hud_popup.clock_ms);
+        let now_ms = self.hud_stack.clock_ms();
+        self.draw_hud_stack_on_screen_internal(win_w, win_h, now_ms);
 
         self.canvas.flush();
         self.canvas
@@ -3156,123 +3067,675 @@ impl UiEngine {
         self.plugin_sync_fbo_into_bgr(fb_bgr);
     }
 
-    /// Triggers or refreshes the top-sliding `VolumeBarPopup` (`[3214]`: slides down to 1/4 height,
-    /// holds for `2000 ms` after the last volume press, then slides back up off-screen).
-    pub fn trigger_volume_popup(&mut self, level_norm: f32, now_ms: u64) {
-        self.hud_popup.trigger_volume(level_norm, now_ms);
+    /* ---- Unified Stacked HUD System (`Volume`, `Toast`, `Progress`, `Confirmation`) ---- */
+
+    pub fn hud_volume(&mut self, level_norm: f32, now_ms: u64) {
+        self.hud_stack.trigger_volume(level_norm, now_ms);
     }
 
-    /// Triggers or refreshes a floating HUD toast tooltip using the exact same container,
-    /// anchor, hold duration (`2000 ms`), and entrance/exit curve as the Volume HUD.
+    pub fn hud_toast(&mut self, key: &str, message: &str, hold_ms: u64, now_ms: u64) {
+        self.hud_stack.trigger_toast(key, message, hold_ms, now_ms);
+    }
+
+    pub fn hud_progress_begin(
+        &mut self,
+        title: &str,
+        detail: &str,
+        progress: Option<f32>,
+        now_ms: u64,
+    ) -> u32 {
+        self.hud_stack.progress_begin(title, detail, progress, now_ms)
+    }
+
+    pub fn hud_progress_update(
+        &mut self,
+        handle: u32,
+        title: &str,
+        detail: &str,
+        progress: Option<f32>,
+        now_ms: u64,
+    ) -> bool {
+        self.hud_stack
+            .progress_update(handle, title, detail, progress, now_ms)
+    }
+
+    pub fn hud_progress_end(&mut self, handle: u32, now_ms: u64) -> bool {
+        self.hud_stack.progress_end(handle, now_ms)
+    }
+
+    pub fn hud_confirm_push(
+        &mut self,
+        question: &str,
+        detail: &str,
+        confirm_label: &str,
+        cancel_label: &str,
+        now_ms: u64,
+    ) -> u32 {
+        self.hud_stack
+            .confirm_push(question, detail, confirm_label, cancel_label, now_ms)
+    }
+
+    pub fn hud_confirm_resolve(&mut self, id: u32, now_ms: u64) -> bool {
+        self.hud_stack.confirm_resolve(id, now_ms)
+    }
+
+    pub fn hud_has_active_confirm(&self) -> bool {
+        self.hud_stack.has_active_confirm()
+    }
+
+    pub fn hud_top_confirm_id(&self) -> Option<u32> {
+        self.hud_stack.top_confirm_id()
+    }
+
+    pub fn hud_set_clock(&mut self, now_ms: u64) {
+        self.hud_stack.set_clock(now_ms);
+    }
+
+    pub fn hud_clock_ms(&self) -> u64 {
+        self.hud_stack.clock_ms()
+    }
+
+    pub fn hud_needs_tick(&mut self, now_ms: u64) -> bool {
+        self.hud_stack.needs_frame_tick(now_ms)
+    }
+
+    pub fn hud_is_visible(&mut self, now_ms: u64) -> bool {
+        self.hud_stack.is_visible(now_ms)
+    }
+
+    /// Backwards-compatible convenience aliases forwarding into `HudStack`.
+    pub fn trigger_volume_popup(&mut self, level_norm: f32, now_ms: u64) {
+        self.hud_volume(level_norm, now_ms);
+    }
+
     pub fn trigger_hud_toast(&mut self, message: &str, now_ms: u64) {
-        self.hud_popup.trigger_toast(message, now_ms);
+        self.hud_toast("", message, 0, now_ms);
     }
 
     pub fn set_volume_popup_clock(&mut self, now_ms: u64) {
-        self.hud_popup.set_clock(now_ms);
+        self.hud_set_clock(now_ms);
     }
 
     pub fn set_active_theme(&mut self, theme: ThemeColors) {
         self.last_theme = theme;
     }
 
-    /// Returns `Some(progress)` in `0.0..=1.0` while the HUD popup (volume or toast) is visible
-    /// or animating, or `None` once the 2-second hold + slide-out have completed.
-    pub fn compute_volume_popup_progress(&mut self, now_ms: u64) -> Option<f32> {
-        self.hud_popup.compute_progress(now_ms)
-    }
-
     pub fn is_volume_popup_animating(&mut self, now_ms: u64) -> bool {
-        self.hud_popup.is_animating(now_ms)
+        self.hud_needs_tick(now_ms)
     }
 
-    fn draw_hud_toast_box(&mut self, msg: &str, screen_w: f32, py: f32, pal: ResolvedTheme) {
+    fn draw_hud_toast_card(
+        &mut self,
+        line1: &str,
+        line2: &str,
+        screen_w: f32,
+        py: f32,
+        alpha: f32,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::hud_stack_spec as hs;
         use crate::layout::hud_toast_spec as ht;
 
         let semibold = self.fonts_semibold.clone();
-        let mut tp = Paint::color(pal.fg);
-        tp.set_font(&semibold);
-        tp.set_font_size(ht::FONT_SIZE);
-        tp.set_text_align(Align::Center);
-        tp.set_text_baseline(Baseline::Alphabetic);
+        let medium = self.fonts_medium.clone();
+
+        let mut tp1 = Paint::color(color_with_alpha(pal.fg, alpha));
+        tp1.set_font(&semibold);
+        tp1.set_font_size(ht::FONT_SIZE);
+        tp1.set_text_align(Align::Center);
+        tp1.set_text_baseline(Baseline::Alphabetic);
 
         let max_box_w = (screen_w - ht::SCREEN_MARGIN_X).max(ht::MIN_WIDTH);
         let max_text_w = (max_box_w - ht::INNER_INSET_X * 2.0).max(40.0);
-        let fitted = self.truncate_ellipsis(msg, max_text_w, &tp);
-        let text_w = self
+        let fitted1 = self.truncate_ellipsis(line1, max_text_w, &tp1);
+        let w1 = self
             .canvas
-            .measure_text(0.0, 0.0, &fitted, &tp)
+            .measure_text(0.0, 0.0, &fitted1, &tp1)
             .map(|m| m.width())
             .unwrap_or(200.0);
 
-        let box_w = (text_w + ht::INNER_INSET_X * 2.0)
+        if line2.is_empty() {
+            let box_w = (w1 + ht::INNER_INSET_X * 2.0)
+                .ceil()
+                .clamp(ht::MIN_WIDTH, max_box_w);
+            let px = ((screen_w - box_w) * 0.5).round();
+            draw_hud_card_frame(
+                &mut self.canvas,
+                px,
+                py,
+                box_w,
+                ht::HEIGHT,
+                ht::CORNER_RADIUS,
+                ht::STROKE_WIDTH,
+                pal.bg,
+                pal.fg2,
+                alpha,
+            );
+            let base_y = Self::text_row_baseline(py + ht::HEIGHT * 0.5, ht::FONT_SIZE);
+            let _ = self
+                .canvas
+                .fill_text(px + box_w * 0.5, base_y, &fitted1, &tp1);
+        } else {
+            let mut tp2 = Paint::color(color_with_alpha(pal.fg2, alpha));
+            tp2.set_font(&medium);
+            tp2.set_font_size(hs::TOAST_LINE2_FONT_SIZE);
+            tp2.set_text_align(Align::Center);
+            tp2.set_text_baseline(Baseline::Alphabetic);
+
+            let fitted2 = self.truncate_ellipsis(line2, max_text_w, &tp2);
+            let w2 = self
+                .canvas
+                .measure_text(0.0, 0.0, &fitted2, &tp2)
+                .map(|m| m.width())
+                .unwrap_or(160.0);
+
+            let box_w = (w1.max(w2) + ht::INNER_INSET_X * 2.0)
+                .ceil()
+                .clamp(ht::MIN_WIDTH, max_box_w);
+            let px = ((screen_w - box_w) * 0.5).round();
+            draw_hud_card_frame(
+                &mut self.canvas,
+                px,
+                py,
+                box_w,
+                hs::TOAST_TWO_LINE_HEIGHT,
+                ht::CORNER_RADIUS,
+                ht::STROKE_WIDTH,
+                pal.bg,
+                pal.fg2,
+                alpha,
+            );
+            let b1 = Self::text_row_baseline(py + hs::TOAST_LINE1_CENTER_Y, ht::FONT_SIZE);
+            let b2 =
+                Self::text_row_baseline(py + hs::TOAST_LINE2_CENTER_Y, hs::TOAST_LINE2_FONT_SIZE);
+            let _ = self.canvas.fill_text(px + box_w * 0.5, b1, &fitted1, &tp1);
+            let _ = self.canvas.fill_text(px + box_w * 0.5, b2, &fitted2, &tp2);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_hud_progress_card(
+        &mut self,
+        title: &str,
+        detail: &str,
+        progress: Option<f32>,
+        screen_w: f32,
+        py: f32,
+        alpha: f32,
+        now_ms: u64,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::hud_stack_spec as hs;
+
+        let semibold = self.fonts_semibold.clone();
+        let medium = self.fonts_medium.clone();
+
+        let max_box_w = (screen_w - hs::SCREEN_MARGIN_X).max(hs::PROGRESS_MIN_WIDTH);
+        let max_inner_w = (max_box_w - hs::PROGRESS_INNER_INSET_X * 2.0).max(120.0);
+
+        let mut tp_title = Paint::color(color_with_alpha(pal.fg, alpha));
+        tp_title.set_font(&semibold);
+        tp_title.set_font_size(hs::PROGRESS_TITLE_FONT_SIZE);
+        tp_title.set_text_baseline(Baseline::Alphabetic);
+
+        let mut tp_det = Paint::color(color_with_alpha(pal.fg2, alpha));
+        tp_det.set_font(&medium);
+        tp_det.set_font_size(hs::PROGRESS_DETAIL_FONT_SIZE);
+        tp_det.set_text_align(Align::Right);
+        tp_det.set_text_baseline(Baseline::Alphabetic);
+
+        let det_trimmed = detail.trim();
+        let det_w = if det_trimmed.is_empty() {
+            0.0
+        } else {
+            self.canvas
+                .measure_text(0.0, 0.0, det_trimmed, &tp_det)
+                .map(|m| m.width())
+                .unwrap_or(64.0)
+        };
+
+        let avail_title_w = if det_w > 0.0 {
+            (max_inner_w - det_w - hs::PROGRESS_LABEL_GAP_X).max(80.0)
+        } else {
+            max_inner_w
+        };
+        let fitted_title = self.truncate_ellipsis(title, avail_title_w, &tp_title);
+        let title_w = self
+            .canvas
+            .measure_text(0.0, 0.0, &fitted_title, &tp_title)
+            .map(|m| m.width())
+            .unwrap_or(200.0);
+
+        let content_w = if det_w > 0.0 {
+            title_w + hs::PROGRESS_LABEL_GAP_X + det_w
+        } else {
+            title_w
+        };
+        let box_w = (content_w + hs::PROGRESS_INNER_INSET_X * 2.0)
             .ceil()
-            .clamp(ht::MIN_WIDTH, max_box_w);
+            .clamp(hs::PROGRESS_MIN_WIDTH, max_box_w);
         let px = ((screen_w - box_w) * 0.5).round();
+
+        draw_hud_card_frame(
+            &mut self.canvas,
+            px,
+            py,
+            box_w,
+            hs::PROGRESS_HEIGHT,
+            hs::CORNER_RADIUS,
+            hs::STROKE_WIDTH,
+            pal.bg,
+            pal.fg2,
+            alpha,
+        );
+
+        let inner_x = px + hs::PROGRESS_INNER_INSET_X;
+        let inner_w = box_w - hs::PROGRESS_INNER_INSET_X * 2.0;
+        let label_base = Self::text_row_baseline(
+            py + hs::PROGRESS_LABEL_CENTER_Y,
+            hs::PROGRESS_TITLE_FONT_SIZE,
+        );
+
+        if det_w > 0.0 {
+            tp_title.set_text_align(Align::Left);
+            let _ = self
+                .canvas
+                .fill_text(inner_x, label_base, &fitted_title, &tp_title);
+            let det_base = Self::text_row_baseline(
+                py + hs::PROGRESS_LABEL_CENTER_Y,
+                hs::PROGRESS_DETAIL_FONT_SIZE,
+            );
+            let _ = self
+                .canvas
+                .fill_text(inner_x + inner_w, det_base, det_trimmed, &tp_det);
+        } else {
+            tp_title.set_text_align(Align::Center);
+            let _ = self.canvas.fill_text(
+                px + box_w * 0.5,
+                label_base,
+                &fitted_title,
+                &tp_title,
+            );
+        }
+
+        // 4-Shade capsule progress bar
+        let track_y = py + hs::PROGRESS_TRACK_Y;
+        let track_h = hs::PROGRESS_TRACK_HEIGHT;
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            inner_x,
+            track_y,
+            inner_w,
+            track_h,
+            track_h * 0.5,
+            hs::STROKE_WIDTH,
+            color_with_alpha(pal.fg1, alpha),
+        );
+
+        let max_fill = (inner_w - hs::STROKE_WIDTH * 2.0).max(0.0);
+        let fill_h = (track_h - hs::STROKE_WIDTH * 2.0).max(2.0);
+        let fill_c = color_with_alpha(pal.fg, alpha);
+
+        match progress {
+            Some(p) => {
+                let clamped = p.clamp(0.0, 1.0);
+                if clamped > 0.001 && max_fill >= fill_h {
+                    let fill_w = (max_fill * clamped).clamp(fill_h, max_fill);
+                    fill_rounded_rect(
+                        &mut self.canvas,
+                        inner_x + hs::STROKE_WIDTH,
+                        track_y + hs::STROKE_WIDTH,
+                        fill_w,
+                        fill_h,
+                        fill_h * 0.5,
+                        fill_c,
+                    );
+                }
+            }
+            None => {
+                if max_fill >= fill_h {
+                    let shuttle_w =
+                        (max_fill * hs::INDETERMINATE_SHUTTLE_RATIO).clamp(fill_h * 2.0, max_fill);
+                    let travel = (max_fill - shuttle_w).max(0.0);
+                    let phase = 0.5
+                        - 0.5
+                            * ((now_ms as f32 / hs::INDETERMINATE_PERIOD_MS)
+                                * std::f32::consts::TAU)
+                                .cos();
+                    let sx = inner_x + hs::STROKE_WIDTH + travel * phase;
+                    fill_rounded_rect(
+                        &mut self.canvas,
+                        sx,
+                        track_y + hs::STROKE_WIDTH,
+                        shuttle_w,
+                        fill_h,
+                        fill_h * 0.5,
+                        fill_c,
+                    );
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_hud_confirm_button(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        key_char: &str,
+        label: &str,
+        primary: bool,
+        alpha: f32,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::hud_stack_spec as hs;
+
+        let semibold = self.fonts_semibold.clone();
+        let bold = self.fonts_bold.clone();
+
+        if primary {
+            fill_rounded_rect(
+                &mut self.canvas,
+                x,
+                y,
+                w,
+                h,
+                hs::CONFIRM_BTN_RADIUS,
+                color_with_alpha(pal.fg, alpha),
+            );
+        } else {
+            draw_hud_card_frame(
+                &mut self.canvas,
+                x,
+                y,
+                w,
+                h,
+                hs::CONFIRM_BTN_RADIUS,
+                hs::CONFIRM_BTN_STROKE,
+                pal.bg,
+                pal.fg2,
+                alpha,
+            );
+        }
+
+        let mut tp_lbl = Paint::color(color_with_alpha(if primary { pal.bg } else { pal.fg }, alpha));
+        tp_lbl.set_font(&semibold);
+        tp_lbl.set_font_size(hs::CONFIRM_BTN_FONT_SIZE);
+        tp_lbl.set_text_align(Align::Left);
+        tp_lbl.set_text_baseline(Baseline::Alphabetic);
+
+        let lbl_w = self
+            .canvas
+            .measure_text(0.0, 0.0, label, &tp_lbl)
+            .map(|m| m.width())
+            .unwrap_or(64.0);
+        let group_w = hs::CONFIRM_KEY_BADGE_SIZE + hs::CONFIRM_KEY_GAP_X + lbl_w;
+        let gx = x + ((w - group_w) * 0.5).max(hs::CONFIRM_BTN_PAD_X * 0.5);
+        let ky = y + (h - hs::CONFIRM_KEY_BADGE_SIZE) * 0.5;
 
         fill_rounded_rect(
             &mut self.canvas,
-            px,
-            py,
-            box_w,
-            ht::HEIGHT,
-            ht::CORNER_RADIUS,
-            pal.bg,
+            gx,
+            ky,
+            hs::CONFIRM_KEY_BADGE_SIZE,
+            hs::CONFIRM_KEY_BADGE_SIZE,
+            hs::CONFIRM_KEY_BADGE_RADIUS,
+            color_with_alpha(if primary { pal.bg } else { pal.fg2 }, alpha),
         );
-        stroke_rounded_rect_inside(
+
+        let mut tp_key = Paint::color(color_with_alpha(if primary { pal.fg } else { pal.bg }, alpha));
+        tp_key.set_font(&bold);
+        tp_key.set_font_size(hs::CONFIRM_KEY_BADGE_FONT_SIZE);
+        tp_key.set_text_align(Align::Center);
+        tp_key.set_text_baseline(Baseline::Alphabetic);
+
+        let key_base =
+            Self::text_row_baseline(y + h * 0.5, hs::CONFIRM_KEY_BADGE_FONT_SIZE);
+        let _ = self.canvas.fill_text(
+            gx + hs::CONFIRM_KEY_BADGE_SIZE * 0.5,
+            key_base,
+            key_char,
+            &tp_key,
+        );
+
+        let lbl_base = Self::text_row_baseline(y + h * 0.5, hs::CONFIRM_BTN_FONT_SIZE);
+        let _ = self.canvas.fill_text(
+            gx + hs::CONFIRM_KEY_BADGE_SIZE + hs::CONFIRM_KEY_GAP_X,
+            lbl_base,
+            label,
+            &tp_lbl,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_hud_confirm_card(
+        &mut self,
+        question: &str,
+        detail: &str,
+        confirm_label: &str,
+        cancel_label: &str,
+        screen_w: f32,
+        py: f32,
+        alpha: f32,
+        pal: ResolvedTheme,
+    ) {
+        use crate::layout::hud_stack_spec as hs;
+
+        let semibold = self.fonts_semibold.clone();
+        let medium = self.fonts_medium.clone();
+
+        let has_detail = !detail.trim().is_empty();
+        let box_h = if has_detail {
+            hs::CONFIRM_HEIGHT_DETAIL
+        } else {
+            hs::CONFIRM_HEIGHT_SINGLE
+        };
+        let max_box_w = (screen_w - hs::SCREEN_MARGIN_X).max(hs::CONFIRM_MIN_WIDTH);
+        let max_inner_w = (max_box_w - hs::CONFIRM_INNER_INSET_X * 2.0).max(200.0);
+
+        let mut tp_q = Paint::color(color_with_alpha(pal.fg, alpha));
+        tp_q.set_font(&semibold);
+        tp_q.set_font_size(hs::CONFIRM_QUESTION_FONT_SIZE);
+        tp_q.set_text_align(Align::Center);
+        tp_q.set_text_baseline(Baseline::Alphabetic);
+
+        let fitted_q = self.truncate_ellipsis(question, max_inner_w, &tp_q);
+        let q_w = self
+            .canvas
+            .measure_text(0.0, 0.0, &fitted_q, &tp_q)
+            .map(|m| m.width())
+            .unwrap_or(240.0);
+
+        let mut tp_d = Paint::color(color_with_alpha(pal.fg2, alpha));
+        tp_d.set_font(&medium);
+        tp_d.set_font_size(hs::CONFIRM_DETAIL_FONT_SIZE);
+        tp_d.set_text_align(Align::Center);
+        tp_d.set_text_baseline(Baseline::Alphabetic);
+
+        let (fitted_d, d_w) = if has_detail {
+            let fd = self.truncate_ellipsis(detail, max_inner_w, &tp_d);
+            let dw = self
+                .canvas
+                .measure_text(0.0, 0.0, &fd, &tp_d)
+                .map(|m| m.width())
+                .unwrap_or(0.0);
+            (fd, dw)
+        } else {
+            (String::new(), 0.0)
+        };
+
+        let mut tp_btn_meas = Paint::color(pal.fg);
+        tp_btn_meas.set_font(&semibold);
+        tp_btn_meas.set_font_size(hs::CONFIRM_BTN_FONT_SIZE);
+        let c_lbl_w = self
+            .canvas
+            .measure_text(0.0, 0.0, cancel_label, &tp_btn_meas)
+            .map(|m| m.width())
+            .unwrap_or(80.0);
+        let a_lbl_w = self
+            .canvas
+            .measure_text(0.0, 0.0, confirm_label, &tp_btn_meas)
+            .map(|m| m.width())
+            .unwrap_or(80.0);
+        let btn_overhead =
+            hs::CONFIRM_KEY_BADGE_SIZE + hs::CONFIRM_KEY_GAP_X + hs::CONFIRM_BTN_PAD_X * 2.0;
+        let btn_w = (c_lbl_w.max(a_lbl_w) + btn_overhead)
+            .ceil()
+            .max(hs::CONFIRM_BTN_MIN_WIDTH);
+        let btns_total_w = btn_w * 2.0 + hs::CONFIRM_BTN_GAP_X;
+
+        let inner_need = q_w.max(d_w).max(btns_total_w);
+        let box_w = (inner_need + hs::CONFIRM_INNER_INSET_X * 2.0)
+            .ceil()
+            .clamp(hs::CONFIRM_MIN_WIDTH, max_box_w);
+        let px = ((screen_w - box_w) * 0.5).round();
+
+        draw_hud_card_frame(
             &mut self.canvas,
             px,
             py,
             box_w,
-            ht::HEIGHT,
-            ht::CORNER_RADIUS,
-            ht::STROKE_WIDTH,
+            box_h,
+            hs::CORNER_RADIUS,
+            hs::STROKE_WIDTH,
+            pal.bg,
             pal.fg2,
+            alpha,
         );
 
-        let base_y = Self::text_row_baseline(py + ht::HEIGHT * 0.5, ht::FONT_SIZE);
-        let _ = self
-            .canvas
-            .fill_text(px + box_w * 0.5, base_y, &fitted, &tp);
+        let cx = px + box_w * 0.5;
+        if has_detail {
+            let d_base =
+                Self::text_row_baseline(py + hs::CONFIRM_DETAIL_CENTER_Y, hs::CONFIRM_DETAIL_FONT_SIZE);
+            let q_base = Self::text_row_baseline(
+                py + hs::CONFIRM_QUESTION_DETAIL_CENTER_Y,
+                hs::CONFIRM_QUESTION_FONT_SIZE,
+            );
+            let _ = self.canvas.fill_text(cx, d_base, &fitted_d, &tp_d);
+            let _ = self.canvas.fill_text(cx, q_base, &fitted_q, &tp_q);
+        } else {
+            let q_base = Self::text_row_baseline(
+                py + hs::CONFIRM_QUESTION_SINGLE_CENTER_Y,
+                hs::CONFIRM_QUESTION_FONT_SIZE,
+            );
+            let _ = self.canvas.fill_text(cx, q_base, &fitted_q, &tp_q);
+        }
+
+        let eff_btn_w = btn_w.min((box_w - hs::CONFIRM_INNER_INSET_X * 2.0 - hs::CONFIRM_BTN_GAP_X) * 0.5);
+        let row_w = eff_btn_w * 2.0 + hs::CONFIRM_BTN_GAP_X;
+        let row_x = px + (box_w - row_w) * 0.5;
+        let btn_y = py + box_h - hs::CONFIRM_BTN_BOTTOM_INSET - hs::CONFIRM_BTN_HEIGHT;
+
+        self.draw_hud_confirm_button(
+            row_x,
+            btn_y,
+            eff_btn_w,
+            hs::CONFIRM_BTN_HEIGHT,
+            "B",
+            cancel_label,
+            false,
+            alpha,
+            pal,
+        );
+        self.draw_hud_confirm_button(
+            row_x + eff_btn_w + hs::CONFIRM_BTN_GAP_X,
+            btn_y,
+            eff_btn_w,
+            hs::CONFIRM_BTN_HEIGHT,
+            "A",
+            confirm_label,
+            true,
+            alpha,
+            pal,
+        );
     }
 
-    fn draw_volume_popup_on_screen_internal(&mut self, win_w: u32, win_h: u32, now_ms: u64) {
-        use crate::layout::hud_toast_spec as ht;
+    fn draw_single_hud_item(
+        &mut self,
+        item: &HudRenderItem,
+        screen_w: f32,
+        now_ms: u64,
+        pal: ResolvedTheme,
+    ) {
         use crate::layout::volume_popup_spec as vp;
 
-        let Some(prog) = self.compute_volume_popup_progress(now_ms) else {
-            return;
-        };
-        let m = LogicalMetrics::from_physical(win_w, win_h);
-        let pal = resolve_theme(self.last_theme);
-        let py = ht::HIDDEN_Y + (ht::REST_Y - ht::HIDDEN_Y) * prog;
-
-        self.canvas.reset_transform();
-        self.canvas.reset_scissor();
-        self.canvas.scale(m.scale_x, m.scale_y);
-        match self.hud_popup.payload.clone() {
-            HudPopupPayload::Volume(level) => {
-                let px = (m.screen_w - vp::WIDTH) * 0.5;
-                draw_volume_popup(
+        match &item.payload {
+            HudCardPayload::Volume { level_norm } => {
+                let px = ((screen_w - vp::WIDTH) * 0.5).round();
+                draw_volume_popup_alpha(
                     &mut self.canvas,
                     px,
-                    py,
-                    level,
+                    item.y,
+                    *level_norm,
                     pal.bg,
                     pal.fg,
                     pal.fg1,
                     pal.fg2,
+                    item.opacity,
                 );
             }
-            HudPopupPayload::Toast(msg) => {
-                self.draw_hud_toast_box(&msg, m.screen_w, py, pal);
+            HudCardPayload::Toast { line1, line2, .. } => {
+                self.draw_hud_toast_card(line1, line2, screen_w, item.y, item.opacity, pal);
             }
+            HudCardPayload::Progress {
+                title,
+                detail,
+                progress,
+                ..
+            } => {
+                self.draw_hud_progress_card(
+                    title,
+                    detail,
+                    *progress,
+                    screen_w,
+                    item.y,
+                    item.opacity,
+                    now_ms,
+                    pal,
+                );
+            }
+            HudCardPayload::Confirmation {
+                question,
+                detail,
+                confirm_label,
+                cancel_label,
+                ..
+            } => {
+                self.draw_hud_confirm_card(
+                    question,
+                    detail,
+                    confirm_label,
+                    cancel_label,
+                    screen_w,
+                    item.y,
+                    item.opacity,
+                    pal,
+                );
+            }
+        }
+    }
+
+    fn draw_hud_stack_on_screen_internal(&mut self, win_w: u32, win_h: u32, now_ms: u64) {
+        let items = self.hud_stack.collect_render_items(now_ms);
+        if items.is_empty() {
+            return;
+        }
+        let m = LogicalMetrics::from_physical(win_w, win_h);
+        let pal = resolve_theme(self.last_theme);
+
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+        self.canvas.scale(m.scale_x, m.scale_y);
+        for item in &items {
+            self.draw_single_hud_item(item, m.screen_w, now_ms, pal);
         }
         self.canvas.reset_transform();
     }
 
-    /// Draws the HUD popup directly onto `RenderTarget::Screen` over an already-rendered frame
-    /// (such as the 4-shade GPU visualizer) without clearing the backbuffer.
+    /// Draws the Unified Stacked HUD directly onto `RenderTarget::Screen` over an already-rendered
+    /// frame (such as the 4-shade GPU visualizer or legacy surface) without clearing the backbuffer.
     pub fn render_volume_popup_over_screen(
         &mut self,
         win_w: u32,
@@ -3281,14 +3744,14 @@ impl UiEngine {
         now_ms: u64,
     ) -> bool {
         self.last_theme = theme;
-        if !self.is_volume_popup_animating(now_ms) {
+        if !self.hud_is_visible(now_ms) {
             return false;
         }
         let sw = win_w.max(1);
         let sh = win_h.max(1);
         self.canvas.set_size(sw, sh, 1.0);
         self.canvas.set_render_target(RenderTarget::Screen);
-        self.draw_volume_popup_on_screen_internal(sw, sh, now_ms);
+        self.draw_hud_stack_on_screen_internal(sw, sh, now_ms);
         self.canvas.flush();
         self.canvas
             .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
@@ -3297,7 +3760,7 @@ impl UiEngine {
     }
 
     /// Zero-copy GPU presentation: flushes `self.fbo_image` and blits it straight to
-    /// `RenderTarget::Screen` at `(win_w, win_h)`.
+    /// `RenderTarget::Screen` at `(win_w, win_h)`, compositing the Unified Stacked HUD on top.
     pub fn plugin_present_gpu_screen(&mut self, win_w: u32, win_h: u32) {
         self.canvas.reset_scissor();
         self.canvas.flush();
@@ -3313,7 +3776,8 @@ impl UiEngine {
         let mut quad = VgPath::new();
         quad.rect(0.0, 0.0, sw as f32, sh as f32);
         self.canvas.fill_path(&quad, &paint);
-        self.draw_volume_popup_on_screen_internal(sw, sh, self.hud_popup.clock_ms);
+        let now_ms = self.hud_stack.clock_ms();
+        self.draw_hud_stack_on_screen_internal(sw, sh, now_ms);
         self.canvas.flush();
 
         self.canvas
@@ -3466,41 +3930,39 @@ mod tests {
 
     #[test]
     fn hud_toast_shares_volume_popup_timing_and_coexists_smoothly() {
-        let mut vol = HudPopupState::default();
-        let mut toast = HudPopupState::default();
+        let mut vol = HudStack::default();
+        let mut toast = HudStack::default();
 
         vol.trigger_volume(0.65, 1000);
-        toast.trigger_toast("Nothing to resume", 1000);
+        toast.trigger_toast("", "Nothing to resume", 2000, 1000);
 
         // Exact 1:1 entrance (0..180ms), hold (180..2000ms), and exit (2000..2200ms) curve parity
         for &t in &[1000u64, 1060, 1120, 1180, 2000, 2999, 3050, 3150, 3200] {
-            let vp = vol.compute_progress(t);
-            let tp = toast.compute_progress(t);
-            match (vp, tp) {
-                (Some(a), Some(b)) => assert!((a - b).abs() < 1e-6, "curve mismatch at t={t}"),
-                (None, None) => {}
-                other => panic!("state mismatch at t={t}: {other:?}"),
+            let vp = vol.collect_render_items(t);
+            let tp = toast.collect_render_items(t);
+            assert_eq!(vp.len(), tp.len(), "count mismatch at t={t}");
+            if let (Some(a), Some(b)) = (vp.first(), tp.first()) {
+                assert!((a.y - b.y).abs() < 1e-5, "y curve mismatch at t={t}");
+                assert!(
+                    (a.opacity - b.opacity).abs() < 1e-5,
+                    "opacity curve mismatch at t={t}"
+                );
             }
         }
-        assert!(!toast.is_animating(3205));
+        assert!(!toast.is_visible(3205));
 
-        // Repeated toast triggers while resting keep progress pinned at 1.0 and extend hold
-        let mut hud = HudPopupState::default();
-        hud.trigger_toast("Nothing to resume", 5000);
-        assert!((hud.compute_progress(5500).unwrap() - 1.0).abs() < 1e-6);
-        hud.trigger_toast("Nothing to resume", 6800);
-        assert!((hud.compute_progress(6800).unwrap() - 1.0).abs() < 1e-6);
-        assert!((hud.compute_progress(8700).unwrap() - 1.0).abs() < 1e-6);
+        // Repeated toast triggers with identical key keep position pinned at REST_Y and extend hold
+        let mut hud = HudStack::default();
+        hud.trigger_toast("", "Nothing to resume", 2000, 5000);
+        assert!((hud.collect_render_items(5500)[0].y - 22.0).abs() < 1e-5);
+        hud.trigger_toast("", "Nothing to resume", 2000, 6800);
+        assert!((hud.collect_render_items(6800)[0].y - 22.0).abs() < 1e-5);
+        assert!((hud.collect_render_items(8700)[0].y - 22.0).abs() < 1e-5);
 
-        // Adjusting volume while toast is mid-exit replaces payload smoothly without progress jump
-        let prog_mid_exit = hud.compute_progress(8900).expect("still sliding out");
-        assert!(prog_mid_exit > 0.1 && prog_mid_exit < 0.99);
-        hud.trigger_volume(0.5, 8900);
-        assert_eq!(hud.payload, HudPopupPayload::Volume(0.5));
-        let prog_after_replace = hud.compute_progress(8900).expect("volume active");
-        assert!(
-            (prog_after_replace - prog_mid_exit).abs() < 0.02,
-            "expected smooth continuity ({prog_mid_exit} -> {prog_after_replace})"
-        );
+        // Adjusting volume while toast is active stacks Volume at index 0 and pushes Toast down to index 1!
+        hud.trigger_volume(0.5, 7500);
+        assert_eq!(hud.active_count(), 2);
+        assert!(hud.active_payload_at(0).unwrap().is_volume());
+        assert!(hud.active_payload_at(1).unwrap().is_toast());
     }
 }

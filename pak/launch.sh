@@ -28,11 +28,11 @@ fi
 # Rewrite bundled theme cfgs from the canonical /.rockbox to the live bind path,
 # and migrate any pre-rename /tmp/trimpod or pre-HiDPI config.cfg references seamlessly.
 for theme in "$RBDIR"/themes/*.cfg; do
-  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/uipod#g; s#/tmp/trimpod#/tmp/uipod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g' "$theme"
+  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/uipod#g; s#/tmp/trimpod#/tmp/uipod#g; s#^font: .*Geologica\.fnt$#font: -#; s#^font: .*24-ChicagoFLF\.fnt$#font: -#' "$theme"
 done
 for cfg in "$RBDIR/config.cfg" "$HOME/.config/rockbox.org/config.cfg"; do
   if [ -f "$cfg" ]; then
-    sed -i 's#/tmp/trimpod#/tmp/uipod#g; s/24-ChicagoFLF\.fnt/76-Geologica.fnt/g; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
+    sed -i 's#/tmp/trimpod#/tmp/uipod#g; s#^font: .*Geologica\.fnt$#font: -#; s#^font: .*24-ChicagoFLF\.fnt$#font: -#; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
   fi
 done
 

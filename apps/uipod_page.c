@@ -225,7 +225,7 @@ void uipod_page_run(struct uipod_page *page)
         if (uipod_transition_take_back())
             /* a nested page just exited: slide it out, us back in (L->R) */
             uipod_transition_animate(UIPOD_TRANS_BACK, page_render_cb, page);
-        else if (page->animated)   /* static pages redraw on change, not per tick */
+        else if (page->animated || action != ACTION_NONE)
             page_render(page);
     }
 

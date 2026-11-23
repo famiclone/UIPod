@@ -553,19 +553,50 @@ static void overlay_update(void)
     retrohh_video_set_overlay(true, rows);
     if (panel != PANEL_NONE)
     {
-        struct screen *display = &screens[SCREEN_MAIN];
-
-        panel_viewport(display, 0, STRIP_TOP, LCD_WIDTH, STRIP_ROWS);
-        display->clear_viewport();
+        bool rendered_gpu = false;
         if (panel == PANEL_VOLUME)
-            draw_volume(display);
+        {
+            char label[32];
+            int minvol = sound_min(SOUND_VOLUME), maxvol = sound_max(SOUND_VOLUME);
+            float vnorm = (float)to_normalized_volume(global_status.volume, minvol, maxvol, 1000) / 1000.0f;
+            snprintf(label, sizeof label, "%s %d/%d", str(LANG_VOLUME),
+                     get_normalized_volume(), get_normalized_volume_steps());
+            rendered_gpu = uipod_gpu_render_video_overlay(2, vnorm, NULL, label, NULL, NULL, NULL);
+        }
         else
-            draw_progress(display);
-        display->set_viewport(NULL);
+        {
+            char elapsed[16], remaining[16];
+            int position = display_position();
+            float pnorm = (v.duration_ms > 0) ? ((float)position / (float)v.duration_ms) : 0.0f;
+            format_time(elapsed, sizeof elapsed, position);
+            format_time(remaining + 1, sizeof remaining - 1, v.duration_ms - position);
+            remaining[0] = '-';
+            const char *center = TIME_BEFORE(current_tick, v.aspect_label_until) ? aspect_label() : NULL;
+            rendered_gpu = uipod_gpu_render_video_overlay(1, pnorm, elapsed, center, remaining, NULL, NULL);
+        }
+
+        if (!rendered_gpu)
+        {
+            struct screen *display = &screens[SCREEN_MAIN];
+
+            panel_viewport(display, 0, STRIP_TOP, LCD_WIDTH, STRIP_ROWS);
+            display->clear_viewport();
+            if (panel == PANEL_VOLUME)
+                draw_volume(display);
+            else
+                draw_progress(display);
+            display->set_viewport(NULL);
+        }
     }
     else if (cue_idx >= 0)
     {
-        draw_subtitle_cue(&screens[SCREEN_MAIN], &s_srt_cues[cue_idx]);
+        const struct srt_cue *cue = &s_srt_cues[cue_idx];
+        if (!uipod_gpu_render_video_overlay(3, 0.0f, NULL, NULL, NULL,
+                                            cue->line1,
+                                            cue->line2[0] ? cue->line2 : NULL))
+        {
+            draw_subtitle_cue(&screens[SCREEN_MAIN], cue);
+        }
     }
     screens[SCREEN_MAIN].update();
 }

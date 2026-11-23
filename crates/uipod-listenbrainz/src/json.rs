@@ -284,9 +284,22 @@ fn extract_i32_field(json: &[u8], key: &str) -> Option<i32> {
 }
 
 pub fn extract_error_message(body: &[u8]) -> Option<String> {
+    let start = skip_ws(body, 0);
+    if start >= body.len() || body[start] != b'{' {
+        return None;
+    }
     extract_string_field(body, "error")
         .or_else(|| extract_string_field(body, "message"))
-        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Parse ListenBrainz JSON error payload (`{"code": 401, "error": "..."}`) on non-2xx responses.
+/// Returns `None` if the body is not a JSON error object (e.g. HTML 404/proxy page).
+pub fn decode_error_body(body: &[u8]) -> Option<LbApiError> {
+    let message = extract_error_message(body)?;
+    let code = extract_i32_field(body, "code").unwrap_or(0);
+    Some(LbApiError { code, message })
 }
 
 pub fn decode_validate_token(body: &[u8]) -> Result<ValidateTokenResponse, LbApiError> {

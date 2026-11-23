@@ -58,6 +58,71 @@ pub mod hud_toast_spec {
     pub const SLIDE_OUT_MS: f32 = 200.0;
 }
 
+/// Declarative layout spec for the Unified Stacked HUD System (`Volume`, `Toast`, `Progress`, `Confirmation`).
+pub mod hud_stack_spec {
+    use super::hud_toast_spec as ht;
+    use super::volume_popup_spec as vp;
+
+    // Shared stack container & motion choreography
+    pub const REST_Y: f32 = vp::REST_Y;
+    pub const CARD_GAP_Y: f32 = 12.0;
+    pub const MAX_VISIBLE_CARDS: usize = 4;
+    pub const CORNER_RADIUS: f32 = vp::CORNER_RADIUS;
+    pub const STROKE_WIDTH: f32 = vp::STROKE_WIDTH;
+    pub const SCREEN_MARGIN_X: f32 = ht::SCREEN_MARGIN_X;
+
+    pub const SLIDE_IN_MS: f32 = ht::SLIDE_IN_MS;
+    pub const DEFAULT_HOLD_MS: u64 = ht::HOLD_MS;
+    pub const EXIT_TOP_MS: f32 = ht::SLIDE_OUT_MS;
+    pub const EXIT_FADE_MS: f32 = 180.0;
+    pub const REFLOW_TAU_MS: f32 = 65.0;
+    pub const HIDDEN_TOP_PAD: f32 = 8.0;
+
+    // Two-line Toast card variant
+    pub const TOAST_TWO_LINE_HEIGHT: f32 = 108.0;
+    pub const TOAST_LINE1_CENTER_Y: f32 = 36.0;
+    pub const TOAST_LINE2_CENTER_Y: f32 = 74.0;
+    pub const TOAST_LINE2_FONT_SIZE: f32 = 28.0;
+
+    // Progress card (`begin` / `update` / `end`)
+    pub const PROGRESS_MIN_WIDTH: f32 = vp::WIDTH;
+    pub const PROGRESS_HEIGHT: f32 = 104.0;
+    pub const PROGRESS_PAD_X: f32 = 20.0;
+    pub const PROGRESS_INNER_INSET_X: f32 = STROKE_WIDTH + PROGRESS_PAD_X;
+    pub const PROGRESS_LABEL_CENTER_Y: f32 = 36.0;
+    pub const PROGRESS_TITLE_FONT_SIZE: f32 = 30.0;
+    pub const PROGRESS_DETAIL_FONT_SIZE: f32 = 26.0;
+    pub const PROGRESS_LABEL_GAP_X: f32 = 16.0;
+    pub const PROGRESS_TRACK_Y: f32 = 66.0;
+    pub const PROGRESS_TRACK_HEIGHT: f32 = vp::TRACK_HEIGHT;
+    pub const INDETERMINATE_SHUTTLE_RATIO: f32 = 0.28;
+    pub const INDETERMINATE_PERIOD_MS: f32 = 1350.0;
+
+    // Confirmation card (`[B] Cancel` / `[A] Confirm`)
+    pub const CONFIRM_MIN_WIDTH: f32 = vp::WIDTH;
+    pub const CONFIRM_HEIGHT_SINGLE: f32 = 148.0;
+    pub const CONFIRM_HEIGHT_DETAIL: f32 = 184.0;
+    pub const CONFIRM_PAD_X: f32 = 24.0;
+    pub const CONFIRM_INNER_INSET_X: f32 = STROKE_WIDTH + CONFIRM_PAD_X;
+    pub const CONFIRM_DETAIL_CENTER_Y: f32 = 36.0;
+    pub const CONFIRM_DETAIL_FONT_SIZE: f32 = 24.0;
+    pub const CONFIRM_QUESTION_SINGLE_CENTER_Y: f32 = 46.0;
+    pub const CONFIRM_QUESTION_DETAIL_CENTER_Y: f32 = 74.0;
+    pub const CONFIRM_QUESTION_FONT_SIZE: f32 = 32.0;
+    pub const CONFIRM_BTN_BOTTOM_INSET: f32 = 20.0;
+    pub const CONFIRM_BTN_HEIGHT: f32 = 44.0;
+    pub const CONFIRM_BTN_MIN_WIDTH: f32 = 196.0;
+    pub const CONFIRM_BTN_GAP_X: f32 = 16.0;
+    pub const CONFIRM_BTN_PAD_X: f32 = 16.0;
+    pub const CONFIRM_BTN_RADIUS: f32 = 10.0;
+    pub const CONFIRM_BTN_STROKE: f32 = 2.5;
+    pub const CONFIRM_BTN_FONT_SIZE: f32 = 25.0;
+    pub const CONFIRM_KEY_BADGE_SIZE: f32 = 26.0;
+    pub const CONFIRM_KEY_BADGE_RADIUS: f32 = 6.0;
+    pub const CONFIRM_KEY_BADGE_FONT_SIZE: f32 = 19.0;
+    pub const CONFIRM_KEY_GAP_X: f32 = 10.0;
+}
+
 /// Declarative layout spec (`256x256` normalized coordinates, scaled uniformly to `art_box`)
 /// for procedural 4-shade Famicom HVC cartridge artwork (`Now Playing` & `Now Playing Alt`).
 pub mod famicom_cart_spec {

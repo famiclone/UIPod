@@ -64,6 +64,7 @@
 #include "uipod_midi.h"
 #include "uipod_nsf_ui.h"
 #include "uipod_rs_codecs.h"
+#include "uipod_rs_ui.h"
 #include "uipod_ui.h"
 #include "statusbar-skinned.h"
 #include "skin_engine/wps_internals.h"
@@ -557,6 +558,15 @@ static void np_sleep_cycle(void *ctx, int dir)       /* resets + arms live */
     if (idx < 0) idx = 0;
     if (idx >= NP_SLEEP_N) idx = NP_SLEEP_N - 1;
     set_sleeptimer_duration(np_sleep_min[idx]);      /* 0 = Off/disarm */
+
+    char toast_msg[96];
+    if (np_sleep_min[idx] <= 0)
+        snprintf(toast_msg, sizeof(toast_msg), "%s: %s",
+                 str(LANG_SLEEP_TIMER), str(LANG_OFF));
+    else
+        snprintf(toast_msg, sizeof(toast_msg), "%s: %dm",
+                 str(LANG_SLEEP_TIMER), np_sleep_min[idx]);
+    uipod_hud_toast_ex("sleep_timer", toast_msg, 1800);
 }
 
 static const struct menu_value_cb np_sleep_value =

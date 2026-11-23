@@ -146,6 +146,60 @@ enum yesno_res gui_syncyesno_run_w_tmo(int ticks, enum yesno_res tmo_default_res
                                        const struct text_message * yes_message,
                                        const struct text_message * no_message)
 {
+    if (main_message && main_message->nb_lines > 0 &&
+        (uipod_rs_ui_is_ready() || uipod_gpu_ui_ensure_ready()))
+    {
+        char q_buf[256] = "";
+        char d_buf[256] = "";
+        const char *l0 = (const char *)P2STR((unsigned char *)main_message->message_lines[0]);
+        if (main_message->nb_lines >= 2)
+        {
+            const char *l1 = (const char *)P2STR((unsigned char *)main_message->message_lines[1]);
+            /* When line 0 is "Are you sure?" / "Really delete?" and line 1 is the subject,
+             * place the subject in `detail` above the question to match UIPod Confirm cards. */
+            snprintf(q_buf, sizeof(q_buf), "%s", l0 ? l0 : "");
+            snprintf(d_buf, sizeof(d_buf), "%s", l1 ? l1 : "");
+        }
+        else
+        {
+            snprintf(q_buf, sizeof(q_buf), "%s", l0 ? l0 : "");
+            if (title && title[0])
+            {
+                const char *t_str = (const char *)P2STR((unsigned char *)title);
+                snprintf(d_buf, sizeof(d_buf), "%s", t_str ? t_str : "");
+            }
+        }
+
+        int hud_def = -1;
+        if (ticks >= HZ)
+        {
+            if (tmo_default_res == YESNO_YES)
+                hud_def = UIPOD_CONFIRM_YES;
+            else if (tmo_default_res == YESNO_NO)
+                hud_def = UIPOD_CONFIRM_NO;
+        }
+
+        int r = uipod_hud_confirm_ex(q_buf, d_buf[0] ? d_buf : NULL, ticks, hud_def);
+        if (r == UIPOD_CONFIRM_USB)
+            return YESNO_USB;
+
+        enum yesno_res yn_res = (r == UIPOD_CONFIRM_YES) ? YESNO_YES : YESNO_NO;
+        const struct text_message *resmsg =
+            (yn_res == YESNO_YES) ? yes_message : no_message;
+        if (resmsg && resmsg->nb_lines > 0)
+        {
+            /* Omit redundant "Cancelled" toast on negative response; show positive feedback */
+            if (yn_res == YESNO_YES)
+            {
+                const char * last_line = (const char *)P2STR(
+                    (unsigned char *)resmsg->message_lines[resmsg->nb_lines - 1]);
+                if (last_line && last_line[0])
+                    uipod_hud_toast(last_line);
+            }
+        }
+        return yn_res;
+    }
+
     #define YESNO_NONE (-1)
     int action;
     bool backlight_on;
@@ -270,8 +324,11 @@ static bool yesno_pop_lines(const char *lines[], int line_cnt)
 {
     const struct text_message message={lines, line_cnt};
     bool ret = (gui_syncyesno_run(&message,NULL,NULL)== YESNO_YES);
-    FOR_NB_SCREENS(i)
-        screens[i].clear_viewport();
+    if (!uipod_gpu_is_active())
+    {
+        FOR_NB_SCREENS(i)
+            screens[i].clear_viewport();
+    }
     return ret;
 }
 
@@ -284,17 +341,9 @@ bool yesno_pop(const char* text)
 
 /* YES/NO dialog, asks "Are you sure?", displays
    text parameter on second line.
-
-   Says "Cancelled" if answered negatively.
 */
 bool yesno_pop_confirm(const char* text)
 {
-    bool confirmed;
     const char *lines[] = {ID2P(LANG_ARE_YOU_SURE), text};
-    confirmed = yesno_pop_lines(lines, 2);
-
-    if (!confirmed)
-        splash(HZ, ID2P(LANG_CANCEL));
-
-    return confirmed;
+    return yesno_pop_lines(lines, 2);
 }

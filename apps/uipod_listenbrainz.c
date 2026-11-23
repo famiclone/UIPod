@@ -172,9 +172,41 @@ static bool lb_save_config_to_disk(void)
     return ok;
 }
 
+static bool lb_file_mtime(const char *path, time_t *out_mtime)
+{
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 0)
+    {
+        *out_mtime = st.st_mtime;
+        return true;
+    }
+    return false;
+}
+
 static void lb_load_or_import_config(void)
 {
     char ini[2048];
+    time_t rb_mtime = 0, sd1_mtime = 0, sd2_mtime = 0;
+    bool has_rb  = lb_file_mtime(LB_CFG_RB, &rb_mtime);
+    bool has_sd1 = lb_file_mtime(LB_CFG_SD_1, &sd1_mtime);
+    bool has_sd2 = lb_file_mtime(LB_CFG_SD_2, &sd2_mtime);
+
+    /* If the user placed a newer `listenbrainz.cfg` on the SD card, prefer it over stale cache */
+    const char *newer_sd = NULL;
+    if (has_sd1 && (!has_rb || sd1_mtime > rb_mtime))
+        newer_sd = LB_CFG_SD_1;
+    else if (has_sd2 && (!has_rb || sd2_mtime > rb_mtime))
+        newer_sd = LB_CFG_SD_2;
+
+    if (newer_sd && lb_read_text_file(newer_sd, ini, sizeof(ini)))
+    {
+        if (tp_listenbrainz_load_config_text(ini) && tp_listenbrainz_has_token())
+        {
+            lb_save_config_to_disk();
+            return;
+        }
+    }
+
     if (lb_read_text_file(LB_CFG_RB, ini, sizeof(ini)))
     {
         tp_listenbrainz_load_config_text(ini);
@@ -278,6 +310,8 @@ static void *lb_worker_main(void *arg)
         int32_t rc = tp_listenbrainz_sync_now(lb_unix_now(), &cfg_updated, err, sizeof(err));
         if (cfg_updated)
             lb_save_config_to_disk();
+        if (rc < 0 && err[0])
+            fprintf(stderr, "[listenbrainz] sync failed (rc=%d): %s\n", (int)rc, err);
 
         pthread_mutex_lock(&s_lb_mtx);
         if (rc >= 0)
@@ -505,7 +539,7 @@ static bool lb_validate_and_persist(TpLbConfigC *cfg, bool show_splash)
         return false;
     }
 
-    uipod_fullscreen_message(str(LANG_UIPOD_LB_SYNCING), NULL);
+    uint32_t val_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_LB_SYNCING), NULL);
 
     char err[160];
     err[0] = '\0';
@@ -523,11 +557,13 @@ static bool lb_validate_and_persist(TpLbConfigC *cfg, bool show_splash)
             else
                 splash(HZ, ID2P(LANG_UIPOD_LFM_SIGNED_IN));
         }
+        uipod_hud_progress_end(val_hud);
         return true;
     }
 
     if (show_splash)
         splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+    uipod_hud_progress_end(val_hud);
     return false;
 }
 
@@ -775,13 +811,18 @@ static enum uipod_page_result lb_on_action(struct uipod_page *self, int action)
                 splash(HZ, ID2P(LANG_UIPOD_LFM_NOT_SIGNED_IN));
                 break;
             }
+            if (tp_listenbrainz_is_token_invalid())
+            {
+                if (!lb_validate_and_persist(&p->cfg, true))
+                    break;
+            }
             if (tp_listenbrainz_cached_count() == 0)
             {
                 splash(HZ, ID2P(LANG_UIPOD_LFM_SYNC_EMPTY));
                 break;
             }
 
-            uipod_fullscreen_message(str(LANG_UIPOD_LB_SYNCING), NULL);
+            uint32_t sync_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_LB_SYNCING), NULL);
             bool cfg_upd = false;
             char err[160];
             err[0] = '\0';
@@ -793,6 +834,7 @@ static enum uipod_page_result lb_on_action(struct uipod_page *self, int action)
                 splashf(HZ * 3 / 2, str(LANG_UIPOD_LFM_SYNC_DONE), (int)flushed);
             else
                 splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+            uipod_hud_progress_end(sync_hud);
             break;
         }
 

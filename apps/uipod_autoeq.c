@@ -33,6 +33,7 @@
 #include "uipod_page.h"
 #include "uipod_transition.h"
 #include "uipod_keyboard.h"
+#include "uipod_rs_ui.h"
 #include "uipod_ui.h"
 #include "uipod_autoeq.h"
 
@@ -789,7 +790,7 @@ static bool encode_plus_segment(const char *src, char *dst, size_t cap)
 static bool autoeq_refresh_database(void)
 {
     ensure_dir_exists(AUTOEQ_DIR);
-    splash(0, ID2P(LANG_UIPOD_AUTOEQ_DOWNLOADING));
+    uint32_t dl_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_AUTOEQ_DOWNLOADING), NULL);
 
     bool ok = false;
     for (int step = 0; step < AUTOEQ_MIRROR_COUNT; step++)
@@ -815,6 +816,7 @@ static bool autoeq_refresh_database(void)
     if (!ok)
     {
         splashf(HZ * 5 / 2, "Download failed (%s)", retrohh_https_last_error());
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
 
@@ -822,10 +824,12 @@ static bool autoeq_refresh_database(void)
     if (!autoeq_load_index())
     {
         splash(HZ * 2, ID2P(LANG_FAILED));
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
     autoeq_filter();
     splash(HZ, ID2P(LANG_UIPOD_AUTOEQ_UPDATED));
+    uipod_hud_progress_end(dl_hud);
     return true;
 }
 
@@ -843,12 +847,13 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
         return false;
     }
 
-    splash(0, ID2P(LANG_UIPOD_AUTOEQ_DOWNLOADING));
+    uint32_t dl_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_AUTOEQ_DOWNLOADING), NULL);
 
     char *peq_txt = malloc(AUTOEQ_PEQ_MAX_BYTES);
     if (!peq_txt)
     {
         splash(HZ, ID2P(LANG_FAILED));
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
 
@@ -893,6 +898,7 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
     {
         free(peq_txt);
         splashf(HZ * 5 / 2, "Download failed (%s)", retrohh_https_last_error());
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
 
@@ -904,6 +910,7 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
     if (!parsed)
     {
         splash(HZ * 2, ID2P(LANG_FAILED));
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
 
@@ -916,6 +923,7 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
     if (!write_rockbox_eq_cfg(cfg_path, label, precut, bands))
     {
         splash(HZ * 2, ID2P(LANG_FAILED));
+        uipod_hud_progress_end(dl_hud);
         return false;
     }
 
@@ -930,6 +938,7 @@ static bool autoeq_download_and_save(const struct autoeq_entry *e, bool apply_no
     {
         splash(HZ, ID2P(LANG_SETTINGS_SAVED));
     }
+    uipod_hud_progress_end(dl_hud);
     return true;
 }
 

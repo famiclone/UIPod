@@ -47,7 +47,8 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_rs_codecs.h"
-#include "uipod_ui.h" /* uipod_fullscreen_message */
+#include "uipod_rs_ui.h"
+#include "uipod_ui.h"
 
 extern char *realpath(const char *path, char *resolved);
 extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
@@ -65,17 +66,32 @@ static uint32_t s_merged_remote_gen  = 0;
  * parsed through pass 2, 100% through commit + write-back.  Centered on the
  * widest form so the number grows in place. */
 #define SCAN_HIDDEN (-1)
-static int scan_shown = SCAN_HIDDEN;   /* percent on screen, or hidden */
+static int      scan_shown = SCAN_HIDDEN;   /* percent on screen, or hidden */
+static uint32_t scan_hud_handle = 0;
 
 static void scan_show(int pct)
 {
     if (pct == scan_shown) return;
-    char widest[64], msg[64];
-    snprintf(widest, sizeof widest, "%s 100%%", str(LANG_UIPOD_SCANNING));
-    snprintf(msg, sizeof msg, "%s %d%%", str(LANG_UIPOD_SCANNING), pct);
-    uipod_fullscreen_message(msg, widest);
+    char det[24];
+    snprintf(det, sizeof det, "%d%%", pct);
+    float prog = (float)pct * 0.01f;
+    if (scan_hud_handle == 0)
+        scan_hud_handle = uipod_hud_progress_begin(str(LANG_UIPOD_SCANNING), det, prog);
+    else
+        uipod_hud_progress_update(scan_hud_handle, str(LANG_UIPOD_SCANNING), det, prog);
     backlight_on();
     scan_shown = pct;
+}
+
+static void scan_hide(void)
+{
+    if (scan_hud_handle != 0)
+    {
+        uint32_t h = scan_hud_handle;
+        scan_hud_handle = 0;
+        uipod_hud_progress_end(h);
+    }
+    scan_shown = SCAN_HIDDEN;
 }
 
 /* Files the walk found needing a parse.  Parsing is the slow part (~50 ms per
@@ -737,6 +753,7 @@ int uipod_library_reconcile(bool force_full)
     db_exec("COMMIT;");
     s_local_gen++;
     if (changed) db_writeback();
+    scan_hide();
     return touched;
 }
 

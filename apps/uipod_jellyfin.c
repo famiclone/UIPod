@@ -642,20 +642,32 @@ static void jf_sync_on_playlist(void *vctx, const char *playlist_name,
     }
 }
 
+static uint32_t s_jf_sync_hud = 0;
+
 static void jf_sync_on_progress(void *vctx, uint32_t vids, uint32_t trks)
 {
     (void)vctx;
-    char widest[80], msg[80];
-    snprintf(widest, sizeof(widest), "%s 9999 / 99999", str(LANG_UIPOD_NAV_SYNCING));
+    char det[48];
     if (trks > 0)
-        snprintf(msg, sizeof(msg), "%s %u + %u", str(LANG_UIPOD_NAV_SYNCING),
-                 (unsigned)vids, (unsigned)trks);
+        snprintf(det, sizeof(det), "%u + %u", (unsigned)vids, (unsigned)trks);
     else
-        snprintf(msg, sizeof(msg), "%s %u", str(LANG_UIPOD_NAV_SYNCING),
-                 (unsigned)vids);
-    uipod_fullscreen_message(msg, widest);
+        snprintf(det, sizeof(det), "%u", (unsigned)vids);
+    if (s_jf_sync_hud == 0)
+        s_jf_sync_hud = uipod_hud_progress_begin(str(LANG_UIPOD_NAV_SYNCING), det, -1.0f);
+    else
+        uipod_hud_progress_update(s_jf_sync_hud, str(LANG_UIPOD_NAV_SYNCING), det, -1.0f);
     backlight_on();
     yield();
+}
+
+static void jf_end_sync_hud(void)
+{
+    if (s_jf_sync_hud != 0)
+    {
+        uint32_t h = s_jf_sync_hud;
+        s_jf_sync_hud = 0;
+        uipod_hud_progress_end(h);
+    }
 }
 
 static uint8_t jf_sync_cancel_bridge(void *vctx)
@@ -672,7 +684,7 @@ bool uipod_jellyfin_sync(bool show_summary_splash)
         return false;
     }
 
-    uipod_fullscreen_message(str(LANG_UIPOD_NAV_CONNECTING), NULL);
+    s_jf_sync_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_CONNECTING), NULL);
     button_clear_queue();
 
     mutex_lock(&s_jf_db_mutex);
@@ -680,6 +692,7 @@ bool uipod_jellyfin_sync(bool show_summary_splash)
     {
         mutex_unlock(&s_jf_db_mutex);
         splash(HZ, ID2P(LANG_FAILED));
+        jf_end_sync_hud();
         return false;
     }
 
@@ -751,6 +764,7 @@ bool uipod_jellyfin_sync(bool show_summary_splash)
         mutex_unlock(&s_jf_db_mutex);
         if (!ctx.cancel.cancelled)
             splashf(HZ * 3 / 2, "%s", err_msg[0] ? err_msg : (const char *)str(LANG_FAILED));
+        jf_end_sync_hud();
         return false;
     }
 
@@ -766,6 +780,7 @@ bool uipod_jellyfin_sync(bool show_summary_splash)
     if (show_summary_splash)
         splashf(HZ * 3 / 2, str(LANG_UIPOD_JF_SYNCED_FMT),
                 (int)out_videos, (int)out_tracks);
+    jf_end_sync_hud();
 
     return true;
 }
@@ -853,7 +868,7 @@ bool uipod_jellyfin_prepare_track(const char *path, bool ui_blocking)
 
     if (ui_blocking)
     {
-        uipod_fullscreen_message(str(LANG_UIPOD_NAV_BUFFERING), NULL);
+        uint32_t buf_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_BUFFERING), NULL);
         button_clear_queue();
         struct jf_cancel_state cancel = { .cancelled = false };
         int32_t rc = tp_jellyfin_ensure_audio_cached(
@@ -863,8 +878,10 @@ bool uipod_jellyfin_prepare_track(const char *path, bool ui_blocking)
         {
             if (!cancel.cancelled && err[0])
                 splashf(HZ * 3 / 2, "%s", err);
+            uipod_hud_progress_end(buf_hud);
             return false;
         }
+        uipod_hud_progress_end(buf_hud);
         return true;
     }
 
@@ -1416,7 +1433,7 @@ static void jf_play_video_by_id(const char *item_id, bool force_from_start)
 
 #ifdef RETRO_HANDHELD
     /* 2) Stream over network via local loopback HTTP/TLS proxy + Jellyfin */
-    uipod_fullscreen_message(str(LANG_UIPOD_NAV_BUFFERING), NULL);
+    uint32_t stream_hud = uipod_hud_progress_begin_blocking(str(LANG_UIPOD_NAV_BUFFERING), NULL);
 
     TpJfPlannedStreamC plan;
     char err[128];
@@ -1438,6 +1455,7 @@ static void jf_play_video_by_id(const char *item_id, bool force_from_start)
             sizeof(err)) != 0)
     {
         splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(stream_hud);
         return;
     }
 
@@ -1457,8 +1475,10 @@ static void jf_play_video_by_id(const char *item_id, bool force_from_start)
             sizeof(err)) != 0)
     {
         splashf(HZ * 3 / 2, "%s", err[0] ? err : (const char *)str(LANG_FAILED));
+        uipod_hud_progress_end(stream_hud);
         return;
     }
+    uipod_hud_progress_end(stream_hud);
 
     char proxy_url[128];
     snprintf(proxy_url, sizeof(proxy_url), "http://127.0.0.1:%u/stream.%s",

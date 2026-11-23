@@ -5,6 +5,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
+pub mod hud;
 pub mod icons;
 pub mod image_decode;
 pub mod layout;
@@ -12,6 +13,7 @@ pub mod renderer;
 pub mod viz_dsp;
 pub mod viz_gl;
 
+pub use hud::{HudCardPayload, HudExitMode, HudRenderItem, HudStack};
 pub use renderer::UiEngine;
 pub use viz_gl::{VizEngine, VizPresetInfo, VIZ_PRESETS};
 

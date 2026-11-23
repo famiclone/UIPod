@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.8.2
+Version: v0.9.0
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -10,9 +10,9 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 
 • D-Pad Up / Down (or Left Stick) — Navigate lists and menus (hold to fast-scroll)
 • D-Pad Left / Right (or L1 / R1) — Page up / down in lists; previous / next track on Now Playing (hold to seek)
-• A — Select / Open item (shows a non-blocking floating HUD toast if Now Playing has nothing to resume); Play / Pause on Now Playing
+• A — Select / Open item (shows a non-blocking floating HUD toast if Now Playing has nothing to resume); Play / Pause on Now Playing; Confirm on floating HUD confirmation cards
 • Hold A — Open context menu on tracks, albums, folders, or playlists
-• B — Go back one screen
+• B — Go back one screen; Cancel on floating HUD confirmation cards
 • Hold B — Return directly to the Main Menu from anywhere
 • START — Play / Pause music globally (or open Pause Menu inside games)
 • MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
