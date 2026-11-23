@@ -296,6 +296,7 @@ pub struct UIPodApp {
     pub current_track: usize,
     pub play_mode: PlayMode,
     pub audio_playing: bool,
+    pub has_resumable: bool,
     pub pos_ms: u32,
     pub dur_ms: u32,
 
@@ -386,8 +387,9 @@ impl UIPodApp {
         Self {
             tracks,
             current_track: 0,
-            play_mode: PlayMode::Pause,
+            play_mode: PlayMode::Stop,
             audio_playing: false,
+            has_resumable: false,
             pos_ms: 0,
             dur_ms,
             theme: THEME_PRESETS[0].colors,
@@ -611,6 +613,7 @@ impl UIPodApp {
         self.current_track = idx;
         self.dur_ms = self.tracks[idx].duration_ms;
         self.pos_ms = pos_ms.min(self.dur_ms);
+        self.has_resumable = true;
         self.play_mode = PlayMode::Play;
         self.outbound_cmds.push(format!(
             r#"{{"type":"playTrackAt","index":{idx},"posMs":{pos_ms}}}"#
@@ -627,6 +630,7 @@ impl UIPodApp {
         self.current_track = idx;
         self.pos_ms = 0;
         self.dur_ms = self.tracks[idx].duration_ms;
+        self.has_resumable = true;
         self.play_mode = PlayMode::Play;
         self.outbound_cmds
             .push(format!(r#"{{"type":"playTrack","index":{idx}}}"#));
@@ -656,13 +660,17 @@ impl UIPodApp {
     fn emit_set_playing(&mut self, should_play: bool) {
         if !should_play {
             self.dj_telemetry = uipod_dj::DjTelemetry::default();
+        } else if !self.tracks.is_empty() {
+            self.has_resumable = true;
         }
         self.audio_playing = should_play;
         if !self.seek_active {
             self.play_mode = if should_play {
                 PlayMode::Play
-            } else {
+            } else if self.has_resumable {
                 PlayMode::Pause
+            } else {
+                PlayMode::Stop
             };
         }
         self.outbound_cmds.push(format!(
@@ -706,8 +714,10 @@ impl UIPodApp {
             self.emit_seek_motor(0);
             self.play_mode = if self.audio_playing {
                 PlayMode::Play
-            } else {
+            } else if self.has_resumable {
                 PlayMode::Pause
+            } else {
+                PlayMode::Stop
             };
         }
         self.seek_dir = 0;
@@ -1175,7 +1185,19 @@ impl UIPodApp {
                 self.stack = vec![Screen::MainMenu { sel: 0 }];
             }
             "now_playing" => {
-                self.stack = vec![Screen::MainMenu { sel: 0 }, Screen::NowPlaying];
+                if !self.tracks.is_empty() {
+                    self.has_resumable = true;
+                    if self.play_mode == PlayMode::Stop {
+                        self.play_mode = PlayMode::Pause;
+                    }
+                    self.stack = vec![Screen::MainMenu { sel: 0 }, Screen::NowPlaying];
+                } else {
+                    self.stack = vec![Screen::MainMenu { sel: 0 }];
+                    ui.trigger_hud_toast(
+                        self.tr("Nothing to resume", "Немає відтворення"),
+                        self.clock_ms,
+                    );
+                }
             }
             "visualizer" => {
                 viz.set_preset(self.viz_preset);
@@ -1334,6 +1356,9 @@ impl UIPodApp {
 
     pub fn sync_audio_state(&mut self, playing: bool, pos_ms: u32, dur_ms: u32) {
         self.audio_playing = playing;
+        if playing || pos_ms > 0 {
+            self.has_resumable = true;
+        }
         if dur_ms > 0 {
             self.dur_ms = dur_ms;
         }
@@ -1341,8 +1366,10 @@ impl UIPodApp {
         if !self.seek_active && self.seek_settle_sec <= 0.0 {
             self.play_mode = if playing {
                 PlayMode::Play
-            } else {
+            } else if self.has_resumable {
                 PlayMode::Pause
+            } else {
+                PlayMode::Stop
             };
             self.pos_ms = pos_ms;
         }
@@ -1657,7 +1684,14 @@ impl UIPodApp {
                             self.push_screen(Screen::SettingsMenu { sel: 0 }, ui);
                         }
                         MainRowAction::NowPlaying => {
-                            self.push_screen(Screen::NowPlaying, ui);
+                            if !self.tracks.is_empty() && (self.audio_playing || self.has_resumable) {
+                                self.push_screen(Screen::NowPlaying, ui);
+                            } else {
+                                ui.trigger_hud_toast(
+                                    self.tr("Nothing to resume", "Немає відтворення"),
+                                    self.clock_ms,
+                                );
+                            }
                         }
                         MainRowAction::Toggleable(id) => match id {
                             MainMenuId::Browse => self.push_screen(

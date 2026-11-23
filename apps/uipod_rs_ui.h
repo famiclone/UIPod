@@ -249,6 +249,7 @@ bool   uipod_rs_ui_present_fade_rgb_gpu(uint32_t win_w,
                                         float fade,
                                         uint32_t target_rgb);
 void   uipod_rs_ui_trigger_volume_popup(float level_norm, uint64_t now_ms);
+void   uipod_rs_ui_trigger_hud_toast(const char *message, uint64_t now_ms);
 void   uipod_rs_ui_set_volume_popup_clock(uint64_t now_ms);
 bool   uipod_rs_ui_is_volume_popup_animating(uint64_t now_ms);
 bool   uipod_rs_ui_render_volume_popup_over_screen(uint32_t win_w,
@@ -351,6 +352,7 @@ bool uipod_gpu_render_nsf_channels(const char *header_title,
                                    size_t start_item,
                                    size_t visible_items);
 void uipod_gpu_notify_volume_changed(void);
+void uipod_gpu_notify_hud_toast(const char *message);
 bool uipod_gpu_is_volume_popup_active(void);
 bool uipod_gpu_tick_volume_popup(void);
 

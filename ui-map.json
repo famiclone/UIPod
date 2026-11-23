@@ -74,8 +74,10 @@
       "node_id": 3214,
       "page_id": 212,
       "code_files": [
+        "crates/uipod-ui/src/layout.rs",
         "crates/uipod-ui/src/renderer.rs",
         "crates/uipod-ui/src/ffi.rs",
+        "apps/uipod_rs_ui.h",
         "apps/uipod_rs_ui_glue.c",
         "apps/misc.c"
       ],
@@ -860,10 +862,15 @@
       "node_id": 10977,
       "tokens_file": "crates/uipod-ui/src/lib.rs",
       "code_files": [
+        "crates/uipod-ui/src/layout.rs",
         "crates/uipod-ui/src/renderer.rs",
         "crates/uipod-ui/src/icons.rs",
+        "crates/uipod-ui/src/ffi.rs",
+        "apps/uipod_rs_ui.h",
         "apps/uipod_rs_ui_glue.c",
-        "apps/misc.c"
+        "apps/misc.c",
+        "apps/menu.c",
+        "apps/root_menu.c"
       ],
       "status": "mapped"
     },

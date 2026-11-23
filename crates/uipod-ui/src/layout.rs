@@ -39,6 +39,25 @@ pub mod volume_popup_spec {
     pub const HIDDEN_Y: f32 = -(HEIGHT + 8.0);
 }
 
+/// Declarative layout spec for floating HUD toast tooltips (reusing `volume_popup_spec` container & motion).
+pub mod hud_toast_spec {
+    use super::volume_popup_spec as vp;
+
+    pub const HEIGHT: f32 = vp::HEIGHT;
+    pub const CORNER_RADIUS: f32 = vp::CORNER_RADIUS;
+    pub const STROKE_WIDTH: f32 = vp::STROKE_WIDTH;
+    pub const PAD_X: f32 = 24.0;
+    pub const INNER_INSET_X: f32 = STROKE_WIDTH + PAD_X;
+    pub const MIN_WIDTH: f32 = 220.0;
+    pub const SCREEN_MARGIN_X: f32 = 64.0;
+    pub const FONT_SIZE: f32 = 36.0;
+    pub const REST_Y: f32 = vp::REST_Y;
+    pub const HIDDEN_Y: f32 = vp::HIDDEN_Y;
+    pub const SLIDE_IN_MS: f32 = 180.0;
+    pub const HOLD_MS: u64 = 2000;
+    pub const SLIDE_OUT_MS: f32 = 200.0;
+}
+
 /// Declarative layout spec (`256x256` normalized coordinates, scaled uniformly to `art_box`)
 /// for procedural 4-shade Famicom HVC cartridge artwork (`Now Playing` & `Now Playing Alt`).
 pub mod famicom_cart_spec {

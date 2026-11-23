@@ -42,6 +42,7 @@
 #include "option_select.h"
 #include "uipod_transition.h"   /* page slide transitions (shared) */
 #include "uipod_page.h"         /* uipod_home_pending (hold-BACK -> root) */
+#include "uipod_rs_ui.h"
 #include "uipod_ui.h"           /* uipod_toggle_str for Yes/No boolean switches */
 #include "uipod_visualizer.h"   /* idle auto-start while music plays */
 #include "screens.h"
@@ -509,8 +510,13 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
         }
         else if (action == ACTION_TREE_WPS)
         {
-            ret = GO_TO_PREVIOUS_MUSIC;
-            done = true;
+            if (uipod_try_enter_now_playing())
+            {
+                ret = GO_TO_PREVIOUS_MUSIC;
+                done = true;
+            }
+            else if (!uipod_gpu_is_active())
+                redraw_lists = true;
         }
         else if (action == ACTION_TREE_STOP)
         {
@@ -700,6 +706,11 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                     }
                     break;
                 case MT_RETURN_VALUE:
+                    if (temp->value == GO_TO_WPS && !uipod_try_enter_now_playing())
+                    {
+                        redraw_lists = !uipod_gpu_is_active();
+                        break;
+                    }
                     ret = temp->value;
                     done = true;
                     break;

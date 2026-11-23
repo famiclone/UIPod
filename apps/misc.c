@@ -905,6 +905,16 @@ void uipod_menu_click(void)
     }
 }
 
+bool uipod_try_enter_now_playing(void)
+{
+    if (audio_status())
+        return true;
+    if (playlist_resume_saved())
+        return true;
+    uipod_gpu_notify_hud_toast(str(LANG_NOTHING_TO_RESUME));
+    return false;
+}
+
 /* Return the ReplayGain mode adjusted by other relevant settings */
 static int replaygain_setting_mode(int type)
 {

@@ -285,6 +285,7 @@ impl UIPodWasm {
             self.app.pos_ms = 0;
             self.app.dur_ms = self.app.tracks[idx].duration_ms;
             self.app.audio_playing = true;
+            self.app.has_resumable = true;
             self.app.play_mode = uipod_ui::PlayMode::Play;
             self.app.state_dirty = true;
         }

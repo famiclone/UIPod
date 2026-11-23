@@ -42,6 +42,7 @@
 #include "uipod_playlists.h"
 #include "uipod_mainmenu.h"
 #include "uipod_page.h"          /* uipod_home_pending (hold-BACK -> root) */
+#include "uipod_rs_ui.h"
 #include "uipod_transition.h"    /* arm a single back-slide when homing */
 
 int uipod_settings_page(void);   /* main_menu.c */
@@ -93,8 +94,8 @@ static int wpsscrn(void* param)
     }
     else
     {
-        splash(HZ*2, ID2P(LANG_NOTHING_TO_RESUME));
-        uipod_transition_suppress_next();   /* only a splash: don't re-slide the menu */
+        uipod_gpu_notify_hud_toast(str(LANG_NOTHING_TO_RESUME));
+        uipod_transition_suppress_next();
     }
 
     if (ret_val == GO_TO_PLAYLIST_VIEWER

@@ -236,6 +236,9 @@ void keyclick_set_callback(keyclick_callback cb, void* data);
 void keyclick_click(bool rawbutton, int action);
 /* Play UIPod's iPod-style Click Wheel detent tick when `global_settings.menu_click` is enabled. */
 void uipod_menu_click(void);
+/* Return true if audio is active or a saved playlist could be resumed;
+ * otherwise trigger the non-blocking "Nothing to resume" floating HUD toast. */
+bool uipod_try_enter_now_playing(void);
 
 /* Return current ReplayGain mode a file should have (REPLAYGAIN_TRACK or
  * REPLAYGAIN_ALBUM) if ReplayGain processing is enabled, or -1 if no

@@ -186,6 +186,97 @@ pub fn quantize_mono_art_4shade(rgb24: &[u8], theme: ThemeColors, out_rgba: &mut
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum HudPopupPayload {
+    Volume(f32),
+    Toast(String),
+}
+
+#[derive(Clone, Debug)]
+struct HudPopupState {
+    payload: HudPopupPayload,
+    open_ms: u64,
+    last_trigger_ms: u64,
+    clock_ms: u64,
+    active: bool,
+}
+
+impl Default for HudPopupState {
+    fn default() -> Self {
+        Self {
+            payload: HudPopupPayload::Volume(0.8),
+            open_ms: 0,
+            last_trigger_ms: 0,
+            clock_ms: 0,
+            active: false,
+        }
+    }
+}
+
+impl HudPopupState {
+    fn arm(&mut self, payload: HudPopupPayload, now_ms: u64) {
+        use crate::layout::hud_toast_spec as ht;
+
+        let cur_prog = self.compute_progress(now_ms).unwrap_or(0.0);
+        if cur_prog >= 0.995 {
+            self.open_ms = now_ms.saturating_sub(ht::SLIDE_IN_MS as u64);
+        } else if cur_prog > 0.001 {
+            let u = (1.0 - (1.0 - cur_prog).clamp(0.0, 1.0).cbrt()).clamp(0.0, 1.0);
+            self.open_ms = now_ms.saturating_sub((u * ht::SLIDE_IN_MS).round() as u64);
+        } else {
+            self.open_ms = now_ms;
+        }
+        self.payload = payload;
+        self.last_trigger_ms = now_ms;
+        self.clock_ms = now_ms;
+        self.active = true;
+    }
+
+    fn trigger_volume(&mut self, level_norm: f32, now_ms: u64) {
+        self.arm(HudPopupPayload::Volume(level_norm.clamp(0.0, 1.0)), now_ms);
+    }
+
+    fn trigger_toast(&mut self, message: &str, now_ms: u64) {
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.arm(HudPopupPayload::Toast(trimmed.to_string()), now_ms);
+    }
+
+    fn set_clock(&mut self, now_ms: u64) {
+        self.clock_ms = now_ms;
+    }
+
+    fn compute_progress(&mut self, now_ms: u64) -> Option<f32> {
+        use crate::layout::hud_toast_spec as ht;
+
+        if !self.active {
+            return None;
+        }
+        self.clock_ms = now_ms;
+        let hold_end = self.last_trigger_ms.saturating_add(ht::HOLD_MS);
+        if now_ms < hold_end {
+            let el_in = now_ms.saturating_sub(self.open_ms) as f32;
+            let u = (el_in / ht::SLIDE_IN_MS).clamp(0.0, 1.0);
+            Some(1.0 - (1.0 - u).powi(3))
+        } else {
+            let el_out = (now_ms - hold_end) as f32;
+            if el_out >= ht::SLIDE_OUT_MS {
+                self.active = false;
+                None
+            } else {
+                let u = (el_out / ht::SLIDE_OUT_MS).clamp(0.0, 1.0);
+                Some(1.0 - u.powi(3))
+            }
+        }
+    }
+
+    fn is_animating(&mut self, now_ms: u64) -> bool {
+        self.compute_progress(now_ms).is_some()
+    }
+}
+
 /// Pure-Rust GPU UI engine backed by `taffy` + `femtovg` on OpenGL ES 3.0.
 pub struct UiEngine {
     canvas: Canvas<OpenGl>,
@@ -206,11 +297,7 @@ pub struct UiEngine {
     art_hash: Option<u64>,
     art_rgba_scratch: Vec<RGBA8>,
     last_theme: ThemeColors,
-    vol_popup_level: f32,
-    vol_popup_open_ms: u64,
-    vol_popup_last_press_ms: u64,
-    vol_popup_clock_ms: u64,
-    vol_popup_active: bool,
+    hud_popup: HudPopupState,
 }
 
 impl UiEngine {
@@ -325,11 +412,7 @@ impl UiEngine {
             art_hash: None,
             art_rgba_scratch: vec![RGBA8::new(0, 0, 0, 255); 256 * 256],
             last_theme: ThemeColors::default(),
-            vol_popup_level: 0.8,
-            vol_popup_open_ms: 0,
-            vol_popup_last_press_ms: 0,
-            vol_popup_clock_ms: 0,
-            vol_popup_active: false,
+            hud_popup: HudPopupState::default(),
         };
 
         // Set constant 1024x768 canvas size once, warm up FBO creation, then sync back to Screen.
@@ -2844,7 +2927,7 @@ impl UiEngine {
             self.canvas.fill_path(&hq, &p_hdr);
         }
 
-        self.draw_volume_popup_on_screen_internal(win_w, win_h, self.vol_popup_clock_ms);
+        self.draw_volume_popup_on_screen_internal(win_w, win_h, self.hud_popup.clock_ms);
 
         self.canvas.flush();
         self.canvas
@@ -3076,63 +3159,85 @@ impl UiEngine {
     /// Triggers or refreshes the top-sliding `VolumeBarPopup` (`[3214]`: slides down to 1/4 height,
     /// holds for `2000 ms` after the last volume press, then slides back up off-screen).
     pub fn trigger_volume_popup(&mut self, level_norm: f32, now_ms: u64) {
-        const SLIDE_IN_MS: f32 = 180.0;
-        let cur_prog = self.compute_volume_popup_progress(now_ms).unwrap_or(0.0);
-        if cur_prog >= 0.995 {
-            self.vol_popup_open_ms = now_ms.saturating_sub(SLIDE_IN_MS as u64);
-        } else if cur_prog > 0.001 {
-            let u = (1.0 - (1.0 - cur_prog).clamp(0.0, 1.0).cbrt()).clamp(0.0, 1.0);
-            self.vol_popup_open_ms = now_ms.saturating_sub((u * SLIDE_IN_MS).round() as u64);
-        } else {
-            self.vol_popup_open_ms = now_ms;
-        }
-        self.vol_popup_level = level_norm.clamp(0.0, 1.0);
-        self.vol_popup_last_press_ms = now_ms;
-        self.vol_popup_clock_ms = now_ms;
-        self.vol_popup_active = true;
+        self.hud_popup.trigger_volume(level_norm, now_ms);
+    }
+
+    /// Triggers or refreshes a floating HUD toast tooltip using the exact same container,
+    /// anchor, hold duration (`2000 ms`), and entrance/exit curve as the Volume HUD.
+    pub fn trigger_hud_toast(&mut self, message: &str, now_ms: u64) {
+        self.hud_popup.trigger_toast(message, now_ms);
     }
 
     pub fn set_volume_popup_clock(&mut self, now_ms: u64) {
-        self.vol_popup_clock_ms = now_ms;
+        self.hud_popup.set_clock(now_ms);
     }
 
     pub fn set_active_theme(&mut self, theme: ThemeColors) {
         self.last_theme = theme;
     }
 
-    /// Returns `Some(progress)` in `0.0..=1.0` while the volume popup is visible or animating,
-    /// or `None` once the 2-second hold + slide-out have completed.
+    /// Returns `Some(progress)` in `0.0..=1.0` while the HUD popup (volume or toast) is visible
+    /// or animating, or `None` once the 2-second hold + slide-out have completed.
     pub fn compute_volume_popup_progress(&mut self, now_ms: u64) -> Option<f32> {
-        const SLIDE_IN_MS: f32 = 180.0;
-        const HOLD_MS: u64 = 2000;
-        const SLIDE_OUT_MS: f32 = 200.0;
-
-        if !self.vol_popup_active {
-            return None;
-        }
-        self.vol_popup_clock_ms = now_ms;
-        let hold_end = self.vol_popup_last_press_ms.saturating_add(HOLD_MS);
-        if now_ms < hold_end {
-            let el_in = now_ms.saturating_sub(self.vol_popup_open_ms) as f32;
-            let u = (el_in / SLIDE_IN_MS).clamp(0.0, 1.0);
-            Some(1.0 - (1.0 - u).powi(3))
-        } else {
-            let el_out = (now_ms - hold_end) as f32;
-            if el_out >= SLIDE_OUT_MS {
-                self.vol_popup_active = false;
-                None
-            } else {
-                let u = (el_out / SLIDE_OUT_MS).clamp(0.0, 1.0);
-                Some(1.0 - u.powi(3))
-            }
-        }
+        self.hud_popup.compute_progress(now_ms)
     }
 
     pub fn is_volume_popup_animating(&mut self, now_ms: u64) -> bool {
-        self.compute_volume_popup_progress(now_ms).is_some()
+        self.hud_popup.is_animating(now_ms)
+    }
+
+    fn draw_hud_toast_box(&mut self, msg: &str, screen_w: f32, py: f32, pal: ResolvedTheme) {
+        use crate::layout::hud_toast_spec as ht;
+
+        let semibold = self.fonts_semibold.clone();
+        let mut tp = Paint::color(pal.fg);
+        tp.set_font(&semibold);
+        tp.set_font_size(ht::FONT_SIZE);
+        tp.set_text_align(Align::Center);
+        tp.set_text_baseline(Baseline::Alphabetic);
+
+        let max_box_w = (screen_w - ht::SCREEN_MARGIN_X).max(ht::MIN_WIDTH);
+        let max_text_w = (max_box_w - ht::INNER_INSET_X * 2.0).max(40.0);
+        let fitted = self.truncate_ellipsis(msg, max_text_w, &tp);
+        let text_w = self
+            .canvas
+            .measure_text(0.0, 0.0, &fitted, &tp)
+            .map(|m| m.width())
+            .unwrap_or(200.0);
+
+        let box_w = (text_w + ht::INNER_INSET_X * 2.0)
+            .ceil()
+            .clamp(ht::MIN_WIDTH, max_box_w);
+        let px = ((screen_w - box_w) * 0.5).round();
+
+        fill_rounded_rect(
+            &mut self.canvas,
+            px,
+            py,
+            box_w,
+            ht::HEIGHT,
+            ht::CORNER_RADIUS,
+            pal.bg,
+        );
+        stroke_rounded_rect_inside(
+            &mut self.canvas,
+            px,
+            py,
+            box_w,
+            ht::HEIGHT,
+            ht::CORNER_RADIUS,
+            ht::STROKE_WIDTH,
+            pal.fg2,
+        );
+
+        let base_y = Self::text_row_baseline(py + ht::HEIGHT * 0.5, ht::FONT_SIZE);
+        let _ = self
+            .canvas
+            .fill_text(px + box_w * 0.5, base_y, &fitted, &tp);
     }
 
     fn draw_volume_popup_on_screen_internal(&mut self, win_w: u32, win_h: u32, now_ms: u64) {
+        use crate::layout::hud_toast_spec as ht;
         use crate::layout::volume_popup_spec as vp;
 
         let Some(prog) = self.compute_volume_popup_progress(now_ms) else {
@@ -3140,28 +3245,33 @@ impl UiEngine {
         };
         let m = LogicalMetrics::from_physical(win_w, win_h);
         let pal = resolve_theme(self.last_theme);
-        let hidden_y = vp::HIDDEN_Y;
-        let rest_y = vp::REST_Y;
-        let py = hidden_y + (rest_y - hidden_y) * prog;
-        let px = (m.screen_w - vp::WIDTH) * 0.5;
+        let py = ht::HIDDEN_Y + (ht::REST_Y - ht::HIDDEN_Y) * prog;
 
         self.canvas.reset_transform();
         self.canvas.reset_scissor();
         self.canvas.scale(m.scale_x, m.scale_y);
-        draw_volume_popup(
-            &mut self.canvas,
-            px,
-            py,
-            self.vol_popup_level,
-            pal.bg,
-            pal.fg,
-            pal.fg1,
-            pal.fg2,
-        );
+        match self.hud_popup.payload.clone() {
+            HudPopupPayload::Volume(level) => {
+                let px = (m.screen_w - vp::WIDTH) * 0.5;
+                draw_volume_popup(
+                    &mut self.canvas,
+                    px,
+                    py,
+                    level,
+                    pal.bg,
+                    pal.fg,
+                    pal.fg1,
+                    pal.fg2,
+                );
+            }
+            HudPopupPayload::Toast(msg) => {
+                self.draw_hud_toast_box(&msg, m.screen_w, py, pal);
+            }
+        }
         self.canvas.reset_transform();
     }
 
-    /// Draws the volume popup directly onto `RenderTarget::Screen` over an already-rendered frame
+    /// Draws the HUD popup directly onto `RenderTarget::Screen` over an already-rendered frame
     /// (such as the 4-shade GPU visualizer) without clearing the backbuffer.
     pub fn render_volume_popup_over_screen(
         &mut self,
@@ -3203,7 +3313,7 @@ impl UiEngine {
         let mut quad = VgPath::new();
         quad.rect(0.0, 0.0, sw as f32, sh as f32);
         self.canvas.fill_path(&quad, &paint);
-        self.draw_volume_popup_on_screen_internal(sw, sh, self.vol_popup_clock_ms);
+        self.draw_volume_popup_on_screen_internal(sw, sh, self.hud_popup.clock_ms);
         self.canvas.flush();
 
         self.canvas
@@ -3352,5 +3462,45 @@ mod tests {
             }
         }
         assert_eq!(seen, [true, true, true, true]);
+    }
+
+    #[test]
+    fn hud_toast_shares_volume_popup_timing_and_coexists_smoothly() {
+        let mut vol = HudPopupState::default();
+        let mut toast = HudPopupState::default();
+
+        vol.trigger_volume(0.65, 1000);
+        toast.trigger_toast("Nothing to resume", 1000);
+
+        // Exact 1:1 entrance (0..180ms), hold (180..2000ms), and exit (2000..2200ms) curve parity
+        for &t in &[1000u64, 1060, 1120, 1180, 2000, 2999, 3050, 3150, 3200] {
+            let vp = vol.compute_progress(t);
+            let tp = toast.compute_progress(t);
+            match (vp, tp) {
+                (Some(a), Some(b)) => assert!((a - b).abs() < 1e-6, "curve mismatch at t={t}"),
+                (None, None) => {}
+                other => panic!("state mismatch at t={t}: {other:?}"),
+            }
+        }
+        assert!(!toast.is_animating(3205));
+
+        // Repeated toast triggers while resting keep progress pinned at 1.0 and extend hold
+        let mut hud = HudPopupState::default();
+        hud.trigger_toast("Nothing to resume", 5000);
+        assert!((hud.compute_progress(5500).unwrap() - 1.0).abs() < 1e-6);
+        hud.trigger_toast("Nothing to resume", 6800);
+        assert!((hud.compute_progress(6800).unwrap() - 1.0).abs() < 1e-6);
+        assert!((hud.compute_progress(8700).unwrap() - 1.0).abs() < 1e-6);
+
+        // Adjusting volume while toast is mid-exit replaces payload smoothly without progress jump
+        let prog_mid_exit = hud.compute_progress(8900).expect("still sliding out");
+        assert!(prog_mid_exit > 0.1 && prog_mid_exit < 0.99);
+        hud.trigger_volume(0.5, 8900);
+        assert_eq!(hud.payload, HudPopupPayload::Volume(0.5));
+        let prog_after_replace = hud.compute_progress(8900).expect("volume active");
+        assert!(
+            (prog_after_replace - prog_mid_exit).abs() < 0.02,
+            "expected smooth continuity ({prog_mid_exit} -> {prog_after_replace})"
+        );
     }
 }

@@ -6,7 +6,7 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 
 ## Features
 
-- **Dynamic Native-HiDPI Rust UI (`uipod-ui`)**: Vector typography (**Geologica**), **38 four-shade iPod Mini themes** + live HEX palette editor, **6 screen transitions**, Bayer-dithered monochrome album art, and **English + Ukrainian** localization.
+- **Dynamic Native-HiDPI Rust UI (`uipod-ui`)**: Vector typography (**Geologica**), **38 four-shade iPod Mini themes** + live HEX palette editor, **6 screen transitions**, non-blocking floating Volume & HUD toast overlays, Bayer-dithered monochrome album art, and **English + Ukrainian** localization.
 - **Unified Multi-Source Library & Browse File Manager**:
   - **Local**: Browse sits first on the Main Menu with last-folder memory and full file management (`Delete`, `Rename`, `Copy`, `Move`, `Info` via Text Viewer), plus watched folders for FLAC, MP3, Opus, Ogg, AAC/M4A, ALAC, WAV, `.m4b` audiobooks, `.cue` sheets, `.nsf`/`.nsfe` NES/Famicom chiptunes (`2A03` + `VRC6` + `MMC5` with Music/SFX subtracks, live Now Playing APU channel meters, `Hold A → Channels` mute/solo mixer, and `Endless Loop`), `.gsf`/`.minigsf` GBA game audio, `.mid`/`.midi`/`.kar`/`.rmi` MIDI tracks (with built-in `Mobile_0100_base.sf2` and custom `.sf2` banks from `Settings → Library → SoundFont Folders` selectable via `Hold A → SoundFont`), and H.264/MP4 video.
   - **Navidrome / Subsonic (`Settings → Sources → Navidrome`)**: Streaming, sliding-window queue prefetching, Favourites playlist, and persistent background `Download` queue into `/mnt/SDCARD/Media/Music/navidrome`.
@@ -40,15 +40,15 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 ## Installation & Web Simulator
 
 ### Try in Browser (WebAssembly + WebGL2)
-Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.8.0-web.zip` from Releases).
+Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.8.1-web.zip` from Releases).
 
 ### TrimUI Brick / Hammer (`tg5040` / NextUI)
-1. Download `UIPod-v0.8.0-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
+1. Download `UIPod-v0.8.1-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
 2. Extract `UIPod.pak` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak` (so `launch.sh` sits at `/mnt/SDCARD/Tools/tg5040/UIPod.pak/launch.sh`).
 3. On your TrimUI Brick, launch **Tools → UIPod**.
 
 ### Android Handhelds (`arm64-v8a`)
-1. Download `UIPod-v0.8.0-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
+1. Download `UIPod-v0.8.1-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
 2. Install on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped Android device.
 3. Grant media storage access to scan local folders, or configure Navidrome / Jellyfin / Last.fm / ListenBrainz in **Settings**.
 

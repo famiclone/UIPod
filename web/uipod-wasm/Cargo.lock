@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "uipod-wasm"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "uipod-codecs",
  "uipod-dj",

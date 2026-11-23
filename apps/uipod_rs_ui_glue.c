@@ -134,6 +134,22 @@ void uipod_gpu_notify_volume_changed(void)
     }
 }
 
+void uipod_gpu_notify_hud_toast(const char *message)
+{
+    if (!message || !message[0])
+        return;
+
+    uint64_t now_ms = (uint64_t)sdl_get_ms();
+    uipod_rs_ui_trigger_hud_toast(message, now_ms);
+    s_vol_popup_was_animating = true;
+
+    if (!uipod_viz_active && sdl_gl_is_gpu_active() &&
+        !lcd_panel_is_dark() && !s_capturing_transition)
+    {
+        uipod_gpu_present_current_fbo();
+    }
+}
+
 bool uipod_gpu_is_volume_popup_active(void)
 {
     if (!s_vol_popup_was_animating)

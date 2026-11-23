@@ -48,6 +48,7 @@
 #include "appevents.h"
 
 #include "root_menu.h"
+#include "uipod_rs_ui.h"
 #include "uipod_svg.h"
 #include "uipod_transition.h"   /* slide the browser in/out */
 #include "uipod_page.h"         /* uipod_home_pending (hold-BACK -> root) */
@@ -426,7 +427,10 @@ static int dirbrowse(void)
                 break;
 
             case ACTION_TREE_WPS:
-                return exit_to_new_screen(GO_TO_PREVIOUS_MUSIC);
+                if (uipod_try_enter_now_playing())
+                    return exit_to_new_screen(GO_TO_PREVIOUS_MUSIC);
+                if (!uipod_gpu_is_active())
+                    restore = do_restore_display;
                 break;
 
             default:

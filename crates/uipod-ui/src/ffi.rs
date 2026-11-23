@@ -1528,6 +1528,22 @@ pub extern "C" fn uipod_rs_ui_trigger_volume_popup(level_norm: f32, now_ms: u64)
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_trigger_hud_toast(message: *const c_char, now_ms: u64) {
+    if message.is_null() {
+        return;
+    }
+    let msg = cstr_lossy(message);
+    if msg.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.trigger_hud_toast(&msg, now_ms);
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn uipod_rs_ui_set_volume_popup_clock(now_ms: u64) {
     if let Ok(mut guard) = SYNC_ENGINE.lock() {
         if let Some(wrap) = guard.as_mut() {
