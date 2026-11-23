@@ -4,6 +4,7 @@ pub use uipod_codecs as codecs;
 pub use uipod_dj as dj;
 pub use uipod_jellyfin as jellyfin;
 pub use uipod_lastfm as lastfm;
+pub use uipod_listenbrainz as listenbrainz;
 pub use uipod_navidrome as navidrome;
 pub use uipod_nsf as nsf;
 pub use uipod_plugins as plugins;

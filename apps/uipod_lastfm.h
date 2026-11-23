@@ -24,6 +24,10 @@ void uipod_lastfm_notify_online(void);
 void uipod_lastfm_on_track_change(const struct mp3entry *id3);
 void uipod_lastfm_on_track_finish(const struct mp3entry *id3);
 
+/* Dynamic label helper (`Last.fm\x1e@user`) for `Settings -> Accounts` */
+char *uipod_lastfm_menu_label(int selected_item, void *data,
+                              char *buffer, size_t buffer_len);
+
 /* `Settings -> Accounts -> Last.fm` UI screen */
 int  uipod_lastfm_menu_page(void);
 

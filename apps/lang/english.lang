@@ -20626,3 +20626,115 @@
     *: "Quick Cut on Next"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_LISTENBRAINZ
+  desc: UIPod Settings -> Accounts -> ListenBrainz
+  user: core
+  <source>
+    *: "ListenBrainz"
+  </source>
+  <dest>
+    *: "ListenBrainz"
+  </dest>
+  <voice>
+    *: "ListenBrainz"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SIGN_IN_TOKEN
+  desc: UIPod ListenBrainz sign in with user token
+  user: core
+  <source>
+    *: "Sign In with Token"
+  </source>
+  <dest>
+    *: "Sign In with Token"
+  </dest>
+  <voice>
+    *: "Sign In with Token"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_NOW_PLAYING
+  desc: UIPod ListenBrainz Now Playing live status toggle
+  user: core
+  <source>
+    *: "Now Playing"
+  </source>
+  <dest>
+    *: "Now Playing"
+  </dest>
+  <voice>
+    *: "Now Playing"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_USER_TOKEN
+  desc: UIPod ListenBrainz User Token field
+  user: core
+  <source>
+    *: "User Token"
+  </source>
+  <dest>
+    *: "User Token"
+  </dest>
+  <voice>
+    *: "User Token"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_INVALID_TOKEN
+  desc: UIPod ListenBrainz invalid token status
+  user: core
+  <source>
+    *: "Invalid token"
+  </source>
+  <dest>
+    *: "Invalid token"
+  </dest>
+  <voice>
+    *: "Invalid token"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SIGN_OUT_Q
+  desc: UIPod ListenBrainz sign out confirmation prompt
+  user: core
+  <source>
+    *: "Sign out of ListenBrainz?"
+  </source>
+  <dest>
+    *: "Sign out of ListenBrainz?"
+  </dest>
+  <voice>
+    *: "Sign out of ListenBrainz?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SYNCING
+  desc: UIPod ListenBrainz foreground sync status
+  user: core
+  <source>
+    *: "Syncing ListenBrainz..."
+  </source>
+  <dest>
+    *: "Syncing ListenBrainz..."
+  </dest>
+  <voice>
+    *: "Syncing ListenBrainz"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SET_TOKEN_FIRST
+  desc: UIPod ListenBrainz missing token warning
+  user: core
+  <source>
+    *: "Set User Token first"
+  </source>
+  <dest>
+    *: "Set User Token first"
+  </dest>
+  <voice>
+    *: "Set User Token first"
+  </voice>
+</phrase>

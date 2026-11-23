@@ -997,6 +997,33 @@ static const int s_lfm_set_allowed[] = {
     ACTION_SETTINGS_DEC, ACTION_SETTINGS_INC, -1
 };
 
+char *uipod_lastfm_menu_label(int selected_item, void *data,
+                              char *buffer, size_t buffer_len)
+{
+    (void)selected_item;
+    (void)data;
+
+    TpLfmConfigC cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    tp_lastfm_get_config(&cfg);
+
+    const char *title = str(LANG_UIPOD_LASTFM);
+    char status[96];
+
+    if (!cfg.enabled)
+        strlcpy(status, str(LANG_OFF), sizeof(status));
+    else if (tp_lastfm_is_authenticated() && cfg.username[0])
+        snprintf(status, sizeof(status), "@%s", cfg.username);
+    else if (tp_lastfm_is_authenticated())
+        strlcpy(status, str(LANG_UIPOD_LFM_SIGNED_IN), sizeof(status));
+    else
+        strlcpy(status, str(LANG_UIPOD_LFM_NOT_SIGNED_IN), sizeof(status));
+
+    snprintf(buffer, buffer_len, "%s%s%s",
+             title, UIPOD_INDIC_VALUE_CHEVRON, status);
+    return buffer;
+}
+
 int uipod_lastfm_menu_page(void)
 {
     struct lfm_settings_page p;

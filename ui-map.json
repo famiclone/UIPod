@@ -404,6 +404,19 @@
       "status": "mapped"
     },
     {
+      "id": "accounts_listenbrainz",
+      "figcraft_screen": null,
+      "node_id": null,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "crates/uipod-ui/src/layout.rs",
+        "crates/uipod-ui/src/renderer.rs",
+        "apps/uipod_listenbrainz.c",
+        "apps/uipod_listenbrainz.h"
+      ],
+      "status": "code_only"
+    },
+    {
       "id": "keyboard",
       "figcraft_screen": "Keyboard",
       "node_id": 4212,

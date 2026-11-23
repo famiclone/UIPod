@@ -50,6 +50,7 @@
 #include "uipod_navidrome.h"
 #include "uipod_jellyfin.h"
 #include "uipod_lastfm.h"
+#include "uipod_listenbrainz.h"
 #include "uipod_downloads.h"
 #include "uipod_plugins.h"
 #include "uipod_page.h"
@@ -127,19 +128,25 @@ static int uipod_about_page(void)
 static int uipod_exit_app(void)
 {
     uipod_lastfm_shutdown();
+    uipod_listenbrainz_shutdown();
     uipod_downloads_shutdown();
     sys_poweroff();
     return 0;
 }
 
-/* ---- Accounts (`Settings -> Accounts -> Last.fm`) --------------------- */
+/* ---- Accounts (`Settings -> Accounts -> Last.fm / ListenBrainz`) ------ */
 
-MENUITEM_FUNCTION(tp_acc_lastfm, MENU_SHOW_CHEVRON,
-                  ID2P(LANG_UIPOD_LASTFM), uipod_lastfm_menu_page,
-                  NULL, Icon_NOICON);
+MENUITEM_FUNCTION_DYNTEXT(tp_acc_lastfm, MENU_SHOW_CHEVRON,
+                          uipod_lastfm_menu_page,
+                          uipod_lastfm_menu_label, NULL, NULL,
+                          NULL, Icon_NOICON);
+MENUITEM_FUNCTION_DYNTEXT(tp_acc_listenbrainz, MENU_SHOW_CHEVRON,
+                          uipod_listenbrainz_menu_page,
+                          uipod_listenbrainz_menu_label, NULL, NULL,
+                          NULL, Icon_NOICON);
 MAKE_MENU(uipod_accounts_menu, ID2P(LANG_UIPOD_ACCOUNTS), NULL,
           Icon_Submenu_Entered,
-          &tp_acc_lastfm);
+          &tp_acc_lastfm, &tp_acc_listenbrainz);
 
 static int uipod_accounts_page(void)
 {

@@ -17,4 +17,5 @@ uipod-dj = { path = "../uipod-dj" }
 uipod-navidrome = { path = "../uipod-navidrome" }
 uipod-jellyfin = { path = "../uipod-jellyfin" }
 uipod-lastfm = { path = "../uipod-lastfm" }
+uipod-listenbrainz = { path = "../uipod-listenbrainz" }
 uipod-plugins = { path = "../uipod-plugins" }

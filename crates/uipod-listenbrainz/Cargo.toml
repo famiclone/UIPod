@@ -1,0 +1,11 @@
+[package]
+name = "uipod-listenbrainz"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust ListenBrainz scrobbling client, persistent offline scrobble cache, and C ABI for UIPod"
+
+[lib]
+name = "uipod_listenbrainz"
+crate-type = ["rlib"]
+
+[dependencies]

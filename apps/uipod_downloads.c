@@ -29,6 +29,7 @@
 
 #include "uipod_downloads.h"
 #include "uipod_lastfm.h"
+#include "uipod_listenbrainz.h"
 #include "uipod_library.h"
 #include "uipod_page.h"
 #include "uipod_rs_jellyfin.h"
@@ -370,7 +371,10 @@ void uipod_offline_mode_set(bool enabled)
     pthread_mutex_unlock(&s_dl_mtx);
 
     if (!enabled)
+    {
         uipod_lastfm_notify_online();
+        uipod_listenbrainz_notify_online();
+    }
 
     uipod_gpu_render_header();
 }

@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.7.0
+Version: v0.8.0
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -30,6 +30,7 @@ UIPod merges local SD-card folders and your personal streaming servers into a si
 • Jellyfin — Configure under Settings -> Sources -> Jellyfin. Supports music libraries plus Movies and TV Shows (direct-streaming compatible 8-bit H.264/MPEG4 on hardware CedarX and automatically transcoding HEVC/10-bit/4K/DTS on the server).
 • Video Player Controls & Subtitles — During local or Jellyfin video playback, press Hold A / MENU to open Video Settings: switch Aspect Mode (Fit / Crop / Stretch), select embedded Audio Tracks, and toggle external sidecar .srt Subtitles.
 • Last.fm Scrobbling (Settings -> Accounts -> Last.fm) — Sign in quickly via on-screen QR Code (or username/password / custom API keys in lastfm.cfg). Supports real-time Now Playing status, local & streaming scrobbling, and a persistent offline scrobble cache that automatically syncs when back online.
+• ListenBrainz Scrobbling (Settings -> Accounts -> ListenBrainz) — Enter your ListenBrainz User Token in-app or via listenbrainz.cfg (and optionally a custom Server URL for self-hosted Maloja or Koito instances). Supports live Now Playing updates, local/chiptune/streaming scrobbling, and an independent persistent offline scrobble cache that syncs concurrently alongside Last.fm.
 • Offline Mode — Toggle Settings -> Offline Mode to browse and play strictly local and already-downloaded media without network requests.
 • Downloads Queue — Press Hold A / MENU -> Download on any remote track, album, or video to save it permanently to /mnt/SDCARD/Media/. Monitor or manage active transfers in Extras -> Downloads (live DONE/TOTAL progress also appears in the top bar).
 

@@ -386,6 +386,7 @@ dependencies = [
  "uipod-dj",
  "uipod-jellyfin",
  "uipod-lastfm",
+ "uipod-listenbrainz",
  "uipod-navidrome",
  "uipod-nsf",
  "uipod-plugins",
@@ -398,6 +399,10 @@ version = "0.1.0"
 
 [[package]]
 name = "uipod-lastfm"
+version = "0.1.0"
+
+[[package]]
+name = "uipod-listenbrainz"
 version = "0.1.0"
 
 [[package]]

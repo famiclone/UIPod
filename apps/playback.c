@@ -49,6 +49,7 @@
 #include "uipod_rs_navidrome.h"
 #include "uipod_rs_jellyfin.h"
 #include "uipod_lastfm.h"
+#include "uipod_listenbrainz.h"
 #include "uipod_playlists.h"
 #include "uipod_rs_codecs.h"
 #include "uipod_dj.h"
@@ -1132,6 +1133,7 @@ static void audio_playlist_track_finish(void)
         uipod_navidrome_on_track_finish(id3);
         uipod_jellyfin_on_track_finish(id3);
         uipod_lastfm_on_track_finish(id3);
+        uipod_listenbrainz_on_track_finish(id3);
         send_track_event(PLAYBACK_EVENT_TRACK_FINISH,
                          track_event_flags, id3);
     }
@@ -1149,6 +1151,7 @@ static void audio_playlist_track_change(void)
         uipod_navidrome_on_track_change(id3->path);
         uipod_jellyfin_on_track_change(id3->path);
         uipod_lastfm_on_track_change(id3);
+        uipod_listenbrainz_on_track_change(id3);
         if (uipod_prefetch_on_track_change() && filling == STATE_FULL)
             audio_queue_post(Q_AUDIO_BUFFERING, BUFFER_EVENT_BUFFER_LOW);
         send_track_event(PLAYBACK_EVENT_TRACK_CHANGE,

@@ -161,6 +161,7 @@ pub enum Screen {
     AccountsMenu { sel: usize },
     LastFmMenu { sel: usize },
     LastFmQrAuth,
+    ListenBrainzMenu { sel: usize },
     LibraryMenu { sel: usize },
     LibraryFolderList { kind: u8, sel: usize },
     VisualizersMenu { sel: usize },
@@ -179,6 +180,8 @@ pub enum KbdTarget {
     ServerUser(bool),
     LastFmApiKey,
     LastFmApiSecret,
+    ListenBrainzToken,
+    ListenBrainzUrl,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,6 +331,11 @@ pub struct UIPodApp {
     pub lfm_streaming: bool,
     pub lfm_api_key: String,
     pub lfm_api_secret: String,
+    pub lb_enabled: bool,
+    pub lb_now_playing: bool,
+    pub lb_streaming: bool,
+    pub lb_user_token: String,
+    pub lb_api_url: String,
 
     pub volume_step: i32,
     pub clock_ms: u64,
@@ -414,6 +422,11 @@ impl UIPodApp {
             lfm_streaming: true,
             lfm_api_key: String::new(),
             lfm_api_secret: String::new(),
+            lb_enabled: true,
+            lb_now_playing: true,
+            lb_streaming: true,
+            lb_user_token: String::new(),
+            lb_api_url: "https://api.listenbrainz.org".to_string(),
             volume_step: 32,
             clock_ms: 1000,
             hold_locked: false,
@@ -2629,6 +2642,14 @@ impl UIPodApp {
                                 }
                                 KbdTarget::LastFmApiKey => self.lfm_api_key = text,
                                 KbdTarget::LastFmApiSecret => self.lfm_api_secret = text,
+                                KbdTarget::ListenBrainzToken => self.lb_user_token = text,
+                                KbdTarget::ListenBrainzUrl => {
+                                    self.lb_api_url = if text.trim().is_empty() {
+                                        "https://api.listenbrainz.org".to_string()
+                                    } else {
+                                        text
+                                    };
+                                }
                             }
                             self.state_dirty = true;
                             self.pop_screen(ui);
@@ -3167,11 +3188,15 @@ impl UIPodApp {
             }
 
             Screen::AccountsMenu { mut sel } => {
-                if self.nav_list(pressed, &mut sel, 1, ui) {
+                if self.nav_list(pressed, &mut sel, 2, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & btn::A) != 0 {
                     self.emit_click();
-                    self.push_screen(Screen::LastFmMenu { sel: 0 }, ui);
+                    if sel == 0 {
+                        self.push_screen(Screen::LastFmMenu { sel: 0 }, ui);
+                    } else {
+                        self.push_screen(Screen::ListenBrainzMenu { sel: 0 }, ui);
+                    }
                 }
             }
 
@@ -3232,6 +3257,60 @@ impl UIPodApp {
                 if (pressed & (btn::B | btn::A)) != 0 {
                     self.emit_click();
                     self.pop_screen(ui);
+                }
+            }
+
+            Screen::ListenBrainzMenu { mut sel } => {
+                if self.nav_list(pressed, &mut sel, 9, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.lb_enabled = !self.lb_enabled;
+                            self.state_dirty = true;
+                        }
+                        1 | 2 | 7 if !is_dir => {
+                            let cur = self.lb_user_token.clone();
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::ListenBrainzToken,
+                                    text: cur,
+                                    row: 0,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        3 => {
+                            self.lb_now_playing = !self.lb_now_playing;
+                            self.state_dirty = true;
+                        }
+                        4 => {
+                            self.lb_streaming = !self.lb_streaming;
+                            self.state_dirty = true;
+                        }
+                        8 if !is_dir => {
+                            let cur = self.lb_api_url.clone();
+                            self.push_screen(
+                                Screen::Keyboard {
+                                    target: KbdTarget::ListenBrainzUrl,
+                                    text: cur,
+                                    row: 0,
+                                    col: 0,
+                                    caps: false,
+                                    sym_mode: false,
+                                    allow_symbols: true,
+                                },
+                                ui,
+                            );
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -3436,6 +3515,7 @@ impl UIPodApp {
                 | Screen::SourceServerInfo { sel, .. }
                 | Screen::AccountsMenu { sel }
                 | Screen::LastFmMenu { sel }
+                | Screen::ListenBrainzMenu { sel }
                 | Screen::LibraryMenu { sel }
                 | Screen::LibraryFolderList { sel, .. }
                 | Screen::VisualizersMenu { sel }
@@ -4818,11 +4898,32 @@ impl UIPodApp {
             }
 
             Screen::AccountsMenu { sel } => {
-                let items = vec![(
-                    "Last.fm".to_string(),
-                    FileIconKind::None,
-                    OwnedRight::Chevron,
-                )];
+                let not_signed = self.tr("Not signed in", "Не здійснено вхід").to_string();
+                let off_lbl = self.tr("Off", "Вимк.").to_string();
+                let lfm_st = if !self.lfm_enabled {
+                    off_lbl.clone()
+                } else {
+                    not_signed.clone()
+                };
+                let lb_st = if !self.lb_enabled {
+                    off_lbl
+                } else if !self.lb_user_token.trim().is_empty() {
+                    self.tr("Signed in", "Вхід виконано").to_string()
+                } else {
+                    not_signed
+                };
+                let items = vec![
+                    (
+                        "Last.fm".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::ValueChevron(lfm_st),
+                    ),
+                    (
+                        "ListenBrainz".to_string(),
+                        FileIconKind::None,
+                        OwnedRight::ValueChevron(lb_st),
+                    ),
+                ];
                 self.render_list(ui, self.tr("Accounts", "Акаунти"), &items, sel);
             }
 
@@ -4878,6 +4979,78 @@ impl UIPodApp {
                     ("API Secret".to_string(), FileIconKind::None, OwnedRight::Value(sec_lbl)),
                 ];
                 self.render_list(ui, "Last.fm", &items, sel);
+            }
+
+            Screen::ListenBrainzMenu { sel } => {
+                let not_set = self.tr("Not set", "Не задано").to_string();
+                let tok = self.lb_user_token.trim();
+                let tok_lbl = if tok.is_empty() {
+                    not_set
+                } else if tok.len() <= 8 {
+                    "••••••••".to_string()
+                } else {
+                    format!("{}…{}", &tok[..4], &tok[tok.len() - 4..])
+                };
+                let acc_lbl = if tok.is_empty() {
+                    self.tr("Not signed in", "Не здійснено вхід").to_string()
+                } else {
+                    self.tr("Signed in", "Вхід виконано").to_string()
+                };
+                let url_disp = self
+                    .lb_api_url
+                    .trim()
+                    .strip_prefix("https://")
+                    .or_else(|| self.lb_api_url.trim().strip_prefix("http://"))
+                    .unwrap_or(self.lb_api_url.trim())
+                    .to_string();
+                let items = vec![
+                    (
+                        self.tr("Scrobbling", "Скроблінг").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.lb_enabled),
+                    ),
+                    (
+                        self.tr("Account", "Акаунт").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(acc_lbl),
+                    ),
+                    (
+                        self.tr("Sign In with Token", "Вхід за токеном").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Chevron,
+                    ),
+                    (
+                        self.tr("Now Playing", "Статус відтворення").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.lb_now_playing),
+                    ),
+                    (
+                        self.tr("Scrobble Streaming", "Скроблити стрімінг").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Toggle(self.lb_streaming),
+                    ),
+                    (
+                        self.tr("Sync Cached Scrobbles", "Відправити кеш скроблів").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value("0".into()),
+                    ),
+                    (
+                        self.tr("Clear Cached Scrobbles", "Очистити кеш скроблів").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value("0".into()),
+                    ),
+                    (
+                        self.tr("User Token", "Токен користувача").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(tok_lbl),
+                    ),
+                    (
+                        self.tr("Server URL", "Адреса сервера").to_string(),
+                        FileIconKind::None,
+                        OwnedRight::Value(url_disp),
+                    ),
+                ];
+                self.render_list(ui, "ListenBrainz", &items, sel);
             }
 
             Screen::LastFmQrAuth => {

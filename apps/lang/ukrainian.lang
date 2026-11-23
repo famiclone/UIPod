@@ -3530,3 +3530,115 @@
     *: "Плавний скіп"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_LISTENBRAINZ
+  desc: UIPod Settings -> Accounts -> ListenBrainz
+  user: core
+  <source>
+    *: "ListenBrainz"
+  </source>
+  <dest>
+    *: "ListenBrainz"
+  </dest>
+  <voice>
+    *: "ListenBrainz"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SIGN_IN_TOKEN
+  desc: UIPod ListenBrainz sign in with user token
+  user: core
+  <source>
+    *: "Sign In with Token"
+  </source>
+  <dest>
+    *: "Вхід за токеном"
+  </dest>
+  <voice>
+    *: "Вхід за токеном"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_NOW_PLAYING
+  desc: UIPod ListenBrainz Now Playing live status toggle
+  user: core
+  <source>
+    *: "Now Playing"
+  </source>
+  <dest>
+    *: "Статус відтворення"
+  </dest>
+  <voice>
+    *: "Статус відтворення"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_USER_TOKEN
+  desc: UIPod ListenBrainz User Token field
+  user: core
+  <source>
+    *: "User Token"
+  </source>
+  <dest>
+    *: "Токен користувача"
+  </dest>
+  <voice>
+    *: "Токен користувача"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_INVALID_TOKEN
+  desc: UIPod ListenBrainz invalid token status
+  user: core
+  <source>
+    *: "Invalid token"
+  </source>
+  <dest>
+    *: "Невірний токен"
+  </dest>
+  <voice>
+    *: "Невірний токен"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SIGN_OUT_Q
+  desc: UIPod ListenBrainz sign out confirmation prompt
+  user: core
+  <source>
+    *: "Sign out of ListenBrainz?"
+  </source>
+  <dest>
+    *: "Вийти з ListenBrainz?"
+  </dest>
+  <voice>
+    *: "Вийти з ListenBrainz?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SYNCING
+  desc: UIPod ListenBrainz foreground sync status
+  user: core
+  <source>
+    *: "Syncing ListenBrainz..."
+  </source>
+  <dest>
+    *: "Синхронізація з ListenBrainz..."
+  </dest>
+  <voice>
+    *: "Синхронізація з ListenBrainz"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_LB_SET_TOKEN_FIRST
+  desc: UIPod ListenBrainz missing token warning
+  user: core
+  <source>
+    *: "Set User Token first"
+  </source>
+  <dest>
+    *: "Спочатку вкажіть токен"
+  </dest>
+  <voice>
+    *: "Спочатку вкажіть токен"
+  </voice>
+</phrase>

@@ -2,7 +2,7 @@
 
 An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player built for the **TrimUI Brick (`tg5040`)** running [NextUI](https://github.com/LoveRetro/NextUI), **Android retro handhelds (`arm64-v8a`)**, and the browser via **WebAssembly + WebGL2**.
 
-Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audio core with dynamic native-HiDPI pure-Rust OpenGL ES 3.0 UI rendering (`uipod-ui` across `16:9`, `16:10`, `3:2`, `4:3`, `1:1`, and portrait displays), pure-Rust **Navidrome** (`uipod-navidrome`), **Jellyfin** (`uipod-jellyfin`), and **Last.fm** (`uipod-lastfm`) modules, hardware video playback with `.srt` subtitles, studio DSP effects, AutoEQ headphone profiles, native `.uipod` plugins/games, and Bayer-dithered 4-shade GPU audio visualizers.
+Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audio core with dynamic native-HiDPI pure-Rust OpenGL ES 3.0 UI rendering (`uipod-ui` across `16:9`, `16:10`, `3:2`, `4:3`, `1:1`, and portrait displays), pure-Rust **Navidrome** (`uipod-navidrome`), **Jellyfin** (`uipod-jellyfin`), **Last.fm** (`uipod-lastfm`), and **ListenBrainz** (`uipod-listenbrainz`) modules, hardware video playback with `.srt` subtitles, studio DSP effects, AutoEQ headphone profiles, native `.uipod` plugins/games, and Bayer-dithered 4-shade GPU audio visualizers.
 
 ## Features
 
@@ -12,7 +12,7 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
   - **Navidrome / Subsonic (`Settings → Sources → Navidrome`)**: Streaming, sliding-window queue prefetching, Favourites playlist, and persistent background `Download` queue into `/mnt/SDCARD/Media/Music/navidrome`.
   - **Jellyfin (`Settings → Sources → Jellyfin`)**: Movies, TV Shows (`Seasons → Episodes`), and Music libraries with zero-CPU Direct Stream (`Static=true`), automatic server-side H.264/AAC transcoding, resume sync, and offline downloads.
   - **Video Player (`Hold A / MENU`)**: Hardware video playback with selectable **Aspect Mode** (`Fit` / `Crop` / `Stretch`), multi-track **Audio Track** switching, and external sidecar **`.srt` Subtitles**.
-  - **Last.fm Scrobbling 2.0 (`Settings → Accounts → Last.fm`)**: Pure-Rust client with on-screen **QR Code Sign-In**, real-time Now Playing updates, local & streaming scrobbling, and a persistent offline scrobble cache.
+  - **Last.fm & ListenBrainz Scrobbling (`Settings → Accounts`)**: Concurrent pure-Rust clients for **Last.fm** (on-screen **QR Code Sign-In**, password login, `lastfm.cfg`) and **ListenBrainz** (User Token validation, custom **Server URL** for self-hosted Maloja/Koito, `listenbrainz.cfg`) with real-time Now Playing updates, local/chiptune/streaming scrobbling, and independent persistent offline scrobble caches.
 - **Studio DSP, Graphic EQ & AutoEQ (`Settings → Sound`)**:
   - **10-Band Parametric & GPU Graphic EQ** (Preamp + 10 vertical band sliders with `X` quick Bypass) and a searchable offline **AutoEQ** headphone database.
   - **Stereo Effects Suite (`Settings → Sound → Effects`)**: Master `FX` toggle + **Speed (Texture Warp)** granular time-stretching (`1/16×–1.5×`), **Walkman Tape Mode** (Wow & Flutter, Hiss, Crinkles, Saturation, HF Roll-Off, Pause spin-down/up, Seek motor sound), **Reverb**, **Ping-Pong Delay**, **Chorus**, and **Flanger**.
@@ -40,17 +40,17 @@ Built on a heavily customized [Rockbox](https://github.com/Rockbox/rockbox) audi
 ## Installation & Web Simulator
 
 ### Try in Browser (WebAssembly + WebGL2)
-Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.7.0-web.zip` from Releases).
+Open the live interactive TrimUI Brick simulator & Web Studio on **GitHub Pages**: [**famiclone.github.io/UIPod**](https://famiclone.github.io/UIPod/) (or download `UIPod-v0.8.0-web.zip` from Releases).
 
 ### TrimUI Brick / Hammer (`tg5040` / NextUI)
-1. Download `UIPod-v0.7.0-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
+1. Download `UIPod-v0.8.0-brick.zip` (or install `UIPod.pak.zip` directly via **NextUI Pak Store**) from [Releases](https://github.com/famiclone/UIPod/releases/latest).
 2. Extract `UIPod.pak` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak` (so `launch.sh` sits at `/mnt/SDCARD/Tools/tg5040/UIPod.pak/launch.sh`).
 3. On your TrimUI Brick, launch **Tools → UIPod**.
 
 ### Android Handhelds (`arm64-v8a`)
-1. Download `UIPod-v0.7.0-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
+1. Download `UIPod-v0.8.0-android-arm64.apk` from [Releases](https://github.com/famiclone/UIPod/releases/latest) (Android 8.0+ / API 26+).
 2. Install on your Retroid, Odin, Anbernic, Ayaneo, or gamepad-equipped Android device.
-3. Grant media storage access to scan local folders, or configure Navidrome / Jellyfin / Last.fm in **Settings**.
+3. Grant media storage access to scan local folders, or configure Navidrome / Jellyfin / Last.fm / ListenBrainz in **Settings**.
 
 ## Building Locally
 
