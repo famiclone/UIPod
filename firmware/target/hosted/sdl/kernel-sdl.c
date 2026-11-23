@@ -211,9 +211,9 @@ void wait_for_interrupt(void)
     SDL_CondWaitTimeout(wfi_cond, wfi_mutex, 10);
     sdl_android_pump_events();
 #else
-    /* the exit may come at any time, during the CondWait or before,
-     * so check it twice */
-    SDL_CondWait(wfi_cond, wfi_mutex);
+    /* Bounded 10ms wait prevents any lost-wakeup stall between enable_irq()
+     * and SDL_CondWait() when tick_timer / sdl_event_thread signals wfi_cond. */
+    SDL_CondWaitTimeout(wfi_cond, wfi_mutex, 10);
 #endif
 }
 #endif

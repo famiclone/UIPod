@@ -323,7 +323,8 @@ pub struct UIPodApp {
     pub cpu_idx: usize,
     pub charge_limit_pct: u8,
     pub video_aspect_idx: usize,
-    pub video_audio_sync_ms: i32,
+    pub video_audio_idx: usize,
+    pub video_sub_idx: usize,
     pub navidrome_url: String,
     pub navidrome_user: String,
     pub jellyfin_url: String,
@@ -415,7 +416,8 @@ impl UIPodApp {
             cpu_idx: 0,
             charge_limit_pct: 80,
             video_aspect_idx: 0,
-            video_audio_sync_ms: 0,
+            video_audio_idx: 0,
+            video_sub_idx: 0,
             navidrome_url: String::new(),
             navidrome_user: String::new(),
             jellyfin_url: String::new(),
@@ -2056,6 +2058,10 @@ impl UIPodApp {
                     self.emit_click();
                     self.push_screen(Screen::VideoContextMenu { sel: 0 }, ui);
                     return;
+                } else if (pressed & btn::X) != 0 {
+                    self.emit_click();
+                    self.video_aspect_idx = (self.video_aspect_idx + 1) % 2;
+                    self.state_dirty = true;
                 } else if (pressed & (btn::LEFT | btn::L2)) != 0 {
                     pos_ms = pos_ms.saturating_sub(10_000);
                 } else if (pressed & (btn::RIGHT | btn::R2)) != 0 {
@@ -2078,7 +2084,12 @@ impl UIPodApp {
 
             Screen::VideoContextMenu { mut sel } => {
                 // Exact 3 rows from `apps/uipod_video.c` (`#11301` — `Video Settings`):
-                // Aspect Ratio, Brightness, Audio Sync
+                // Aspect Fit, Audio Track, Subtitles
+                if (pressed & btn::MENU) != 0 {
+                    self.emit_click();
+                    self.pop_screen(ui);
+                    return;
+                }
                 if self.nav_list(pressed, &mut sel, 3, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
@@ -2086,21 +2097,17 @@ impl UIPodApp {
                     self.emit_click();
                     match sel {
                         0 => {
-                            self.video_aspect_idx = if left {
-                                (self.video_aspect_idx + 2) % 3
-                            } else {
-                                (self.video_aspect_idx + 1) % 3
-                            };
+                            self.video_aspect_idx = (self.video_aspect_idx + 1) % 2;
                         }
                         1 => {
-                            let d = if left { -10i32 } else { 10i32 };
-                            self.brightness_pct =
-                                (self.brightness_pct as i32 + d).clamp(10, 100) as u8;
+                            self.video_audio_idx = (self.video_audio_idx + 1) % 2;
                         }
                         _ => {
-                            let d = if left { -50i32 } else { 50i32 };
-                            self.video_audio_sync_ms =
-                                (self.video_audio_sync_ms + d).clamp(-500, 500);
+                            self.video_sub_idx = if left {
+                                (self.video_sub_idx + 2) % 3
+                            } else {
+                                (self.video_sub_idx + 1) % 3
+                            };
                         }
                     }
                     self.state_dirty = true;
@@ -4139,8 +4146,7 @@ impl UIPodApp {
                 // 4-shade video frame viewport (`#10724` Video Player)
                 let aspect_w = match self.video_aspect_idx {
                     1 => 960.0f32,
-                    2 => 720.0f32,
-                    _ => 840.0f32,
+                    _ => 768.0f32,
                 };
                 let vx = (1024.0 - aspect_w) * 0.5;
                 let vy = 148.0f32;
@@ -4172,6 +4178,14 @@ impl UIPodApp {
                     1,
                     self.theme.fg_rgb,
                 );
+                if self.video_sub_idx > 0 {
+                    let cue = if self.video_sub_idx == 2 {
+                        "Сигнал із мережі Cyberia прийнято."
+                    } else {
+                        "Signal acquired on the Cyberia carrier."
+                    };
+                    ui.plugin_draw_text(512.0, vy + vh - 38.0, cue, 28.0, 2, 1, self.theme.fg_rgb);
+                }
 
                 // Bottom OSD pill
                 let prog = (pos_ms as f32 / dur_ms.max(1) as f32).clamp(0.0, 1.0);
@@ -4182,7 +4196,7 @@ impl UIPodApp {
                 ui.plugin_draw_text(
                     512.0,
                     698.0,
-                    self.tr("Hold A / Menu: Video Settings", "Утрим. A / Menu: Параметри відео"),
+                    self.tr("Hold A / Menu: Video Settings", "Утрим. A / Menu: Налаштування Відео"),
                     24.0,
                     1,
                     1,
@@ -4194,35 +4208,38 @@ impl UIPodApp {
             Screen::VideoContextMenu { sel } => {
                 // Exact 3 rows from `apps/uipod_video.c` (`#11301` — `Video Settings`)
                 let aspect_lbl = match self.video_aspect_idx {
-                    1 => self.tr("Fill (4:3)", "На весь екран (4:3)"),
-                    2 => self.tr("Original", "Оригінал"),
-                    _ => self.tr("Fit", "Вписати"),
+                    1 => self.tr("Stretch", "Розтягнути"),
+                    _ => self.tr("Fit", "Пропорційно"),
                 };
-                let sync_lbl = if self.video_audio_sync_ms > 0 {
-                    format!("+{} ms", self.video_audio_sync_ms)
-                } else {
-                    format!("{} ms", self.video_audio_sync_ms)
+                let audio_lbl = match self.video_audio_idx {
+                    1 => "Track 2 (UK, FLAC)",
+                    _ => "Track 1 (EN, AAC)",
+                };
+                let sub_lbl = match self.video_sub_idx {
+                    1 => "SRT (en)",
+                    2 => "SRT (uk)",
+                    _ => self.tr("Off", "Вимк."),
                 };
                 let items = vec![
                     (
-                        self.tr("Aspect Ratio", "Пропорції").to_string(),
+                        self.tr("Aspect Fit", "Формат кадру").to_string(),
                         FileIconKind::None,
                         OwnedRight::CycleValue(aspect_lbl.to_string()),
                     ),
                     (
-                        self.tr("Brightness", "Яскравість").to_string(),
+                        self.tr("Audio Track", "Аудіодоріжка").to_string(),
                         FileIconKind::None,
-                        OwnedRight::CycleValue(format!("{}%", self.brightness_pct)),
+                        OwnedRight::CycleValue(audio_lbl.to_string()),
                     ),
                     (
-                        self.tr("Audio Sync", "Синхронізація звуку").to_string(),
+                        self.tr("Subtitles", "Субтитри").to_string(),
                         FileIconKind::None,
-                        OwnedRight::CycleValue(sync_lbl),
+                        OwnedRight::CycleValue(sub_lbl.to_string()),
                     ),
                 ];
                 self.render_list(
                     ui,
-                    self.tr("Video Settings", "Параметри відео"),
+                    self.tr("Video Settings", "Налаштування Відео"),
                     &items,
                     sel,
                 );

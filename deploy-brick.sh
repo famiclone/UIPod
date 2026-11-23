@@ -87,10 +87,13 @@ if [ -z "$ADB_BIN" ]; then
   exit 1
 fi
 
-# 2. Build & package if requested or if dist/UIPod.pak is missing
+# 2. Build & package if requested, if dist/UIPod.pak is missing, or if build-uipod/uipod is newer
 if [ "$DO_BUILD" -eq 1 ] || [ ! -x "$PAK_SRC/uipod/uipod" ]; then
   echo ">> Building & packaging UIPod.pak for TrimUI Brick ..."
   "$ROOT/build.sh"
+  "$ROOT/package.sh"
+elif [ -x "$ROOT/build-uipod/uipod" ] && [ "$ROOT/build-uipod/uipod" -nt "$PAK_SRC/uipod/uipod" ]; then
+  echo ">> Repackaging updated build-uipod/uipod into dist/UIPod.pak ..."
   "$ROOT/package.sh"
 fi
 
@@ -147,25 +150,34 @@ if [ -n "$EXISTING_PAK" ]; then
   REMOTE_PAK="$EXISTING_PAK"
 fi
 
-# 4. Gracefully stop UIPod if currently running on the Brick.
+# 4. Stop UIPod (and any video/MTP helper processes) if currently running on the Brick.
 #    Note: stopping UIPod while USB is plugged in triggers `mtp.sh stop`
 #    (`/bin/setusbconfig adb`), which briefly re-enumerates USB (~1s).
-if adb_cmd shell "pidof uipod >/dev/null 2>&1"; then
+if adb_cmd shell "pidof uipod tplayerslave umtprd >/dev/null 2>&1"; then
   echo ">> Stopping running UIPod instance on Brick ..."
-  adb_cmd shell "kill -TERM \$(pidof uipod) 2>/dev/null || true" || true
-  sleep 1.2
+  adb_cmd shell "killall -TERM uipod 2>/dev/null || true" || true
+  sleep 0.9
   adb_cmd wait-for-device
-  # Wait up to 3s for launch.sh cleanup() to unmount /tmp/uipod
+  # Escalate to SIGKILL if uipod, tplayerslave, or any pak child is hung/orphaned,
+  # then wait for launch.sh cleanup() to restore keymon and unmount /tmp/uipod.
   adb_cmd shell '
     i=0
-    while pidof uipod >/dev/null 2>&1 && [ $i -lt 20 ]; do
+    while pidof uipod >/dev/null 2>&1 && [ $i -lt 6 ]; do
       sleep 0.15
       i=$((i + 1))
     done
+    if pidof uipod tplayerslave ffprobe ffmpeg umtprd >/dev/null 2>&1; then
+      killall -STOP tplayerslave 2>/dev/null || true
+      killall -9 tplayerslave ffprobe ffmpeg uipod umtprd 2>/dev/null || true
+      pkill -9 -f "UIPod\.pak/uipod/" 2>/dev/null || true
+      sleep 0.3
+    fi
     while mount 2>/dev/null | grep -q "/tmp/uipod"; do
       umount -l /tmp/uipod 2>/dev/null || break
     done
   ' >/dev/null 2>&1 || true
+  sleep 0.5
+  adb_cmd wait-for-device
 fi
 
 # 5. Deploy files

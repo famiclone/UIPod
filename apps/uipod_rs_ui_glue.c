@@ -383,7 +383,7 @@ bool uipod_gpu_render_header(void)
                                                 &hdr,
                                                 (uint32_t)win_w,
                                                 (uint32_t)win_h);
-        if (ok && !s_capturing_transition)
+        if (ok && !s_capturing_transition && !lcd_is_update_suppressed())
             uipod_gpu_present_current_fbo();
         return ok;
     }

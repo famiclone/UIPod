@@ -977,6 +977,9 @@ bool action_userabort(int timeout)
 static bool s_start_solo = false;
 #endif
 
+static long home_tick;  static bool home_fired;
+static long ctx_tick;   static bool ctx_fired;
+
 void action_wait_for_release(void)
 {
     if (!(action_last.button & BUTTON_REL) || button_status() != BUTTON_NONE)
@@ -984,6 +987,10 @@ void action_wait_for_release(void)
 #ifdef BUTTON_START
     s_start_solo = false;
 #endif
+    home_tick = 0;
+    home_fired = false;
+    ctx_tick = 0;
+    ctx_fired = false;
     button_clear_pressed();
 }
 
@@ -1145,8 +1152,6 @@ static int tp_hold(int button, int action, int btn, int secondary,
     return action;
 }
 
-static long home_tick;  static bool home_fired;
-
 static int global_home_action(int context, int button, int action)
 {
     if (TP_CTX_BASE(context) == CONTEXT_KEYBOARD)
@@ -1154,8 +1159,6 @@ static int global_home_action(int context, int button, int action)
     return tp_hold(button, action, BUTTON_B, ACTION_TP_HOME, &home_tick,
                    &home_fired);
 }
-
-static long ctx_tick;   static bool ctx_fired;
 
 static int global_context_action(int context, int button, int action)
 {

@@ -28,6 +28,7 @@
 #include "font.h"
 #include "kernel.h"
 #include "lang.h"
+#include "lcd.h"
 #include "misc.h"
 #include "powermgmt.h"
 #include "screen_access.h"
@@ -310,12 +311,19 @@ static int display_position(void)
     return v.seek_target_ms >= 0 ? v.seek_target_ms : v.position_ms;
 }
 
-static const char *aspect_label(void)
+static const char *aspect_label_for(enum retrohh_video_aspect a)
 {
     static const int labels[RETROHH_VIDEO_ASPECT_COUNT] = {
         LANG_UIPOD_ASPECT_FIT, LANG_UIPOD_ASPECT_STRETCH,
     };
-    return str(labels[aspect]);
+    if ((int)a < 0 || a >= RETROHH_VIDEO_ASPECT_COUNT)
+        a = RETROHH_VIDEO_FIT;
+    return str(labels[a]);
+}
+
+static const char *aspect_label(void)
+{
+    return aspect_label_for(aspect);
 }
 
 static void draw_progress(struct screen *display)
@@ -441,6 +449,8 @@ static bool srt_load_file(const char *srt_path)
         int lno = 0;
         while (read_line(fd, line, sizeof(line)) > 0)
         {
+            if (!line[0])
+                break;
             strip_srt_tags(line);
             if (!line[0])
                 continue;
@@ -642,6 +652,12 @@ static void set_paused(bool paused)
 {
     v.paused = paused;
     retrohh_video_pause(paused);
+    if (!paused)
+    {
+        v.stalled_polls = 0;
+        if (TIME_BEFORE(v.ignore_report_until, current_tick + SEEK_REPORT_TICKS))
+            v.ignore_report_until = current_tick + SEEK_REPORT_TICKS;
+    }
     show_progress();
     if (s_stream_opts && s_stream_opts->on_progress && v.reported)
         s_stream_opts->on_progress(s_stream_opts->cb_ctx, display_position(), paused, false);
@@ -755,11 +771,12 @@ enum
 
 struct video_ctx_page
 {
-    struct uipod_page   base;
-    struct gui_synclist lists;
-    int                 audio_idx;
-    int                 sub_idx; /* -1 = Off, 0..sub_count-1 */
-    char                indic_buf[3][64];
+    struct uipod_page         base;
+    struct gui_synclist       lists;
+    enum retrohh_video_aspect aspect_mode;
+    int                       audio_idx;
+    int                       sub_idx; /* -1 = Off, 0..sub_count-1 */
+    char                      indic_buf[3][64];
 };
 
 static const char *vctx_get_name(int sel, void *data, char *buf, size_t buf_len)
@@ -782,7 +799,8 @@ static const char *vctx_get_indic(int sel, void *data)
 
     if (sel == VCTX_ROW_ASPECT)
     {
-        snprintf(p->indic_buf[0], sizeof(p->indic_buf[0]), "%s", aspect_label());
+        snprintf(p->indic_buf[0], sizeof(p->indic_buf[0]), "%s",
+                 aspect_label_for(p->aspect_mode));
         return p->indic_buf[0];
     }
     if (sel == VCTX_ROW_AUDIO)
@@ -802,26 +820,40 @@ static const char *vctx_get_indic(int sel, void *data)
     return p->indic_buf[2];
 }
 
-static void vctx_cycle_row(struct video_ctx_page *p, int sel, int dir)
+static bool vctx_cycle_row(struct video_ctx_page *p, int sel, int dir)
 {
     if (sel == VCTX_ROW_ASPECT)
     {
         int n = (int)RETROHH_VIDEO_ASPECT_COUNT;
-        aspect = (enum retrohh_video_aspect)(((int)aspect + dir + n) % n);
+        enum retrohh_video_aspect next =
+            (enum retrohh_video_aspect)(((int)p->aspect_mode + dir + n) % n);
+        if (next == p->aspect_mode)
+            return false;
+        p->aspect_mode = next;
+        return true;
     }
-    else if (sel == VCTX_ROW_AUDIO && info.audio_count > 1)
+    if (sel == VCTX_ROW_AUDIO && info.audio_count > 1)
     {
         int n = info.audio_count;
-        p->audio_idx = (p->audio_idx + dir + n) % n;
+        int next = (p->audio_idx + dir + n) % n;
+        if (next == p->audio_idx)
+            return false;
+        p->audio_idx = next;
+        return true;
     }
-    else if (sel == VCTX_ROW_SUBS && info.sub_count > 0)
+    if (sel == VCTX_ROW_SUBS && info.sub_count > 0)
     {
         /* Cycle through -1 (Off), 0, 1, ..., sub_count - 1 */
         int total = info.sub_count + 1;
         int cur   = p->sub_idx + 1;
         cur = (cur + dir + total) % total;
-        p->sub_idx = cur - 1;
+        int next = cur - 1;
+        if (next == p->sub_idx)
+            return false;
+        p->sub_idx = next;
+        return true;
     }
+    return false;
 }
 
 static void vctx_draw(struct uipod_page *self)
@@ -831,9 +863,9 @@ static void vctx_draw(struct uipod_page *self)
 
 static int vctx_poll(struct uipod_page *self, int timeout)
 {
-    int action = get_action(self->context, timeout);
-    if (list_do_action_timeout(&((struct video_ctx_page *)self)->lists, action))
-        return ACTION_NONE;
+    int action;
+    list_do_action(self->context, timeout,
+                   &((struct video_ctx_page *)self)->lists, &action);
     return action;
 }
 
@@ -843,18 +875,27 @@ static enum uipod_page_result vctx_on_action(struct uipod_page *self, int action
     int sel = gui_synclist_get_sel_pos(&p->lists);
 
     if (action == ACTION_STD_CANCEL || action == ACTION_STD_CONTEXT)
-    {
-        uipod_transition_arm_back();
         return UIPOD_PAGE_DONE;
-    }
-    if (action == ACTION_SETTINGS_INC || action == ACTION_STD_OK)
+
+    if (action == ACTION_SETTINGS_INC ||
+        action == ACTION_SETTINGS_INCREPEAT ||
+        action == ACTION_STD_OK)
     {
-        vctx_cycle_row(p, sel, +1);
+        if (vctx_cycle_row(p, sel, +1))
+        {
+            uipod_menu_click();
+            gui_synclist_draw(&p->lists);
+        }
         return UIPOD_PAGE_STAY;
     }
-    if (action == ACTION_SETTINGS_DEC)
+    if (action == ACTION_SETTINGS_DEC ||
+        action == ACTION_SETTINGS_DECREPEAT)
     {
-        vctx_cycle_row(p, sel, -1);
+        if (vctx_cycle_row(p, sel, -1))
+        {
+            uipod_menu_click();
+            gui_synclist_draw(&p->lists);
+        }
         return UIPOD_PAGE_STAY;
     }
     return UIPOD_PAGE_STAY;
@@ -871,46 +912,75 @@ static const struct uipod_page_vtable vctx_vtable =
 static const int vctx_allowed[] =
 {
     ACTION_STD_OK, ACTION_STD_CANCEL, ACTION_STD_CONTEXT,
-    ACTION_SETTINGS_INC, ACTION_SETTINGS_DEC, -1
+    ACTION_SETTINGS_INC, ACTION_SETTINGS_INCREPEAT,
+    ACTION_SETTINGS_DEC, ACTION_SETTINGS_DECREPEAT, -1
 };
 
 static void open_video_settings_menu(void)
 {
-    bool was_paused = v.paused;
-    if (!was_paused)
-        retrohh_video_pause(true);
+    if (v.seek_target_ms >= 0)
+    {
+        v.seek_send_tick = current_tick;
+        send_queued_seek();
+    }
 
-    hide_video();
+    bool was_paused = v.paused;
+    long menu_opened_tick = current_tick;
+    if (!was_paused)
+    {
+        v.paused = true;
+        retrohh_video_pause(true);
+    }
+
+    /* Switch the GL surface to opaque and re-activate the Rust GPU renderer
+     * while updates are suppressed so Video Settings draws in one atomic pass
+     * over the paused video with zero black or stale-FBO flash. */
+    retrohh_video_set_overlay(false, 0);
+    lcd_set_update_suppressed(true);
+    uipod_gpu_set_active(true);
     FOR_NB_SCREENS(i)
-        viewportmanager_theme_undo(i, true);
+        viewportmanager_theme_undo(i, false);
 
     struct video_ctx_page p;
     memset(&p, 0, sizeof(p));
-    p.base.vt      = &vctx_vtable;
-    p.base.context = CONTEXT_SETTINGS_RECTRIGGER;
-    p.base.allowed = vctx_allowed;
-    p.base.title   = str(LANG_UIPOD_VIDEO_SETTINGS);
-    p.audio_idx    = s_active_audio_idx;
-    p.sub_idx      = s_active_sub_idx;
+    p.base.vt                = &vctx_vtable;
+    p.base.context           = CONTEXT_SETTINGS_RECTRIGGER;
+    p.base.allowed           = vctx_allowed;
+    p.base.title             = str(LANG_UIPOD_VIDEO_SETTINGS);
+    p.base.no_enter_anim     = true;
+    p.base.no_arm_back       = true;
+    p.base.no_header_refresh = true;
+    p.aspect_mode            = aspect;
+    p.audio_idx              = s_active_audio_idx;
+    p.sub_idx                = s_active_sub_idx;
 
     gui_synclist_init(&p.lists, vctx_get_name, &p, false, 1, NULL);
     gui_synclist_set_title(&p.lists, (char *)str(LANG_UIPOD_VIDEO_SETTINGS), Icon_NOICON);
     gui_synclist_set_indicator_callback(&p.lists, vctx_get_indic);
     gui_synclist_set_nb_items(&p.lists, VCTX_ROW_COUNT);
     gui_synclist_select_item(&p.lists, 0);
+    lcd_set_update_suppressed(false);
 
     uipod_page_run(&p.base);
 
     /* Apply updated video aspect, audio stream, and subtitles */
-    retrohh_video_set_aspect(&info, aspect);
+    if (p.aspect_mode != aspect)
+    {
+        aspect = p.aspect_mode;
+        retrohh_video_set_aspect(&info, aspect);
+    }
+    else if (v.reported)
+    {
+        retrohh_video_set_aspect(&info, aspect);
+    }
 
-    if (p.audio_idx != s_active_audio_idx)
+    if (!p.base.home && p.audio_idx != s_active_audio_idx)
     {
         s_active_audio_idx = p.audio_idx;
         retrohh_video_set_audio_track(s_active_audio_idx);
     }
 
-    if (p.sub_idx != s_active_sub_idx)
+    if (!p.base.home && p.sub_idx != s_active_sub_idx)
     {
         s_active_sub_idx = p.sub_idx;
         if (s_active_sub_idx < 0 || s_active_sub_idx >= info.sub_count)
@@ -932,19 +1002,49 @@ static void open_video_settings_menu(void)
         }
     }
 
+    lcd_set_update_suppressed(true);
     FOR_NB_SCREENS(i)
         viewportmanager_theme_enable(i, false, NULL);
+    lcd_set_update_suppressed(false);
 
-    hide_video();
     v.drawn_once = false;
     v.shown = PANEL_NONE;
     v.shown_cue_idx = -1;
 
-    if (!p.base.home && !was_paused)
-        retrohh_video_pause(false);
-
     if (p.base.home)
+    {
+        hide_video();
         uipod_home_pending = true;
+        return;
+    }
+
+    long menu_elapsed = current_tick - menu_opened_tick;
+    if (!v.revealed && menu_elapsed > 0)
+        v.reveal_by += menu_elapsed;
+
+    if (!was_paused)
+    {
+        v.paused = false;
+        v.stalled_polls = 0;
+        if (TIME_BEFORE(v.ignore_report_until, current_tick + SEEK_REPORT_TICKS))
+            v.ignore_report_until = current_tick + SEEK_REPORT_TICKS;
+        retrohh_video_pause(false);
+    }
+    else
+    {
+        v.paused = true;
+    }
+
+    if (v.revealed)
+    {
+        uipod_gpu_set_active(false);
+        show_progress();
+        overlay_update();
+    }
+    else
+    {
+        hide_video();
+    }
 }
 
 static void run_session(void)
@@ -1016,6 +1116,7 @@ static void run_session(void)
                 open_video_settings_menu();
                 if (uipod_home_pending)
                     return;
+                next_poll = current_tick + (v.revealed ? POLL_TICKS : 0);
                 show_progress();
                 break;
             default:

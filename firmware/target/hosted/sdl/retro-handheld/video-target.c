@@ -224,6 +224,7 @@ bool retrohh_video_extract_subtitle_srt(const char *video_path,
 #else /* !__ANDROID__ */
 
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <ctype.h>
@@ -282,11 +283,15 @@ extern char **environ;
 static pid_t player_pid = -1;
 
 static bool player_command(const char *fmt, ...);
+static void hide_player_layer(void);
 
 /* Runs in the forked child, so only async-signal-safe calls. */
-static void child_exec(const char *bin, char *const argv[], char *const envp[],
-                       int out_fd, long maxfd)
+static void child_exec(pid_t parent_pid, const char *bin, char *const argv[],
+                       char *const envp[], int out_fd, long maxfd)
 {
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    if (getppid() != parent_pid)
+        _exit(1);
     dup2(out_fd, STDOUT_FILENO);
     dup2(out_fd, STDERR_FILENO);
     for (long fd = 3; fd < maxfd; fd++)
@@ -420,6 +425,9 @@ bool retrohh_video_probe(const char *path, struct retrohh_video_info *info)
     memset(info, 0, sizeof *info);
     if (pipe(fds) < 0)
         return false;
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    pid_t parent_pid = getpid();
     pid = fork();
     if (pid < 0)
     {
@@ -428,7 +436,7 @@ bool retrohh_video_probe(const char *path, struct retrohh_video_info *info)
         return false;
     }
     if (pid == 0)
-        child_exec(PROBE_BIN, argv, environ, fds[1], maxfd);
+        child_exec(parent_pid, PROBE_BIN, argv, environ, fds[1], maxfd);
 
     close(fds[1]);
     while (used < PROBE_BYTES - 1 &&
@@ -548,19 +556,36 @@ bool retrohh_video_start(const char *path, int start_ms)
     char **envp = player_environment();
     long maxfd = sysconf(_SC_OPEN_MAX);
     int null_fd;
-    pid_t pid;
+    pid_t pid, parent_pid;
+
+    if (player_pid > 0)
+        retrohh_video_stop();
+    else if (player_command("exit"))
+    {
+        /* Cleanly retire any orphaned tplayerslave left from a prior SIGKILL */
+        for (int i = 0; i < 20; i++)
+        {
+            usleep(OPEN_POLL_US);
+            int fd = open(CMD_FIFO, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0)
+                break;
+            close(fd);
+        }
+        hide_player_layer();
+    }
 
     /* A stale status would read as this video already playing. */
     remove(STATUS_FILE);
 
-    null_fd = open("/dev/null", O_WRONLY);      /* the player's log is very chatty */
+    null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);   /* the player's log is very chatty */
     if (null_fd < 0)
         return false;
     if (!video_audio_open())
         fprintf(stderr, "video: no route for the player's sound\n");
+    parent_pid = getpid();
     pid = fork();
     if (pid == 0)
-        child_exec(PLAYER_BIN, argv, envp, null_fd, maxfd);
+        child_exec(parent_pid, PLAYER_BIN, argv, envp, null_fd, maxfd);
     close(null_fd);
     if (pid < 0)
     {
@@ -599,7 +624,7 @@ static void hide_player_layer(void)
 {
     static const unsigned char off[DISP_CONFIG_BYTES];
     unsigned long args[4] = { 0, (unsigned long)off, 1, 0 };
-    int fd = open(DISP_DEV, O_RDWR);
+    int fd = open(DISP_DEV, O_RDWR | O_CLOEXEC);
 
     if (fd < 0)
         return;
@@ -636,7 +661,7 @@ static bool player_command(const char *fmt, ...)
         return false;
     cmd[len++] = '\n';
 
-    fd = open(CMD_FIFO, O_WRONLY | O_NONBLOCK);
+    fd = open(CMD_FIFO, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
         return false;
     len = write(fd, cmd, len);
@@ -681,7 +706,7 @@ static bool json_int(const char *json, const char *key, int *value)
 bool retrohh_video_status(int *position_ms, int *duration_ms, bool *playing)
 {
     char json[192];
-    int fd = open(STATUS_FILE, O_RDONLY);
+    int fd = open(STATUS_FILE, O_RDONLY | O_CLOEXEC);
     ssize_t got;
 
     if (fd < 0)
@@ -700,7 +725,16 @@ bool retrohh_video_status(int *position_ms, int *duration_ms, bool *playing)
 
 void retrohh_video_pause(bool paused)
 {
-    player_command(paused ? "pause" : "unpause");
+    const char *cmd = paused ? "pause" : "unpause";
+    if (!player_command("%s", cmd) && paused && player_pid > 0)
+    {
+        for (int i = 0; i < 25 && retrohh_video_running(); i++)
+        {
+            usleep(OPEN_POLL_US);
+            if (player_command("%s", cmd))
+                break;
+        }
+    }
 }
 
 void retrohh_video_seek(int position_ms)
@@ -763,7 +797,7 @@ bool retrohh_video_extract_subtitle_srt(const char *video_path,
         out_srt_path[out_cap - 1] = '\0';
         return true;
     }
-    if (!video_path || !video_path[0] || sub->stream_index < 0)
+    if (!video_path || video_path[0] != '/' || sub->stream_index < 0)
         return false;
 
     char map_spec[24];
@@ -775,13 +809,14 @@ bool retrohh_video_extract_subtitle_srt(const char *video_path,
         "-map", map_spec, "-f", "srt", SUB_TMP_SRT, NULL
     };
     long maxfd = sysconf(_SC_OPEN_MAX);
-    int null_fd = open("/dev/null", O_WRONLY);
+    int null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
     if (null_fd < 0)
         return false;
 
+    pid_t parent_pid = getpid();
     pid_t pid = fork();
     if (pid == 0)
-        child_exec(FFMPEG_BIN, argv, environ, null_fd, maxfd);
+        child_exec(parent_pid, FFMPEG_BIN, argv, environ, null_fd, maxfd);
     close(null_fd);
     if (pid < 0)
         return false;

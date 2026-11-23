@@ -101,6 +101,7 @@ TRIMPOD_SPK_MUTE="$(cat "$SPK_MUTE" 2>/dev/null)"
 # that, but it's the only gap now.)
 cleanup() {
   kill -9 "$(pidof uipod)"   2>/dev/null
+  killall -9 tplayerslave ffprobe ffmpeg umtprd 2>/dev/null
   [ -n "$KEYMON_PIDS" ] && kill -CONT $KEYMON_PIDS 2>/dev/null
   [ -f /tmp/uipod_muted_vol ] && dd if=/tmp/uipod_muted_vol of=/dev/shm/SharedSettings bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
   [ -n "$TRIMPOD_DV" ] && amixer -q sset "digital volume" "$TRIMPOD_DV" 2>/dev/null
