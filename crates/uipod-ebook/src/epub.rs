@@ -21,11 +21,11 @@ struct ManifestItem {
 }
 
 #[derive(Clone)]
-struct RawTocItem {
-    title: String,
-    level: u8,
-    target_path: String,
-    fragment: Option<String>,
+pub(crate) struct RawTocItem {
+    pub title: String,
+    pub level: u8,
+    pub target_path: String,
+    pub fragment: Option<String>,
 }
 
 /// Maximum cumulative compressed image payload retained per `.epub` (`32 MiB`) to prevent OOM spikes.
@@ -349,7 +349,7 @@ fn find_opf_path(zip: &ZipArchive<'_>) -> Option<String> {
         .map(|e| e.name.clone())
 }
 
-fn parse_epub3_nav_toc(nav_path: &str, html: &str) -> Vec<RawTocItem> {
+pub(crate) fn parse_epub3_nav_toc(nav_path: &str, html: &str) -> Vec<RawTocItem> {
     let mut out = Vec::new();
     let mut in_toc_nav = false;
     let mut nav_depth = 0usize;
@@ -424,7 +424,7 @@ fn parse_epub3_nav_toc(nav_path: &str, html: &str) -> Vec<RawTocItem> {
     out
 }
 
-fn parse_epub2_ncx_toc(ncx_path: &str, xml: &str) -> Vec<RawTocItem> {
+pub(crate) fn parse_epub2_ncx_toc(ncx_path: &str, xml: &str) -> Vec<RawTocItem> {
     struct NavBuilder {
         title: String,
         src: Option<String>,
@@ -528,7 +528,7 @@ fn parse_epub2_ncx_toc(ncx_path: &str, xml: &str) -> Vec<RawTocItem> {
 /// Scans an XHTML file for `<aside id="..." epub:type="footnote">`, `<li id="...">`, `<div id="...">`,
 /// or `<p id="...">` elements so footnote popups can display rich note paragraphs even when notes live
 /// at the end of a chapter or in a separate `notes.xhtml` file.
-fn harvest_footnote_candidates(
+pub(crate) fn harvest_footnote_candidates(
     file_path: &str,
     xhtml: &str,
     out: &mut HashMap<(String, String), Vec<String>>,
@@ -1050,7 +1050,7 @@ fn parse_xhtml_chapter(
     );
 }
 
-fn is_block_tag(name: &str) -> bool {
+pub(crate) fn is_block_tag(name: &str) -> bool {
     matches!(
         name,
         "h1" | "h2"
@@ -1139,6 +1139,10 @@ fn is_epub_drm_encrypted(zip: &ZipArchive<'_>) -> bool {
     let Some(enc_bytes) = zip.read_by_path("META-INF/encryption.xml") else {
         return false;
     };
+    is_epub_drm_encrypted_bytes(&enc_bytes)
+}
+
+pub(crate) fn is_epub_drm_encrypted_bytes(enc_bytes: &[u8]) -> bool {
     let xml = decode_bytes_auto(&enc_bytes, None);
     let mut in_enc_data = false;
     let mut cur_algo = String::new();

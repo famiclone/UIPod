@@ -521,13 +521,13 @@ pub fn parse_mobi(file_name: &str, data: &[u8]) -> Result<EbookDoc, EbookError> 
     Ok(builder.finish())
 }
 
-fn looks_like_mobi_html(bytes: &[u8]) -> bool {
+pub(crate) fn looks_like_mobi_html(bytes: &[u8]) -> bool {
     let head = &bytes[..bytes.len().min(2048)];
     let s = String::from_utf8_lossy(head).to_ascii_lowercase();
     s.contains("<html") || s.contains("<body") || s.contains("<p") || s.contains("<mbp:")
 }
 
-fn extract_mobi_footnote_at(html: &str, str_pos: usize) -> Vec<String> {
+pub(crate) fn extract_mobi_footnote_at(html: &str, str_pos: usize) -> Vec<String> {
     if str_pos >= html.len() {
         return Vec::new();
     }
@@ -579,7 +579,7 @@ fn extract_mobi_footnote_at(html: &str, str_pos: usize) -> Vec<String> {
 
 /// Strips MOBI `extra_data_flags` trailing entries (multibyte UTF-8 overlap + indexing trailers)
 /// from the end of a compressed text record before PalmDOC LZ77 decompression.
-fn strip_mobi_trailing_data(rec: &[u8], extra_flags: u16) -> &[u8] {
+pub(crate) fn strip_mobi_trailing_data(rec: &[u8], extra_flags: u16) -> &[u8] {
     if extra_flags == 0 || rec.is_empty() {
         return rec;
     }

@@ -6,22 +6,35 @@
 //! - `aarch64-linux-android` (Android `arm64-v8a`)
 //! - `wasm32-unknown-unknown` (WebGL2 Simulator)
 
+pub mod bidx;
 pub mod encoding;
 pub mod epub;
 pub mod fb2;
+pub mod font_metrics;
+pub mod font_metrics_data;
 pub mod image_dither;
 pub mod layout;
 pub mod mobi;
 pub mod plain_md;
+pub mod session;
 pub mod xml_html;
 pub mod zip_archive;
 
-pub use layout::{
-    wrap_footnote_lines, CachedDitherEntry, DitheredImageCache, PageSlice, PositionedSegment,
-    ProgressDisplay, ReaderFont, ReaderLayoutSpec, ReaderPrefs, ReaderViewState, ReadingMode,
-    VisualItem, VisualItemKind, FONT_STYLE_ITALIC_BIT, FONT_STYLE_SERIF_BIT, READER_FONT_SIZES,
-    READER_LINE_SPACINGS, READER_SPEC,
+pub use bidx::{
+    bidx_cache_file_path, bidx_content_key64, bidx_path_hash64, deserialize_bidx,
+    load_bidx_from_disk, save_bidx_atomic, serialize_bidx, BidxError, BookIndex, IndexImageEntry,
+    IndexTocEntry, SavedReadingAnchor, SpineChapterMeta, BIDX_MAGIC, BIDX_SCHEMA_VERSION,
 };
+pub use font_metrics::{FontMetricsTable, TtfAdvanceTable};
+pub use layout::{
+    count_blocks_pages_fast, wrap_footnote_lines, CachedDitherEntry, DitheredImageCache, PageSlice,
+    PositionedSegment, ProgressDisplay, ReaderFont, ReaderLayoutSpec, ReaderPrefs, ReaderViewState,
+    ReadingMode, VisualItem, VisualItemKind, FONT_STYLE_ITALIC_BIT, FONT_STYLE_SERIF_BIT,
+    READER_FONT_SIZES, READER_LINE_SPACINGS, READER_SPEC,
+};
+pub use session::{BookmarkHint, BookSession, OpenTimings, ParsedChapter};
+#[cfg(not(target_arch = "wasm32"))]
+pub use session::worker::BookBackgroundWorker;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocFormat {
@@ -776,5 +789,252 @@ mod tests {
         let spot2 = state.anchor_offset;
         state.sync_to_anchor(spot2);
         assert_eq!(state.anchor_offset, spot2);
+    }
+
+    #[test]
+    fn lazy_book_session_cold_warm_bidx_resize_and_cross_chapter_parity() {
+        let container = br#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#;
+        let opf = br#"<?xml version="1.0" encoding="utf-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Lazy Spine Book</dc:title>
+    <dc:creator>UIPod Team</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="c1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c2" href="Text/ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c3" href="Text/ch3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="Text/notes.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="Images/ill1.png" media-type="image/png" properties="cover-image"/>
+  </manifest>
+  <spine>
+    <itemref idref="c1"/>
+    <itemref idref="c2"/>
+    <itemref idref="c3"/>
+  </spine>
+</package>"#;
+        let nav = r#"<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+<nav epub:type="toc"><ol>
+  <li><a href="Text/ch1.xhtml">Розділ 1</a></li>
+  <li><a href="Text/ch2.xhtml#partb">Розділ 2 · Частина Б</a></li>
+  <li><a href="Text/ch3.xhtml">Розділ 3</a></li>
+</ol></nav></body></html>"#;
+
+        let mut ch1 = String::from("<html><body><h1>Розділ 1</h1>");
+        for i in 0..25 {
+            ch1.push_str(&format!(
+                "<p>Перший розділ абзац {i} із виноскою<a epub:type=\"noteref\" href=\"notes.xhtml#fn1\">[1]</a> та українським текстом для перевірки швидкої пагінації.</p>"
+            ));
+        }
+        ch1.push_str("</body></html>");
+
+        let mut ch2 = String::from("<html><body><h1>Розділ 2</h1><p>Вступ другого розділу.</p><h2 id=\"partb\">Частина Б</h2>");
+        for i in 0..25 {
+            ch2.push_str(&format!(
+                "<p>Другий розділ абзац {i}: швидке перемикання кеглю шрифту без блокування аудіопотоку.</p>"
+            ));
+        }
+        ch2.push_str("</body></html>");
+
+        let ch3 = "<html><body><h1>Розділ 3</h1><p>Фінальний розділ книги.</p></body></html>";
+        let notes = r#"<html><body><aside id="fn1" epub:type="footnote"><p>Примітка з окремого файлу notes.xhtml.</p></aside></body></html>"#;
+        let png = tiny_png_bytes();
+
+        let epub_bytes = build_test_zip(&[
+            ("META-INF/container.xml", container, true),
+            ("OEBPS/content.opf", opf, true),
+            ("OEBPS/nav.xhtml", nav.as_bytes(), true),
+            ("OEBPS/Text/ch1.xhtml", ch1.as_bytes(), true),
+            ("OEBPS/Text/ch2.xhtml", ch2.as_bytes(), true),
+            ("OEBPS/Text/ch3.xhtml", ch3.as_bytes(), true),
+            ("OEBPS/Text/notes.xhtml", notes.as_bytes(), true),
+            ("OEBPS/Images/ill1.png", &png, false),
+        ]);
+
+        let tmp_dir = std::env::temp_dir().join(format!("uipod_sess_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let epub_path = tmp_dir.join("lazy_test.epub");
+        std::fs::write(&epub_path, &epub_bytes).unwrap();
+
+        let mut prefs = ReaderPrefs {
+            mode: ReadingMode::Paginated,
+            size_idx: 1,
+            spacing_idx: 1,
+            hide_ui: false,
+            progress_display: ProgressDisplay::Pages,
+            font: ReaderFont::Sans,
+        };
+
+        // 1. Cold open parses ONLY Chapter 0 (Chapters 1 & 2 remain unverified until touched/scanned!)
+        let mut sess =
+            BookSession::open_file(&epub_path, Some(&tmp_dir), BookmarkHint::None).expect("cold open");
+        assert!(!sess.open_timings.used_warm_bidx);
+        assert_eq!(sess.title(), "Lazy Spine Book");
+        assert_eq!(sess.chapter_count(), 3);
+        assert!(sess.index.chapters[0].verified);
+        assert!(!sess.index.chapters[1].verified);
+        assert!(!sess.index.chapters[2].verified);
+        assert_eq!(sess.footnote(0).unwrap().paragraphs[0], "Примітка з окремого файлу notes.xhtml.");
+
+        sess.ensure_layout(&prefs, 1024.0, 768.0);
+        let (prog0, lbl0) = sess.progress_metrics(&prefs);
+        assert!(lbl0.starts_with("1 / "));
+        assert!(prog0 > 0.0);
+
+        // Lazy image decode caches grayscale buffer and never re-decodes on font/UI resize!
+        let mut img_cache = DitheredImageCache::new(16);
+        let _ = sess
+            .rasterize_illustration(&mut img_cache, 0, 120, 90, 0xD6D8D5, 0x3C3637, 0xA8A8A8, 0x595959)
+            .expect("dither cover");
+        assert!(img_cache.gray_cache_bytes() > 0);
+        // Different display size hits Tier-1 grayscale cache without touching raw bytes
+        let _ = sess
+            .rasterize_illustration(&mut img_cache, 0, 160, 120, 0xD6D8D5, 0x3C3637, 0xA8A8A8, 0x595959)
+            .expect("re-dither from cached gray");
+
+        // 2. Jump to TOC item 1 (`Text/ch2.xhtml#partb`), resize font, and save `.bidx`
+        assert!(sess.jump_to_toc(1, &prefs, 1000, 1024.0, 768.0));
+        assert_eq!(sess.active_chapter, 1);
+        assert!(sess.view.anchor_offset > 0);
+        let saved_spot = sess.view.anchor_offset;
+
+        prefs.size_idx = 3;
+        prefs.font = ReaderFont::Serif;
+        sess.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(sess.view.anchor_offset, saved_spot);
+        assert!(sess.save_bidx(&tmp_dir, &prefs));
+
+        // 3. Warm `.bidx` re-open restores exact `(chapter_idx=1, char_offset)` in < 20ms!
+        let bmark_str = sess.bookmark_string(prefs.mode);
+        let mut warm = BookSession::open_file(
+            &epub_path,
+            Some(&tmp_dir),
+            BookmarkHint::parse(&bmark_str),
+        )
+        .expect("warm open");
+        assert!(warm.open_timings.used_warm_bidx);
+        assert_eq!(warm.active_chapter, 1);
+        warm.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(warm.view.anchor_offset, saved_spot);
+
+        // 4. Modifying file size invalidates `.bidx` and falls back to cold rebuild cleanly!
+        let mut bigger = epub_bytes.clone();
+        bigger.push(0);
+        // Appending trailing byte changes file_size while keeping EOCD within 65KB search window
+        std::fs::write(&epub_path, &bigger).unwrap();
+        let rebuilt =
+            BookSession::open_file(&epub_path, Some(&tmp_dir), BookmarkHint::None).expect("rebuilt");
+        assert!(!rebuilt.open_timings.used_warm_bidx);
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn fb2_zip_and_mobi_session_cold_warm_bidx_and_resize_parity() {
+        let tmp_dir = std::env::temp_dir().join(format!("uipod_fb2_mobi_bidx_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let mut prefs = ReaderPrefs {
+            mode: ReadingMode::Paginated,
+            size_idx: 1,
+            spacing_idx: 1,
+            hide_ui: false,
+            progress_display: ProgressDisplay::Pages,
+            font: ReaderFont::Sans,
+        };
+
+        // --- 1. `.fb2.zip` cold open -> TOC jump -> font resize -> `.bidx` warm re-open ---
+        let fb2_xml = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns:l="http://www.w3.org/1999/xlink">
+  <description><title-info><book-title>Лісова Пісня</book-title></title-info></description>
+  <body>
+    <section><title><p>Дія перша</p></title><p>Пролог весняного лісу<a l:href="#n1" type="note">[1]</a>.</p></section>
+    <section><title><p>Дія друга</p></title><p>Пізнє літо над озером із лататтям та очеретом.</p></section>
+  </body>
+  <body name="notes"><section id="n1"><title><p>1</p></title><p>Коментар до першої дії.</p></section></body>
+</FictionBook>"##;
+        let fb2_zip = build_test_zip(&[("lisova.fb2", fb2_xml.as_bytes(), true)]);
+        let fb2_path = tmp_dir.join("lisova.fb2.zip");
+        std::fs::write(&fb2_path, &fb2_zip).unwrap();
+
+        let mut fb2_cold =
+            BookSession::open_file(&fb2_path, Some(&tmp_dir), BookmarkHint::None).expect("fb2 cold");
+        assert!(!fb2_cold.open_timings.used_warm_bidx);
+        assert_eq!(fb2_cold.title(), "Лісова Пісня");
+        assert_eq!(fb2_cold.toc().len(), 2);
+        assert_eq!(fb2_cold.footnote(0).unwrap().paragraphs[0], "Коментар до першої дії.");
+        fb2_cold.ensure_layout(&prefs, 1024.0, 768.0);
+        assert!(fb2_cold.jump_to_toc(1, &prefs, 1000, 1024.0, 768.0));
+        let fb2_anchor = fb2_cold.view.anchor_offset;
+        prefs.size_idx = 2;
+        fb2_cold.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(fb2_cold.view.anchor_offset, fb2_anchor);
+        assert!(fb2_cold.save_bidx(&tmp_dir, &prefs));
+
+        let fb2_bmark = fb2_cold.bookmark_string(prefs.mode);
+        let mut fb2_warm = BookSession::open_file(
+            &fb2_path,
+            Some(&tmp_dir),
+            BookmarkHint::parse(&fb2_bmark),
+        )
+        .expect("fb2 warm");
+        assert!(fb2_warm.open_timings.used_warm_bidx);
+        fb2_warm.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(fb2_warm.view.anchor_offset, fb2_anchor);
+
+        // --- 2. `.mobi` cold open -> TOC jump -> font resize -> `.bidx` warm re-open ---
+        let mobi_html = b"<html><body><h1>Part I</h1><p>First section text.</p><mbp:pagebreak/><h1>Part II</h1><p>Second section text after pagebreak.</p></body></html>";
+        let mut pdb = vec![0u8; 78 + 2 * 8];
+        pdb[0..9].copy_from_slice(b"Mobi_Bidx");
+        pdb[60..68].copy_from_slice(b"BOOKMOBI");
+        pdb[76..78].copy_from_slice(&2u16.to_be_bytes());
+        let mut rec0 = vec![0u8; 16 + 132];
+        rec0[0..2].copy_from_slice(&1u16.to_be_bytes());
+        rec0[4..8].copy_from_slice(&(mobi_html.len() as u32).to_be_bytes());
+        rec0[8..10].copy_from_slice(&1u16.to_be_bytes());
+        rec0[10..12].copy_from_slice(&4096u16.to_be_bytes());
+        rec0[16..20].copy_from_slice(b"MOBI");
+        rec0[20..24].copy_from_slice(&132u32.to_be_bytes());
+        rec0[28..32].copy_from_slice(&65001u32.to_be_bytes());
+        let off0 = pdb.len() as u32;
+        let off1 = off0 + rec0.len() as u32;
+        pdb[78..82].copy_from_slice(&off0.to_be_bytes());
+        pdb[86..90].copy_from_slice(&off1.to_be_bytes());
+        pdb.extend_from_slice(&rec0);
+        pdb.extend_from_slice(mobi_html);
+
+        let mobi_path = tmp_dir.join("test_book.mobi");
+        std::fs::write(&mobi_path, &pdb).unwrap();
+
+        let mut mobi_cold =
+            BookSession::open_file(&mobi_path, Some(&tmp_dir), BookmarkHint::None).expect("mobi cold");
+        assert!(!mobi_cold.open_timings.used_warm_bidx);
+        assert_eq!(mobi_cold.toc().len(), 2);
+        mobi_cold.ensure_layout(&prefs, 1024.0, 768.0);
+        assert!(mobi_cold.jump_to_toc(1, &prefs, 1000, 1024.0, 768.0));
+        let mobi_anchor = mobi_cold.view.anchor_offset;
+        prefs.font = ReaderFont::Serif;
+        mobi_cold.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(mobi_cold.view.anchor_offset, mobi_anchor);
+        assert!(mobi_cold.save_bidx(&tmp_dir, &prefs));
+
+        let mobi_bmark = mobi_cold.bookmark_string(prefs.mode);
+        let mut mobi_warm = BookSession::open_file(
+            &mobi_path,
+            Some(&tmp_dir),
+            BookmarkHint::parse(&mobi_bmark),
+        )
+        .expect("mobi warm");
+        assert!(mobi_warm.open_timings.used_warm_bidx);
+        mobi_warm.ensure_layout(&prefs, 1024.0, 768.0);
+        assert_eq!(mobi_warm.view.anchor_offset, mobi_anchor);
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

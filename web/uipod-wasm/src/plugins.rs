@@ -3101,31 +3101,42 @@ enum ReaderMenuState {
 }
 
 pub struct TextViewerApp {
-    doc: uipod_ebook::EbookDoc,
+    session: uipod_ebook::BookSession,
     book_key: Option<String>,
     is_about_manual: bool,
     pub prefs: uipod_ebook::ReaderPrefs,
-    view: uipod_ebook::ReaderViewState,
     img_cache: uipod_ebook::DitheredImageCache,
     scroll_vel: f32,
     clock_ms: u64,
+    last_sw: f32,
+    last_sh: f32,
     menu: ReaderMenuState,
     splash: Option<(String, f32)>,
 }
 
 impl TextViewerApp {
     pub fn new_about(prefs: uipod_ebook::ReaderPrefs, saved_offset: usize, uk: bool) -> Self {
-        let doc = uipod_ebook::parse_document("about.txt", ABOUT_MANUAL_TEXT.as_bytes())
-            .unwrap_or_else(|e| uipod_ebook::error_document("about.txt", &e, uk));
-        Self::from_doc(
-            doc,
+        let sess = uipod_ebook::BookSession::open_bytes(
+            "about.txt",
+            ABOUT_MANUAL_TEXT.as_bytes().to_vec(),
+            None,
+            uipod_ebook::BookmarkHint::LegacyGlobal(saved_offset),
+        )
+        .unwrap_or_else(|e| {
+            uipod_ebook::BookSession::from_single_doc(
+                uipod_ebook::error_document("about.txt", &e, uk),
+                saved_offset,
+            )
+        });
+        Self::from_session(
+            sess,
             Some(uipod_ebook::fnv1a_book_key("/tmp/uipod/about.txt")),
             true,
             prefs,
-            saved_offset,
         )
     }
 
+    #[cfg(test)]
     pub fn from_doc(
         doc: uipod_ebook::EbookDoc,
         book_key: Option<String>,
@@ -3133,18 +3144,28 @@ impl TextViewerApp {
         prefs: uipod_ebook::ReaderPrefs,
         saved_offset: usize,
     ) -> Self {
-        let mut view = uipod_ebook::ReaderViewState::new(saved_offset);
-        let init_clock = 1_000u64;
-        view.ui_hidden = prefs.hide_ui;
+        let sess = uipod_ebook::BookSession::from_single_doc(doc, saved_offset);
+        Self::from_session(sess, book_key, is_about_manual, prefs)
+    }
+
+    pub fn from_session(
+        mut session: uipod_ebook::BookSession,
+        book_key: Option<String>,
+        is_about_manual: bool,
+        prefs: uipod_ebook::ReaderPrefs,
+    ) -> Self {
+        session.view.ui_hidden = prefs.hide_ui;
+        session.ensure_layout(&prefs, 1024.0, 768.0);
         Self {
-            doc,
+            session,
             book_key,
             is_about_manual,
             prefs,
-            view,
             img_cache: uipod_ebook::DitheredImageCache::new(16),
             scroll_vel: 0.0,
-            clock_ms: init_clock,
+            clock_ms: 1_000,
+            last_sw: 1024.0,
+            last_sh: 768.0,
             menu: ReaderMenuState::Closed,
             splash: None,
         }
@@ -3154,21 +3175,26 @@ impl TextViewerApp {
         if self.is_about_manual {
             tr(uk, "About UIPod", "Про UIPod").to_string()
         } else {
-            self.doc.title.clone()
+            self.session.title().to_string()
         }
     }
 
     pub fn persistence_snapshot(&mut self) -> (uipod_ebook::ReaderPrefs, Option<String>, usize) {
-        self.view.refresh_anchor_from_mode(self.prefs.mode);
+        self.session.view.refresh_anchor_from_mode(self.prefs.mode);
         (
             self.prefs,
             self.book_key.clone(),
-            self.view.anchor_offset,
+            self.session.global_anchor_offset(),
         )
     }
 
+    pub fn export_bidx_bytes(&mut self) -> Option<Vec<u8>> {
+        self.session.export_bidx_bytes(&self.prefs)
+    }
+
     pub fn is_reading_body(&self) -> bool {
-        matches!(self.menu, ReaderMenuState::Closed) && self.view.open_footnote_idx.is_none()
+        matches!(self.menu, ReaderMenuState::Closed)
+            && self.session.view.open_footnote_idx.is_none()
     }
 
     pub fn open_options_menu(&mut self) -> bool {
@@ -3176,7 +3202,7 @@ impl TextViewerApp {
             return false;
         }
         self.scroll_vel = 0.0;
-        self.view.refresh_anchor_from_mode(self.prefs.mode);
+        self.session.view.refresh_anchor_from_mode(self.prefs.mode);
         self.menu = ReaderMenuState::Options { sel: 0 };
         true
     }
@@ -3184,7 +3210,7 @@ impl TextViewerApp {
     fn update(&mut self, dt: f32, pressed: u32, held: u32, uk: bool) -> PluginAction {
         let step_ms = ((dt.clamp(0.0, 0.2) * 1000.0).round() as u64).max(1);
         self.clock_ms = self.clock_ms.saturating_add(step_ms);
-        self.view.tick_auto_hide(&self.prefs, self.clock_ms);
+        self.session.view.tick_auto_hide(&self.prefs, self.clock_ms);
 
         if let Some((_, ref mut rem)) = self.splash {
             *rem -= dt;
@@ -3206,7 +3232,7 @@ impl TextViewerApp {
 
         match self.menu {
             ReaderMenuState::Chapters { mut sel } => {
-                let count = self.doc.toc.len();
+                let count = self.session.toc().len();
                 if count == 0 || (pressed & (btn::B | btn::MENU)) != 0 {
                     self.menu = ReaderMenuState::Options { sel: 0 };
                     return PluginAction::Click;
@@ -3232,13 +3258,13 @@ impl TextViewerApp {
                     return PluginAction::Click;
                 }
                 if (pressed & btn::A) != 0 {
-                    if let Some(target) = self.doc.toc.get(sel) {
-                        self.view.open_footnote_idx = None;
-                        self.view.sync_to_anchor(target.offset);
-                        if self.prefs.hide_ui {
-                            self.view.note_backward_motion(&self.prefs, self.clock_ms);
-                        }
-                    }
+                    let _ = self.session.jump_to_toc(
+                        sel,
+                        &self.prefs,
+                        self.clock_ms,
+                        self.last_sw,
+                        self.last_sh,
+                    );
                     self.menu = ReaderMenuState::Closed;
                     return PluginAction::Click;
                 }
@@ -3254,57 +3280,57 @@ impl TextViewerApp {
                 if act {
                     match sel {
                         0 if (pressed & btn::A) != 0 => {
-                            if self.doc.toc.is_empty() {
+                            if self.session.toc().is_empty() {
                                 self.splash = Some((
                                     tr(uk, "No chapters", "Немає розділів").into(),
                                     1.1,
                                 ));
                             } else {
-                                let active = self.view.active_toc_index(&self.doc);
+                                let active = self.session.active_toc_index();
                                 self.menu = ReaderMenuState::Chapters { sel: active };
                             }
                         }
                         1 => {
-                            self.view.refresh_anchor_from_mode(self.prefs.mode);
-                            let spot = self.view.anchor_offset;
+                            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
+                            let spot = self.session.view.anchor_offset;
                             self.prefs.mode = self.prefs.mode.toggle();
-                            self.view.sync_to_anchor(spot);
+                            self.session.view.sync_to_anchor(spot);
                         }
                         2 => {
-                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
                             self.prefs.font = self.prefs.font.toggle();
-                            self.view.invalidate_layout();
+                            self.session.view.invalidate_layout();
                         }
                         3 => {
-                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
                             self.prefs.size_idx =
                                 (self.prefs.size_idx + 1) % uipod_ebook::READER_FONT_SIZES.len();
-                            self.view.invalidate_layout();
+                            self.session.view.invalidate_layout();
                         }
                         4 => {
-                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
                             self.prefs.spacing_idx = (self.prefs.spacing_idx + 1)
                                 % uipod_ebook::READER_LINE_SPACINGS.len();
-                            self.view.invalidate_layout();
+                            self.session.view.invalidate_layout();
                         }
                         5 => {
-                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
                             self.prefs.hide_ui = !self.prefs.hide_ui;
-                            self.view.ui_hidden = self.prefs.hide_ui;
-                            self.view.ui_reveal_until_ms = 0;
-                            self.view.invalidate_layout();
+                            self.session.view.ui_hidden = self.prefs.hide_ui;
+                            self.session.view.ui_reveal_until_ms = 0;
+                            self.session.view.invalidate_layout();
                         }
                         6 => {
                             self.prefs.progress_display = self.prefs.progress_display.toggle();
                         }
                         7 if (pressed & btn::A) != 0 => {
-                            self.view.open_footnote_idx = None;
-                            self.view.sync_to_anchor(0);
+                            self.session
+                                .jump_to_beginning(&self.prefs, self.last_sw, self.last_sh);
                             self.menu = ReaderMenuState::Closed;
                         }
                         8 if (pressed & btn::A) != 0 => {
-                            self.view.open_footnote_idx = None;
-                            self.view.sync_to_anchor(self.doc.total_chars);
+                            self.session
+                                .jump_to_end(&self.prefs, self.last_sw, self.last_sh);
                             self.menu = ReaderMenuState::Closed;
                         }
                         9 if (pressed & btn::A) != 0 => {
@@ -3319,31 +3345,35 @@ impl TextViewerApp {
             ReaderMenuState::Closed => {}
         }
 
-        let vis_fns = self.view.visible_footnotes(self.prefs.mode);
+        let vis_fns = self.session.view.visible_footnotes(self.prefs.mode);
 
         // Footnote popup card interaction (`B` closes card first without exiting Reader!)
-        if self.view.open_footnote_idx.is_some() {
+        if self.session.view.open_footnote_idx.is_some() {
             if (pressed & btn::B) != 0 {
-                self.view.open_footnote_idx = None;
-                self.view.footnote_scroll_line = 0;
+                self.session.view.open_footnote_idx = None;
+                self.session.view.footnote_scroll_line = 0;
                 return PluginAction::Click;
             }
             if (pressed & btn::UP) != 0 {
-                self.view.footnote_scroll_line = self.view.footnote_scroll_line.saturating_sub(1);
+                self.session.view.footnote_scroll_line =
+                    self.session.view.footnote_scroll_line.saturating_sub(1);
                 return PluginAction::Continue;
             }
             if (pressed & btn::DOWN) != 0 {
-                self.view.footnote_scroll_line = self.view.footnote_scroll_line.saturating_add(1);
+                self.session.view.footnote_scroll_line =
+                    self.session.view.footnote_scroll_line.saturating_add(1);
                 return PluginAction::Continue;
             }
             if (pressed & btn::A) != 0 {
                 if vis_fns.len() > 1 {
-                    self.view.focused_fn_slot = (self.view.focused_fn_slot + 1) % vis_fns.len();
-                    self.view.open_footnote_idx = vis_fns.get(self.view.focused_fn_slot).copied();
-                    self.view.footnote_scroll_line = 0;
+                    self.session.view.focused_fn_slot =
+                        (self.session.view.focused_fn_slot + 1) % vis_fns.len();
+                    self.session.view.open_footnote_idx =
+                        vis_fns.get(self.session.view.focused_fn_slot).copied();
+                    self.session.view.footnote_scroll_line = 0;
                 } else {
-                    self.view.open_footnote_idx = None;
-                    self.view.footnote_scroll_line = 0;
+                    self.session.view.open_footnote_idx = None;
+                    self.session.view.footnote_scroll_line = 0;
                 }
                 return PluginAction::Click;
             }
@@ -3355,15 +3385,15 @@ impl TextViewerApp {
         }
         if (pressed & btn::MENU) != 0 {
             self.scroll_vel = 0.0;
-            self.view.refresh_anchor_from_mode(self.prefs.mode);
+            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
             self.menu = ReaderMenuState::Options { sel: 0 };
             return PluginAction::Click;
         }
         if (pressed & btn::SELECT) != 0 {
-            self.view.refresh_anchor_from_mode(self.prefs.mode);
-            let spot = self.view.anchor_offset;
+            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
+            let spot = self.session.view.anchor_offset;
             self.prefs.mode = self.prefs.mode.toggle();
-            self.view.sync_to_anchor(spot);
+            self.session.view.sync_to_anchor(spot);
             self.scroll_vel = 0.0;
             let toast = match self.prefs.mode {
                 uipod_ebook::ReadingMode::Paginated => {
@@ -3377,40 +3407,42 @@ impl TextViewerApp {
             return PluginAction::Click;
         }
         if (pressed & btn::A) != 0 && !vis_fns.is_empty() {
-            let fn_idx = vis_fns[self.view.focused_fn_slot.min(vis_fns.len() - 1)];
-            self.view.open_footnote_idx = Some(fn_idx);
-            self.view.footnote_scroll_line = 0;
+            let fn_idx = vis_fns[self.session.view.focused_fn_slot.min(vis_fns.len() - 1)];
+            self.session.view.open_footnote_idx = Some(fn_idx);
+            self.session.view.footnote_scroll_line = 0;
             return PluginAction::Click;
         }
         if (pressed & btn::X) != 0 {
-            self.view.refresh_anchor_from_mode(self.prefs.mode);
+            self.session.view.refresh_anchor_from_mode(self.prefs.mode);
             self.prefs.size_idx =
                 (self.prefs.size_idx + 1) % uipod_ebook::READER_FONT_SIZES.len();
-            self.view.invalidate_layout();
+            self.session.view.invalidate_layout();
             return PluginAction::Click;
         }
 
+        let sw = self.last_sw;
+        let sh = self.last_sh;
         match self.prefs.mode {
             uipod_ebook::ReadingMode::Paginated => {
                 if (pressed & (btn::LEFT | btn::L1)) != 0 {
-                    if self.view.step_page(-1, &self.prefs, self.clock_ms) {
+                    if self.session.step_page(-1, &self.prefs, self.clock_ms, sw, sh) {
                         return PluginAction::Click;
                     }
                 } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
-                    if self.view.step_page(1, &self.prefs, self.clock_ms) {
+                    if self.session.step_page(1, &self.prefs, self.clock_ms, sw, sh) {
                         return PluginAction::Click;
                     }
                 } else if (pressed & btn::UP) != 0 {
-                    if vis_fns.len() > 1 && self.view.focused_fn_slot > 0 {
-                        self.view.focused_fn_slot -= 1;
+                    if vis_fns.len() > 1 && self.session.view.focused_fn_slot > 0 {
+                        self.session.view.focused_fn_slot -= 1;
                     } else {
-                        let _ = self.view.step_page(-1, &self.prefs, self.clock_ms);
+                        let _ = self.session.step_page(-1, &self.prefs, self.clock_ms, sw, sh);
                     }
                 } else if (pressed & btn::DOWN) != 0 {
-                    if vis_fns.len() > 1 && self.view.focused_fn_slot + 1 < vis_fns.len() {
-                        self.view.focused_fn_slot += 1;
+                    if vis_fns.len() > 1 && self.session.view.focused_fn_slot + 1 < vis_fns.len() {
+                        self.session.view.focused_fn_slot += 1;
                     } else {
-                        let _ = self.view.step_page(1, &self.prefs, self.clock_ms);
+                        let _ = self.session.step_page(1, &self.prefs, self.clock_ms, sw, sh);
                     }
                 }
             }
@@ -3420,18 +3452,16 @@ impl TextViewerApp {
                     .round();
                 if (pressed & (btn::LEFT | btn::L1)) != 0 {
                     self.scroll_vel = 0.0;
-                    let _ = self.view.scroll_by_px(
-                        -(self.view.viewport_h - line_step).max(line_step),
-                        &self.prefs,
-                        self.clock_ms,
-                    );
+                    let step = -(self.session.view.viewport_h - line_step).max(line_step);
+                    let _ = self
+                        .session
+                        .scroll_by_px(step, &self.prefs, self.clock_ms, sw, sh, true);
                 } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
                     self.scroll_vel = 0.0;
-                    let _ = self.view.scroll_by_px(
-                        (self.view.viewport_h - line_step).max(line_step),
-                        &self.prefs,
-                        self.clock_ms,
-                    );
+                    let step = (self.session.view.viewport_h - line_step).max(line_step);
+                    let _ = self
+                        .session
+                        .scroll_by_px(step, &self.prefs, self.clock_ms, sw, sh, true);
                 } else if (held & btn::UP) != 0 {
                     let target_v = -560.0;
                     self.scroll_vel =
@@ -3442,7 +3472,14 @@ impl TextViewerApp {
                     } else {
                         self.scroll_vel * dt
                     };
-                    let _ = self.view.scroll_by_px(delta, &self.prefs, self.clock_ms);
+                    let _ = self.session.scroll_by_px(
+                        delta,
+                        &self.prefs,
+                        self.clock_ms,
+                        sw,
+                        sh,
+                        (pressed & btn::UP) != 0,
+                    );
                 } else if (held & btn::DOWN) != 0 {
                     let target_v = 560.0;
                     self.scroll_vel =
@@ -3453,19 +3490,45 @@ impl TextViewerApp {
                     } else {
                         self.scroll_vel * dt
                     };
-                    let _ = self.view.scroll_by_px(delta, &self.prefs, self.clock_ms);
+                    let _ = self.session.scroll_by_px(
+                        delta,
+                        &self.prefs,
+                        self.clock_ms,
+                        sw,
+                        sh,
+                        (pressed & btn::DOWN) != 0,
+                    );
                 } else if (pressed & btn::UP) != 0 {
-                    let _ = self.view.scroll_by_px(-line_step, &self.prefs, self.clock_ms);
+                    let _ = self.session.scroll_by_px(
+                        -line_step,
+                        &self.prefs,
+                        self.clock_ms,
+                        sw,
+                        sh,
+                        true,
+                    );
                 } else if (pressed & btn::DOWN) != 0 {
-                    let _ = self.view.scroll_by_px(line_step, &self.prefs, self.clock_ms);
+                    let _ = self.session.scroll_by_px(
+                        line_step,
+                        &self.prefs,
+                        self.clock_ms,
+                        sw,
+                        sh,
+                        true,
+                    );
                 } else if self.scroll_vel.abs() > 1.0 {
                     self.scroll_vel *= (1.0 - dt * 14.0).max(0.0);
                     if self.scroll_vel.abs() < 12.0 {
                         self.scroll_vel = 0.0;
                     } else {
-                        let _ =
-                            self.view
-                                .scroll_by_px(self.scroll_vel * dt, &self.prefs, self.clock_ms);
+                        let _ = self.session.scroll_by_px(
+                            self.scroll_vel * dt,
+                            &self.prefs,
+                            self.clock_ms,
+                            sw,
+                            sh,
+                            false,
+                        );
                     }
                 }
             }
@@ -3485,10 +3548,11 @@ impl TextViewerApp {
     ) {
         match self.menu {
             ReaderMenuState::Options { sel } => {
-                let chap_val = if self.doc.toc.is_empty() {
+                let toc_empty = self.session.toc().is_empty();
+                let chap_val = if toc_empty {
                     tr(uk, "No chapters", "Немає розділів").to_string()
                 } else {
-                    self.doc.toc.len().to_string()
+                    self.session.toc().len().to_string()
                 };
                 let mode_lbl = match self.prefs.mode {
                     uipod_ebook::ReadingMode::Paginated => tr(uk, "Pages (↔)", "Сторінки (↔)"),
@@ -3525,7 +3589,7 @@ impl TextViewerApp {
                 let chap_row = PluginMenuRow {
                     label: tr(uk, "Chapters", "Розділи").to_string(),
                     right: Some(chap_val),
-                    has_chevron: !self.doc.toc.is_empty(),
+                    has_chevron: !toc_empty,
                 };
                 let rows = [
                     chap_row,
@@ -3556,9 +3620,8 @@ impl TextViewerApp {
                 return;
             }
             ReaderMenuState::Chapters { sel } => {
-                let active_idx = self.view.active_toc_index(&self.doc);
-                let total_chars = self.doc.total_chars.max(1);
-                let total = self.doc.toc.len();
+                let active_idx = self.session.active_toc_index();
+                let total = self.session.toc().len();
                 let vis = LIST_VISIBLE_ROWS;
                 let sel_clamped = sel.min(total.saturating_sub(1));
                 let start = if total <= vis {
@@ -3571,8 +3634,8 @@ impl TextViewerApp {
                 let end = (start + vis).min(total);
                 let mut labels = Vec::with_capacity(end - start);
                 let mut vals = Vec::with_capacity(end - start);
-                for (i, ch) in self.doc.toc[start..end].iter().enumerate() {
-                    let abs_i = start + i;
+                for abs_i in start..end {
+                    let ch = &self.session.toc()[abs_i];
                     let indent = match ch.level {
                         0 => "",
                         1 => "· ",
@@ -3581,7 +3644,7 @@ impl TextViewerApp {
                     };
                     let act_mark = if abs_i == active_idx { "▸ " } else { "" };
                     labels.push(format!("{act_mark}{indent}{}", ch.title));
-                    let pct = ((ch.offset * 100) / total_chars).min(100);
+                    let pct = self.session.toc_entry_percent(abs_i);
                     vals.push(format!("{pct}%"));
                 }
                 let list_rows: Vec<ListRow<'_>> = labels
@@ -3611,7 +3674,10 @@ impl TextViewerApp {
             ReaderMenuState::Closed => {}
         }
 
-        let chrome_vis = self.view.is_chrome_visible(&self.prefs, self.clock_ms);
+        let chrome_vis = self
+            .session
+            .view
+            .is_chrome_visible(&self.prefs, self.clock_ms);
         let mut hdr = *header;
         hdr.legend = "";
         let (sw, sh) = ui.plugin_begin_ex(
@@ -3622,54 +3688,71 @@ impl TextViewerApp {
             win_h,
             true,
         );
+        self.last_sw = sw;
+        self.last_sh = sh;
 
-        self.view
-            .ensure_layout(&self.doc, &self.prefs, sw, sh, |txt, sz, wt| {
-                ui.plugin_measure_text(txt, sz, wt)
-            });
+        // Lock-free O(1) FontMetricsTable layout of ONLY the active chapter (< 1 ms)!
+        self.session.ensure_layout(&self.prefs, sw, sh);
 
-        let vis_fns = self.view.visible_footnotes(self.prefs.mode);
-        if !vis_fns.is_empty() && self.view.focused_fn_slot >= vis_fns.len() {
-            self.view.focused_fn_slot = 0;
+        let vis_fns = self.session.view.visible_footnotes(self.prefs.mode);
+        if !vis_fns.is_empty() && self.session.view.focused_fn_slot >= vis_fns.len() {
+            self.session.view.focused_fn_slot = 0;
         }
-        let focused_fn = vis_fns.get(self.view.focused_fn_slot).copied();
+        let focused_fn = vis_fns.get(self.session.view.focused_fn_slot).copied();
         let spec = &uipod_ebook::READER_SPEC;
+        let col_x = self.session.view.col_x;
+        let col_w = self.session.view.col_w;
 
         match self.prefs.mode {
             uipod_ebook::ReadingMode::Paginated => {
-                let page_top_y = self.view.viewport_top_y;
-                if let Some(pg) = self.view.pages.get(self.view.current_page).copied() {
+                let page_top_y = self.session.view.viewport_top_y;
+                if let Some(pg) = self
+                    .session
+                    .view
+                    .pages
+                    .get(self.session.view.current_page)
+                    .copied()
+                {
+                    let draw_items: Vec<(f32, uipod_ebook::VisualItemKind)> = self
+                        .session
+                        .view
+                        .items[pg.start_item..pg.end_item]
+                        .iter()
+                        .map(|it| (it.height, it.kind.clone()))
+                        .collect();
                     let mut y = page_top_y;
-                    for it in &self.view.items[pg.start_item..pg.end_item] {
+                    for (ih, kind) in &draw_items {
                         draw_wasm_reader_item(
                             ui,
-                            &self.doc,
+                            &mut self.session,
                             &mut self.img_cache,
                             t,
-                            self.view.col_x,
-                            self.view.col_w,
+                            col_x,
+                            col_w,
                             y,
-                            it.height,
-                            &it.kind,
+                            *ih,
+                            kind,
                             focused_fn,
                         );
-                        y += it.height;
+                        y += *ih;
                     }
                 }
             }
             uipod_ebook::ReadingMode::Scroll => {
-                let clip_top = self.view.viewport_top_y - 4.0;
+                let clip_top = self.session.view.viewport_top_y - 4.0;
                 let clip_bot = sh - spec.bottom_strip_h;
-                let base_y = self.view.viewport_top_y;
-                let start_idx = match self.view.items.binary_search_by(|it| {
-                    (base_y + it.y_scroll + it.height - self.view.scroll_px)
+                let base_y = self.session.view.viewport_top_y;
+                let scroll_px = self.session.view.scroll_px;
+                let start_idx = match self.session.view.items.binary_search_by(|it| {
+                    (base_y + it.y_scroll + it.height - scroll_px)
                         .partial_cmp(&clip_top)
                         .unwrap_or(core::cmp::Ordering::Equal)
                 }) {
                     Ok(i) | Err(i) => i.saturating_sub(1),
                 };
-                for it in &self.view.items[start_idx..] {
-                    let sy = base_y + it.y_scroll - self.view.scroll_px;
+                let mut vis_draw = Vec::with_capacity(24);
+                for it in &self.session.view.items[start_idx..] {
+                    let sy = base_y + it.y_scroll - scroll_px;
                     if sy > clip_bot {
                         break;
                     }
@@ -3679,16 +3762,19 @@ impl TextViewerApp {
                     if chrome_vis && sy < spec.header_content_top_y - 8.0 {
                         continue;
                     }
+                    vis_draw.push((sy, it.height, it.kind.clone()));
+                }
+                for (sy, ih, kind) in &vis_draw {
                     draw_wasm_reader_item(
                         ui,
-                        &self.doc,
+                        &mut self.session,
                         &mut self.img_cache,
                         t,
-                        self.view.col_x,
-                        self.view.col_w,
-                        sy,
-                        it.height,
-                        &it.kind,
+                        col_x,
+                        col_w,
+                        *sy,
+                        *ih,
+                        kind,
                         focused_fn,
                     );
                 }
@@ -3697,12 +3783,15 @@ impl TextViewerApp {
 
         // Bottom full-width progress bar stays permanently visible at all times
         {
-            let (prog, readout) = self.view.progress_metrics(&self.prefs);
+            let (prog, readout) = self.session.progress_metrics(&self.prefs);
             let strip_y = sh - spec.bottom_strip_h;
             ui.plugin_fill_rect(0.0, strip_y, sw, spec.bottom_strip_h, 0.0, t.bg_rgb);
             let cy = strip_y + spec.bottom_strip_h * 0.5 + 1.0;
             let mx = spec.screen_margin_x;
-            let lbl_w = ui.plugin_measure_text(&readout, spec.progress_label_font, 2);
+            let lbl_w = self
+                .session
+                .metrics
+                .measure_text(&readout, spec.progress_label_font, 2);
             ui.plugin_draw_text(
                 mx,
                 cy,
@@ -3740,11 +3829,10 @@ impl TextViewerApp {
             }
         }
 
-        if let Some(open_fn) = self.view.open_footnote_idx {
+        if let Some(open_fn) = self.session.view.open_footnote_idx {
             draw_wasm_footnote_card(
                 ui,
-                &self.doc,
-                &mut self.view,
+                &mut self.session,
                 t,
                 sw,
                 sh,
@@ -3760,7 +3848,7 @@ impl TextViewerApp {
 #[allow(clippy::too_many_arguments)]
 fn draw_wasm_reader_item(
     ui: &mut UiEngine,
-    doc: &uipod_ebook::EbookDoc,
+    session: &mut uipod_ebook::BookSession,
     img_cache: &mut uipod_ebook::DitheredImageCache,
     t: ThemeColors,
     col_x: f32,
@@ -3877,8 +3965,8 @@ fn draw_wasm_reader_item(
             let ih = *disp_h as f32;
             let ix = (col_x + (col_w - iw) * 0.5).round();
             let iy = (top_y + spec.image_v_pad).round();
-            if let Some(entry) = img_cache.get_or_rasterize(
-                doc,
+            if let Some(entry) = session.rasterize_illustration(
+                img_cache,
                 *image_idx,
                 *disp_w,
                 *disp_h,
@@ -3926,8 +4014,7 @@ fn draw_wasm_reader_item(
 #[allow(clippy::too_many_arguments)]
 fn draw_wasm_footnote_card(
     ui: &mut UiEngine,
-    doc: &uipod_ebook::EbookDoc,
-    view: &mut uipod_ebook::ReaderViewState,
+    session: &mut uipod_ebook::BookSession,
     t: ThemeColors,
     sw: f32,
     sh: f32,
@@ -3936,7 +4023,7 @@ fn draw_wasm_footnote_card(
     fn_idx: usize,
     total_vis_fns: usize,
 ) {
-    let Some(note) = doc.footnotes.get(fn_idx) else {
+    let Some(note) = session.footnote(fn_idx).cloned() else {
         return;
     };
     let spec = &uipod_ebook::READER_SPEC;
@@ -3946,9 +4033,10 @@ fn draw_wasm_footnote_card(
     let line_h = (body_fsz * 1.36).round();
     let body_style = font.style_flag();
 
-    let wrapped = uipod_ebook::wrap_footnote_lines(&note.paragraphs, body_fsz, inner_w, |txt, sz, w| {
-        ui.plugin_measure_text(txt, sz, w | body_style)
-    });
+    let wrapped =
+        uipod_ebook::wrap_footnote_lines(&note.paragraphs, body_fsz, inner_w, |txt, sz, w| {
+            session.metrics.measure_text(txt, sz, w | body_style)
+        });
 
     let max_card_h = (sh * spec.fn_card_max_h_ratio).clamp(220.0, 520.0);
     let header_band_h = 50.0;
@@ -3957,8 +4045,8 @@ fn draw_wasm_footnote_card(
         (((max_card_h - header_band_h - footer_band_h) / line_h).floor() as usize).max(2);
     let vis_lines = wrapped.len().min(max_body_lines);
     let max_scroll = wrapped.len().saturating_sub(vis_lines);
-    if view.footnote_scroll_line > max_scroll {
-        view.footnote_scroll_line = max_scroll;
+    if session.view.footnote_scroll_line > max_scroll {
+        session.view.footnote_scroll_line = max_scroll;
     }
 
     let card_h = header_band_h + (vis_lines as f32) * line_h + footer_band_h;
@@ -3997,7 +4085,7 @@ fn draw_wasm_footnote_card(
     if max_scroll > 0 {
         let sc_lbl = format!(
             "{}/{}",
-            view.footnote_scroll_line + vis_lines,
+            session.view.footnote_scroll_line + vis_lines,
             wrapped.len()
         );
         ui.plugin_draw_text(
@@ -4022,7 +4110,7 @@ fn draw_wasm_footnote_card(
     let body_top = card_y + header_band_h + 2.0;
     for (i, line) in wrapped
         .iter()
-        .skip(view.footnote_scroll_line)
+        .skip(session.view.footnote_scroll_line)
         .take(vis_lines)
         .enumerate()
     {

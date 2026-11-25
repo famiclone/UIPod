@@ -82,6 +82,50 @@ impl TextEncoding {
             _ => None,
         }
     }
+
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::Utf8 => 0,
+            Self::Utf16Le => 1,
+            Self::Utf16Be => 2,
+            Self::Windows1251 => 3,
+            Self::Koi8R => 4,
+            Self::Koi8U => 5,
+            Self::Windows1252 => 6,
+        }
+    }
+
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Utf16Le,
+            2 => Self::Utf16Be,
+            3 => Self::Windows1251,
+            4 => Self::Koi8R,
+            5 => Self::Koi8U,
+            6 => Self::Windows1252,
+            _ => Self::Utf8,
+        }
+    }
+}
+
+pub fn detect_xml_encoding(bytes: &[u8]) -> TextEncoding {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return TextEncoding::Utf8;
+    }
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return TextEncoding::Utf16Le;
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return TextEncoding::Utf16Be;
+    }
+    if let Some(enc) = sniff_xml_or_html_charset(bytes) {
+        return enc;
+    }
+    if std::str::from_utf8(&bytes[..bytes.len().min(8192)]).is_ok() {
+        TextEncoding::Utf8
+    } else {
+        TextEncoding::Windows1251
+    }
 }
 
 /// Sniffs `encoding="..."` or `charset=...` inside the first 1024 ASCII bytes of an XML/HTML file.

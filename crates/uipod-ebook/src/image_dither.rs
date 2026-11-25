@@ -19,6 +19,80 @@ pub struct DecodedRgbImage {
     pub rgb: Vec<u8>,
 }
 
+/// Compact prescaled 8-bit grayscale (`luma`) buffer (`<= 1024 x 768`, `width * height` bytes)
+/// cached in `DitheredImageCache` so font-size, mode, `Hide UI`, and theme changes never re-decode
+/// compressed `JPEG` / `PNG` / `GIF` / `BMP` payloads.
+#[derive(Debug, Clone)]
+pub struct DecodedGrayImage {
+    pub width: u32,
+    pub height: u32,
+    pub luma: Vec<u8>,
+}
+
+impl DecodedGrayImage {
+    #[inline]
+    pub fn byte_len(&self) -> usize {
+        self.luma.len() + 16
+    }
+}
+
+/// Decodes an illustration once and converts/downscales it into a compact 8-bit `DecodedGrayImage`
+/// capped at `1024 x 768` (`<= 768 KiB`).
+pub fn decode_illustration_gray_capped(bytes: &[u8], bg_rgb: u32) -> Option<DecodedGrayImage> {
+    let rgb_img = decode_illustration_rgb24(bytes, bg_rgb)?;
+    let sw = rgb_img.width.max(1) as usize;
+    let sh = rgb_img.height.max(1) as usize;
+    let max_w = 1024usize;
+    let max_h = 768usize;
+
+    if sw <= max_w && sh <= max_h {
+        let mut luma = Vec::with_capacity(sw * sh);
+        for px in rgb_img.rgb[..sw * sh * 3].chunks_exact(3) {
+            let l = ((54u32 * px[0] as u32 + 183u32 * px[1] as u32 + 19u32 * px[2] as u32 + 128)
+                >> 8) as u8;
+            luma.push(l);
+        }
+        return Some(DecodedGrayImage {
+            width: sw as u32,
+            height: sh as u32,
+            luma,
+        });
+    }
+
+    let scale = ((max_w as f32) / (sw as f32)).min((max_h as f32) / (sh as f32));
+    let dw = ((sw as f32 * scale).round() as usize).max(1);
+    let dh = ((sh as f32 * scale).round() as usize).max(1);
+    let mut luma = vec![0u8; dw * dh];
+    for dy in 0..dh {
+        let sy0 = (dy * sh / dh).min(sh - 1);
+        let sy1 = (((dy + 1) * sh + dh - 1) / dh).clamp(sy0 + 1, sh);
+        for dx in 0..dw {
+            let sx0 = (dx * sw / dw).min(sw - 1);
+            let sx1 = (((dx + 1) * sw + dw - 1) / dw).clamp(sx0 + 1, sw);
+            let mut acc = 0u32;
+            let mut cnt = 0u32;
+            for sy in sy0..sy1 {
+                let ro = sy * sw * 3;
+                for sx in sx0..sx1 {
+                    let p = ro + sx * 3;
+                    acc += (54u32 * rgb_img.rgb[p] as u32
+                        + 183u32 * rgb_img.rgb[p + 1] as u32
+                        + 19u32 * rgb_img.rgb[p + 2] as u32
+                        + 128)
+                        >> 8;
+                    cnt += 1;
+                }
+            }
+            luma[dy * dw + dx] = (acc / cnt.max(1)) as u8;
+        }
+    }
+    Some(DecodedGrayImage {
+        width: dw as u32,
+        height: dh as u32,
+        luma,
+    })
+}
+
 /// Decodes `JPEG`, `PNG`, `GIF` (`GIF87a`/`GIF89a`), or `BMP` (`1/4/8/24/32-bit`) into `RGB24`,
 /// compositing alpha transparency cleanly onto `bg_rgb` (`0xRRGGBB`).
 pub fn decode_illustration_rgb24(bytes: &[u8], bg_rgb: u32) -> Option<DecodedRgbImage> {
@@ -662,6 +736,120 @@ pub fn rasterize_4shade_rgba(
     let inv_span = 1.0 / ((hi - lo).max(1) as f32);
 
     // 4. 4x4 Bayer ordered dithering at exact destination screen texel coordinates
+    let mut out_rgba = vec![0u8; npx * 4];
+    for y in 0..h {
+        let brow = &BAYER4[y & 3];
+        for x in 0..w {
+            let i = y * w + x;
+            let raw_l = luma_buf[i] as i32;
+            let norm = ((raw_l - lo) as f32 * inv_span).clamp(0.0, 1.0);
+            let g_l = norm.powf(1.08);
+            let tone = if g_l <= 0.09 {
+                0
+            } else if g_l >= 0.91 {
+                3
+            } else {
+                let bval = (brow[x & 3] as f32 / 16.0) - 0.5 + (1.0 / 32.0);
+                (g_l * 3.0 + bval * 0.48).round().clamp(0.0, 3.0) as usize
+            };
+            out_rgba[i * 4..i * 4 + 4].copy_from_slice(&pal[tone]);
+        }
+    }
+    out_rgba
+}
+
+/// Resamples a cached 8-bit `DecodedGrayImage` to `(dst_w, dst_h)` and applies UIPod's 4-shade
+/// 4x4 Bayer ordered dithering (`< 0.3 ms`, zero JPEG/PNG re-decoding).
+pub fn rasterize_gray_4shade_rgba(
+    src: &DecodedGrayImage,
+    dst_w: u32,
+    dst_h: u32,
+    bg_rgb: u32,
+    fg_rgb: u32,
+    fg1_rgb: u32,
+    fg2_rgb: u32,
+) -> Vec<u8> {
+    const BAYER4: [[u8; 4]; 4] = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+    ];
+
+    let w = dst_w.max(1) as usize;
+    let h = dst_h.max(1) as usize;
+    let sw = src.width.max(1) as usize;
+    let sh = src.height.max(1) as usize;
+
+    let mut luma_buf = vec![0u8; w * h];
+    if w == sw && h == sh && src.luma.len() >= w * h {
+        luma_buf.copy_from_slice(&src.luma[..w * h]);
+    } else {
+        for dy in 0..h {
+            let y0f = (dy as f32) * (sh as f32) / (h as f32);
+            let y1f = ((dy + 1) as f32) * (sh as f32) / (h as f32);
+            let sy0 = (y0f.floor() as usize).min(sh - 1);
+            let sy1 = (y1f.ceil() as usize).clamp(sy0 + 1, sh);
+
+            for dx in 0..w {
+                let x0f = (dx as f32) * (sw as f32) / (w as f32);
+                let x1f = ((dx + 1) as f32) * (sw as f32) / (w as f32);
+                let sx0 = (x0f.floor() as usize).min(sw - 1);
+                let sx1 = (x1f.ceil() as usize).clamp(sx0 + 1, sw);
+
+                let mut acc_l = 0u32;
+                let mut cnt = 0u32;
+                for sy in sy0..sy1 {
+                    let row_off = sy * sw;
+                    for sx in sx0..sx1 {
+                        acc_l += src.luma[row_off + sx] as u32;
+                        cnt += 1;
+                    }
+                }
+                luma_buf[dy * w + dx] = (acc_l / cnt.max(1)) as u8;
+            }
+        }
+    }
+
+    let mut shades = [
+        rgb_to_luma_rgba(bg_rgb),
+        rgb_to_luma_rgba(fg1_rgb),
+        rgb_to_luma_rgba(fg2_rgb),
+        rgb_to_luma_rgba(fg_rgb),
+    ];
+    shades.sort_by_key(|&(l, _)| l);
+    let pal = [shades[0].1, shades[1].1, shades[2].1, shades[3].1];
+
+    let npx = luma_buf.len();
+    let mut hist = [0u32; 256];
+    for &l in &luma_buf {
+        hist[l as usize] += 1;
+    }
+    let clip = (npx / 50) as u32;
+    let mut acc = 0u32;
+    let mut lo = 0i32;
+    for (i, &c) in hist.iter().enumerate() {
+        acc += c;
+        if acc >= clip {
+            lo = i as i32;
+            break;
+        }
+    }
+    acc = 0;
+    let mut hi = 255i32;
+    for (i, &c) in hist.iter().enumerate().rev() {
+        acc += c;
+        if acc >= clip {
+            hi = i as i32;
+            break;
+        }
+    }
+    if hi - lo < 56 {
+        lo = 0;
+        hi = 255;
+    }
+    let inv_span = 1.0 / ((hi - lo).max(1) as f32);
+
     let mut out_rgba = vec![0u8; npx * 4];
     for y in 0..h {
         let brow = &BAYER4[y & 3];

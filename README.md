@@ -32,9 +32,9 @@ An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for 
 
 ## Installation
 
-- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.10.0-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
-- **Android Handhelds:** Install `UIPod-v0.10.0-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
-- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.10.0-web.zip`).
+- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.10.1-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
+- **Android Handhelds:** Install `UIPod-v0.10.1-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
+- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.10.1-web.zip`).
 
 ## Controls
 

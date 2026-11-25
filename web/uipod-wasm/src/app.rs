@@ -433,7 +433,9 @@ pub struct UserBookEntry {
     pub icon_tag: String,
     pub size_label: String,
     pub key: String,
-    pub doc: uipod_ebook::EbookDoc,
+    pub raw_bytes: Vec<u8>,
+    pub cached_bidx: Option<Vec<u8>>,
+    pub fallback_error: Option<uipod_ebook::EbookError>,
 }
 
 impl UIPodApp {
@@ -541,8 +543,13 @@ impl UIPodApp {
         if let Some(ActivePlugin::TextViewer(ref mut tv)) = self.active_plugin {
             let (prefs, key_opt, off) = tv.persistence_snapshot();
             self.reader_prefs = prefs;
-            if let Some(k) = key_opt {
-                self.reader_bookmarks.insert(k, off);
+            if let Some(ref k) = key_opt {
+                self.reader_bookmarks.insert(k.clone(), off);
+                if let Some(bidx) = tv.export_bidx_bytes() {
+                    if let Some(entry) = self.user_books.iter_mut().find(|e| &e.key == k) {
+                        entry.cached_bidx = Some(bidx);
+                    }
+                }
             }
         }
     }
@@ -558,15 +565,45 @@ impl UIPodApp {
     }
 
     pub fn launch_user_book_viewer(&mut self, book_idx: usize) -> Option<ActivePlugin> {
-        let entry = self.user_books.get(book_idx)?;
+        let uk = self.uk;
+        let prefs = self.reader_prefs;
+        let entry = self.user_books.get_mut(book_idx)?;
         let saved = self.reader_bookmarks.get(&entry.key).copied().unwrap_or(0);
+        let sess = if let Some(ref err) = entry.fallback_error {
+            uipod_ebook::BookSession::from_single_doc(
+                uipod_ebook::error_document(&entry.file_name, err, uk),
+                0,
+            )
+        } else {
+            let hint = if saved > 0 {
+                uipod_ebook::BookmarkHint::LegacyGlobal(saved)
+            } else {
+                uipod_ebook::BookmarkHint::None
+            };
+            match uipod_ebook::BookSession::open_bytes(
+                &entry.file_name,
+                entry.raw_bytes.clone(),
+                entry.cached_bidx.as_deref(),
+                hint,
+            ) {
+                Ok(mut s) => {
+                    if entry.cached_bidx.is_none() {
+                        entry.cached_bidx = s.export_bidx_bytes(&prefs);
+                    }
+                    s
+                }
+                Err(err) => uipod_ebook::BookSession::from_single_doc(
+                    uipod_ebook::error_document(&entry.file_name, &err, uk),
+                    0,
+                ),
+            }
+        };
         Some(ActivePlugin::TextViewer(
-            crate::plugins::TextViewerApp::from_doc(
-                entry.doc.clone(),
+            crate::plugins::TextViewerApp::from_session(
+                sess,
                 Some(entry.key.clone()),
                 false,
-                self.reader_prefs,
-                saved,
+                prefs,
             ),
         ))
     }
@@ -599,13 +636,19 @@ impl UIPodApp {
             format!("{} KB", (bytes.len().max(1024) + 512) / 1024)
         };
         let key = uipod_ebook::fnv1a_book_key(&format!("/mnt/SDCARD/Media/{clean_name}"));
-        let doc = match uipod_ebook::parse_document(&clean_name, bytes) {
-            Ok(d) => d,
+        let raw_vec = bytes.to_vec();
+        let (cached_bidx, fallback_error) = match uipod_ebook::BookSession::open_bytes(
+            &clean_name,
+            raw_vec.clone(),
+            None,
+            uipod_ebook::BookmarkHint::None,
+        ) {
+            Ok(mut s) => (s.export_bidx_bytes(&self.reader_prefs), None),
             Err(err) => {
                 let msg = err.localized_message(self.uk);
                 let now_ms = ui.hud_clock_ms();
                 ui.hud_toast("ebook_err", &msg, 2000, now_ms);
-                uipod_ebook::error_document(&clean_name, &err, self.uk)
+                (None, Some(err))
             }
         };
 
@@ -614,7 +657,9 @@ impl UIPodApp {
             icon_tag,
             size_label,
             key,
-            doc,
+            raw_bytes: raw_vec,
+            cached_bidx,
+            fallback_error,
         };
         let idx = if let Some(pos) = self
             .user_books

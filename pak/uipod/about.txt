@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.10.0
+Version: v0.10.1
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -81,7 +81,7 @@ Open Extras -> Plugins to launch native 60 FPS GPU-accelerated Rust plugins:
   - Stopwatch — Precision millisecond lap timer.
   - LCD Plasma — 60 FPS 4-shade procedural demoscene shader effect.
 • Viewers:
-  - Text Viewer (E-Book & Document Reader) — Opens .epub, .fb2, .fb2.zip (UTF-8 & Windows-1251), DRM-free .mobi/.prc/.azw, .md, .txt, .lrc, .log, .cfg, .ini, .json, .cue, and .nfo files from Browse, complete with 4-shade Bayer-dithered book covers & illustrations, interactive Footnote popup cards (short-tap A to open/cycle, Up/Down to scroll, B to dismiss), and a permanent full-width bottom progress bar (% or READ / TOTAL pages). Press solo SELECT to toggle Paginated (Left/Right) vs Infinite Scroll (Up/Down) at the exact same reading spot, MENU or Hold A for Reader Options (Chapters / Table of Contents, Reading Mode, Font switching between Geologica Sans and Noto Serif with full Ukrainian Cyrillic + CJK support, Font Size, Line Spacing, Hide UI top header toggle, Progress Label, Go to Beginning, Go to End, Exit), X to cycle font size, START to play/pause music, L2/R2 for previous/next music track, and B to save reading progress and exit.
+  - Text Viewer (E-Book & Document Reader) — Instantly opens .epub, .fb2, .fb2.zip (UTF-8 & Windows-1251), DRM-free .mobi/.prc/.azw, .md, .txt, .lrc, .log, .cfg, .ini, .json, .cue, and .nfo files from Browse using lazy single-chapter loading and persistent SD-card book index caching (reader_cache/*.bidx) without interrupting background music playback, complete with 4-shade Bayer-dithered book covers & illustrations, interactive Footnote popup cards (short-tap A to open/cycle, Up/Down to scroll, B to dismiss), and a permanent full-width bottom progress bar (% or READ / TOTAL pages). Press solo SELECT to toggle Paginated (Left/Right) vs Infinite Scroll (Up/Down) at the exact same reading spot, MENU or Hold A for Reader Options (Chapters / Table of Contents, Reading Mode, Font switching between Geologica Sans and Noto Serif with full Ukrainian Cyrillic + CJK support, Font Size, Line Spacing, Hide UI top header toggle, Progress Label, Go to Beginning, Go to End, Exit), X to cycle font size instantly, START to play/pause music, L2/R2 for previous/next music track, and B to save reading progress and exit.
 
 Custom third-party .uipod plugins can be installed by placing compiled .uipod files into /mnt/SDCARD/Plugins/UIPod/.
 

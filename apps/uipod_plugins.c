@@ -146,6 +146,7 @@ static size_t host_get_data_dir(char *out, size_t cap)
         return 0;
 
     char dir[512];
+    dir[0] = '\0';
     if (dir_exists(UIPOD_SDCARD_ROOT))
     {
         mkdir(UIPOD_SDCARD_ROOT "/Plugins");
@@ -153,7 +154,7 @@ static size_t host_get_data_dir(char *out, size_t cap)
         snprintf(dir, sizeof(dir), "%s/.data", SDCARD_PLUGINS_DIR);
         mkdir(dir);
     }
-    else
+    if (!dir[0] || !dir_exists(dir))
     {
         const char *home = getenv("HOME");
         if (home && home[0])
@@ -166,7 +167,7 @@ static size_t host_get_data_dir(char *out, size_t cap)
             snprintf(dir, sizeof(dir), "%s/.config/rockbox.org/plugins", home);
             mkdir(dir);
         }
-        else
+        if (!dir[0] || !dir_exists(dir))
         {
             strlcpy(dir, UIPOD_TMP_ROOT "/uipod_plugin_data", sizeof(dir));
             mkdir(dir);
@@ -334,7 +335,7 @@ static float host_canvas_draw_text(float x, float center_y, const char *text,
 static float host_canvas_measure_text(const char *text, float font_size,
                                       uint8_t weight)
 {
-    if (!uipod_gpu_ui_ensure_ready())
+    if (!uipod_rs_ui_is_ready() && !uipod_gpu_ui_ensure_ready())
         return 0.0f;
     return uipod_rs_ui_plugin_measure_text(text, font_size, weight);
 }

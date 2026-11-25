@@ -1,7 +1,7 @@
 {
   "name": "uipod-web",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.10.1",
   "type": "module",
   "scripts": {
     "build:wasm": "cd uipod-wasm && wasm-pack build --target web --no-opt --out-dir ../src/wasm-pkg",
