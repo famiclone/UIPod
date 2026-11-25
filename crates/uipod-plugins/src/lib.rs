@@ -78,6 +78,7 @@ impl DlLibrary {
             return Err(format!("Invalid plugin magic: 0x{:08X}", desc.magic));
         }
         if desc.api_version != UIPOD_PLUGIN_API_VERSION
+            && desc.api_version != 7
             && desc.api_version != 6
             && desc.api_version != 5
         {
@@ -830,6 +831,24 @@ mod tests {
             false
         }
 
+        unsafe extern "C" fn m_trk_analysis(
+            out: *mut uipod_plugin_sdk::PluginTrackAnalysis,
+        ) -> bool {
+            if !out.is_null() {
+                *out = uipod_plugin_sdk::PluginTrackAnalysis::default();
+            }
+            false
+        }
+
+        unsafe extern "C" fn m_live_tel(
+            out: *mut uipod_plugin_sdk::PluginLiveTelemetry,
+        ) -> bool {
+            if !out.is_null() {
+                *out = uipod_plugin_sdk::PluginLiveTelemetry::default();
+            }
+            false
+        }
+
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
             get_ticks_ms: m_ticks,
@@ -867,6 +886,8 @@ mod tests {
             canvas_begin_responsive: m_begin_resp,
             get_responsive_size: m_resp_size,
             audio_get_apu_telemetry: m_apu_tel,
+            audio_get_track_analysis: m_trk_analysis,
+            audio_get_live_telemetry: m_live_tel,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");

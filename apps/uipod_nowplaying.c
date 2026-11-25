@@ -44,6 +44,8 @@
 #include "lcd.h"
 #include "metadata.h"
 #include "misc.h"
+#include "pcm_mixer.h"
+#include "pcmbuf.h"
 #include "playlist.h"
 #include "powermgmt.h"
 #include "rbpaths.h"
@@ -54,6 +56,7 @@
 #include "status.h"
 #include "string-extra.h"
 #include "system.h"
+#include "trimpod_alsa.h"
 #include "uipod_library.h"
 #include "uipod_nowplaying.h"
 #include "uipod_nsf_ui.h"
@@ -162,6 +165,8 @@ static bool decode_and_cache_art(const uint8_t *img_bytes, size_t img_len)
         const float scale = (float)side / (float)NP_ART_SIZE;
         for (int dy = 0; dy < NP_ART_SIZE; dy++)
         {
+            if ((dy & 31) == 31)
+                yield();
             float sy0 = (float)crop_y0 + (float)dy * scale;
             float sy1 = sy0 + scale;
             int iy0 = (int)sy0;
@@ -1601,6 +1606,18 @@ void uipod_nowplaying_draw(void)
         if (id3 && id3->length > 0)
         {
             pos_ms = (long)id3->elapsed + (state ? state->ff_rewind_count : 0);
+            /* Subtract live ALSA/SDL hardware sink latency so displayed elapsed/remaining
+             * tracks the exact sample reaching the listener's ears. */
+            int astat = audio_status();
+            if ((astat & AUDIO_STATUS_PLAY) && !(astat & AUDIO_STATUS_PAUSE) &&
+                (!state || state->ff_rewind_count == 0))
+            {
+                long hw_delay_ms = (long)(pcm_alsa_output_delay_us() / 1000u);
+                if (hw_delay_ms > 500L)
+                    hw_delay_ms = 500L;
+                if (hw_delay_ms > 0 && pos_ms >= hw_delay_ms)
+                    pos_ms -= hw_delay_ms;
+            }
             len_ms = (long)id3->length;
 
             if (id3->cuesheet && id3->cuesheet->track_count > 1)
@@ -1668,7 +1685,13 @@ void uipod_nowplaying_draw(void)
 
         char dj_label_buf[64] = "";
         struct uipod_rs_dj_telemetry dj_tel;
-        if (uipod_rs_dj_get_telemetry(&dj_tel) != 0)
+        unsigned long mix_sr = mixer_get_frequency();
+        if (mix_sr == 0)
+            mix_sr = 44100UL;
+        size_t sink_delay_frames =
+            pcmbuf_unplayed_frames() +
+            (size_t)(((uint64_t)pcm_alsa_output_delay_us() * (uint64_t)mix_sr) / 1000000ULL);
+        if (uipod_rs_dj_get_telemetry_synced(&dj_tel, sink_delay_frames) != 0)
         {
             if (dj_tel.mix_kind == 2 && dj_tel.bpm_a > 1.0f && dj_tel.bpm_b > 1.0f)
             {

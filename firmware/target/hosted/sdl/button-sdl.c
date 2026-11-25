@@ -35,6 +35,7 @@
 #include <sys/ioctl.h>
 #include <linux/input.h>
 #include "trimpod_alsa.h"
+#include "tape_deck_fx.h"
 #endif
 #include "sim-ui-defines.h"
 #include "config.h"
@@ -697,6 +698,17 @@ static void add_node(const char *name)
         return;
     input_fds[i] = (struct pollfd){ .fd = fd, .events = POLLIN };
     input_headset[i] = is_headset(fd) && ioctl(fd, EVIOCGRAB, 1) == 0;
+    if (!input_headset[i] && has_code(fd, EV_SW, SW_HEADPHONE_INSERT))
+    {
+        unsigned long sw[(SW_MAX + 8 * sizeof(unsigned long)) /
+                         (8 * sizeof(unsigned long))] = { 0 };
+        if (ioctl(fd, EVIOCGSW(sizeof sw), sw) >= 0)
+        {
+            bool ins = (sw[SW_HEADPHONE_INSERT / (8 * sizeof sw[0])] >>
+                        (SW_HEADPHONE_INSERT % (8 * sizeof sw[0]))) & 1;
+            tape_deck_fx_set_hp35_jack(ins);
+        }
+    }
     if (i == num_input_fds)
         num_input_fds++;
 }
@@ -770,9 +782,12 @@ static void read_watch(void)
  * the codec moves the sound to them by itself. */
 static void input_switch(const struct input_event *ev)
 {
-    if (ev->type == EV_SW && ev->code == SW_HEADPHONE_INSERT && !ev->value &&
-        trimpod_audio_sink() == TRIMPOD_SINK_SPEAKER)
-        post_event(SYS_PHONE_UNPLUGGED, 0);
+    if (ev->type == EV_SW && ev->code == SW_HEADPHONE_INSERT)
+    {
+        tape_deck_fx_set_hp35_jack(ev->value != 0);
+        if (!ev->value && trimpod_audio_sink() == TRIMPOD_SINK_SPEAKER)
+            post_event(SYS_PHONE_UNPLUGGED, 0);
+    }
 }
 
 static void node_event(int slot, const struct input_event *ev)

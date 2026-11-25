@@ -234,18 +234,12 @@ unzip -q "$BUILD_DIR/uipod-full.zip" -d "$TMP_UNZIP"
 cp -a "$TMP_UNZIP/data/data/dev.famiclone.uipod/files/uipod/." "$APK_WORK/assets/uipod/"
 rm -rf "$TMP_UNZIP"
 
-find "$APK_WORK/assets/uipod/themes" -type f \
-     ! -name 'rockbox_failsafe.cfg' ! -name 'rockbox_default_icons.cfg' -delete 2>/dev/null || true
-find "$APK_WORK/assets/uipod/wps" -mindepth 1 -maxdepth 1 \
-     ! -name 'rockbox_failsafe*' -exec rm -rf {} + 2>/dev/null || true
-rm -rf "$APK_WORK/assets/uipod/backdrops" 2>/dev/null || true
-
-cp -a "$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox/wps/." "$APK_WORK/assets/uipod/wps/"
-cp -a "$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox/themes/." "$APK_WORK/assets/uipod/themes/"
+rm -rf "$APK_WORK/assets/uipod/themes" "$APK_WORK/assets/uipod/wps" \
+       "$APK_WORK/assets/uipod/backdrops" "$APK_WORK/assets/uipod/icons" 2>/dev/null || true
 
 rm -f "$APK_WORK/assets/uipod/fonts/"*.fnt "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 mkdir -p "$APK_WORK/assets/uipod/fonts"
-cp -a "$ROOT/assets/fonts/PixelMplus12-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSansJP-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt"
 
 mkdir -p "$APK_WORK/assets/uipod/autoeq" "$APK_WORK/assets/uipod/eqs"
@@ -273,6 +267,7 @@ for pl_so in "$ROOT/target/aarch64-linux-android/release/libbrick_breaker.so" \
              "$ROOT/target/aarch64-linux-android/release/libtetris.so" \
              "$ROOT/target/aarch64-linux-android/release/libsound_racer.so" \
              "$ROOT/target/aarch64-linux-android/release/libpulsar_vanguard.so" \
+             "$ROOT/target/aarch64-linux-android/release/libbeat_stack.so" \
              "$ROOT/target/aarch64-linux-android/release/libmusic_quiz.so" \
              "$ROOT/target/aarch64-linux-android/release/libstopwatch.so" \
              "$ROOT/target/aarch64-linux-android/release/libtext_viewer.so" \

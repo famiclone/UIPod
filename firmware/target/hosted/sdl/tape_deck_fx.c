@@ -268,6 +268,12 @@ static struct
     float    eq_z2_l[TAPE_EQ_BANDS];
     float    eq_z1_r[TAPE_EQ_BANDS];
     float    eq_z2_r[TAPE_EQ_BANDS];
+
+    /* Dedicated smooth 3.5mm Headphone Low-Shelf Biquad state */
+    float    hp35_z1_l;
+    float    hp35_z2_l;
+    float    hp35_z1_r;
+    float    hp35_z2_r;
 } st;
 
 struct sink_eq_cfg
@@ -300,6 +306,18 @@ static struct sink_eq_cfg s_eq_cfg = {
 static struct sink_eq_bank s_eq_banks[2];
 static volatile int        s_eq_bank_idx = 0;
 static volatile bool       s_eq_bypass   = false;
+
+struct hp35_shelf_bank
+{
+    bool  active;
+    float b0, b1, b2, a1, a2;
+};
+
+static struct hp35_shelf_bank s_hp35_banks[2];
+static volatile int           s_hp35_bank_idx       = 0;
+static volatile int           s_hp35_profile        = 2;     /* 0=Off, 1=Subtle, 2=Warm, 3=Deep */
+static volatile bool          s_hp35_jack_inserted  = false; /* 3.5mm SW_HEADPHONE_INSERT */
+static volatile bool          s_hp35_route_is_codec = true;  /* TRIMPOD_SINK_SPEAKER */
 
 /* Separate BSS arrays for studio FX delay lines so hot scalar state stays compact in L1 cache */
 static struct
@@ -334,6 +352,12 @@ static inline bool sink_eq_active(void)
         return false;
     const struct sink_eq_bank *bk = &s_eq_banks[s_eq_bank_idx];
     return (bk->active_mask != 0U) || (s_eq_cfg.precut_tenths != 0);
+}
+
+static inline bool hp35_shelf_active(void)
+{
+    return s_hp35_profile > 0 && s_hp35_jack_inserted && s_hp35_route_is_codec &&
+           s_hp35_banks[s_hp35_bank_idx].active;
 }
 
 static inline uint32_t xorshift32(uint32_t *s)
@@ -585,6 +609,72 @@ static void update_eq_coeffs(unsigned int sr)
     s_eq_bank_idx = next_idx;
 }
 
+static void clear_hp35_state(void)
+{
+    st.hp35_z1_l = 0.0f;
+    st.hp35_z2_l = 0.0f;
+    st.hp35_z1_r = 0.0f;
+    st.hp35_z2_r = 0.0f;
+}
+
+/* Smooth RBJ Low-Shelf compensation tailored for AC-coupled 3.5mm headphone stage */
+static void update_hp35_shelf_coeffs(unsigned int sr)
+{
+    double fs = (sr >= 8000U) ? (double)sr : 44100.0;
+    int next_idx = 1 - s_hp35_bank_idx;
+    struct hp35_shelf_bank *bk = &s_hp35_banks[next_idx];
+    int prof = s_hp35_profile;
+
+    double f0 = 95.0, q = 0.58, gain_db = 0.0, trim_db = 0.0;
+    if (prof == 1)
+    {
+        f0 = 90.0;  q = 0.55; gain_db = 2.5; trim_db = -0.9;
+    }
+    else if (prof == 2)
+    {
+        f0 = 95.0;  q = 0.58; gain_db = 4.0; trim_db = -1.6;
+    }
+    else if (prof >= 3)
+    {
+        f0 = 105.0; q = 0.60; gain_db = 6.0; trim_db = -2.6;
+    }
+
+    if (prof <= 0 || gain_db <= 0.0)
+    {
+        bk->active = false;
+        bk->b0 = 1.0f;
+        bk->b1 = bk->b2 = bk->a1 = bk->a2 = 0.0f;
+        s_hp35_bank_idx = next_idx;
+        return;
+    }
+
+    if (f0 > fs * 0.45)
+        f0 = fs * 0.45;
+    double A = pow(10.0, gain_db / 40.0);
+    double trim = pow(10.0, trim_db / 20.0);
+    double w0 = 2.0 * M_PI * f0 / fs;
+    double cw = cos(w0);
+    double sw = sin(w0);
+    double alpha = sw / (2.0 * q);
+    double sq = 2.0 * sqrt(A) * alpha;
+
+    double b0 = A * ((A + 1.0) - (A - 1.0) * cw + sq);
+    double b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cw);
+    double b2 = A * ((A + 1.0) - (A - 1.0) * cw - sq);
+    double a0 = (A + 1.0) + (A - 1.0) * cw + sq;
+    double a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cw);
+    double a2 = (A + 1.0) + (A - 1.0) * cw - sq;
+    double inv_a0 = (fabs(a0) > 1e-12) ? (1.0 / a0) : 1.0;
+
+    bk->b0 = (float)(b0 * inv_a0 * trim);
+    bk->b1 = (float)(b1 * inv_a0 * trim);
+    bk->b2 = (float)(b2 * inv_a0 * trim);
+    bk->a1 = (float)(a1 * inv_a0);
+    bk->a2 = (float)(a2 * inv_a0);
+    bk->active = true;
+    s_hp35_bank_idx = next_idx;
+}
+
 static void fire_mech_click(float amp)
 {
     st.click_hi_env = amp;
@@ -752,6 +842,7 @@ static void update_coeffs(unsigned int sr)
     }
 
     update_eq_coeffs(sr);
+    update_hp35_shelf_coeffs(sr);
 }
 
 void tape_deck_fx_init(void)
@@ -842,6 +933,33 @@ void tape_deck_fx_set_eq_bypass(bool bypass)
     s_eq_bypass = bypass;
 }
 
+void tape_deck_fx_set_hp35_profile(int profile)
+{
+    if (profile < 0) profile = 0;
+    if (profile > 3) profile = 3;
+    bool was_active = hp35_shelf_active();
+    s_hp35_profile = profile;
+    update_hp35_shelf_coeffs(st.sr ? st.sr : 44100U);
+    if (!was_active && hp35_shelf_active())
+        clear_hp35_state();
+}
+
+void tape_deck_fx_set_hp35_jack(bool inserted)
+{
+    bool was_active = hp35_shelf_active();
+    s_hp35_jack_inserted = inserted;
+    if (!was_active && hp35_shelf_active())
+        clear_hp35_state();
+}
+
+void tape_deck_fx_set_hp35_route_codec(bool is_codec_route)
+{
+    bool was_active = hp35_shelf_active();
+    s_hp35_route_is_codec = is_codec_route;
+    if (!was_active && hp35_shelf_active())
+        clear_hp35_state();
+}
+
 int tape_deck_fx_eval_eq_curve_tenths_db(double freq_hz)
 {
     const double fs = 48000.0;
@@ -885,7 +1003,8 @@ int tape_deck_fx_eval_eq_curve_tenths_db(double freq_hz)
 
 bool tape_deck_fx_is_enabled(void)
 {
-    return sink_eq_active() || tape_mode_active() || studio_fx_active();
+    return sink_eq_active() || hp35_shelf_active() ||
+           tape_mode_active() || studio_fx_active();
 }
 
 bool tape_deck_fx_pause_fx_enabled(void)
@@ -985,11 +1104,19 @@ void tape_deck_fx_on_seek_or_stop(void)
     st.base_age = (double)TAPE_SEED_FRAMES;
     st.crinkle_env = 0.0f;
 
-    clear_chorus_state();
-    clear_flanger_state();
-    clear_delay_state();
-    clear_reverb_state();
-    clear_eq_state();
+    if (s_cfg.master_enabled)
+    {
+        if (s_cfg.chorus_on)
+            clear_chorus_state();
+        if (s_cfg.flanger_on)
+            clear_flanger_state();
+        if (s_cfg.delay_on)
+            clear_delay_state();
+        if (s_cfg.reverb_on)
+            clear_reverb_state();
+    }
+    if (sink_eq_active())
+        clear_eq_state();
 
     /* Only do pinch-roller spin-up if user just released manual FF/Rewind */
     if (st.was_manual_ff && tape_mode_active() && s_cfg.pause_fx)
@@ -1234,6 +1361,26 @@ static inline void process_sink_eq_sample(float *io_l, float *io_r)
     }
     *io_l = s_l;
     *io_r = s_r;
+}
+
+static inline void process_hp35_shelf_sample(float *io_l, float *io_r)
+{
+    const struct hp35_shelf_bank *bk = &s_hp35_banks[s_hp35_bank_idx];
+    if (!bk->active)
+        return;
+    float s_l = *io_l;
+    float s_r = *io_r;
+
+    float yl = bk->b0 * s_l + st.hp35_z1_l;
+    st.hp35_z1_l = bk->b1 * s_l - bk->a1 * yl + st.hp35_z2_l;
+    st.hp35_z2_l = bk->b2 * s_l - bk->a2 * yl;
+
+    float yr = bk->b0 * s_r + st.hp35_z1_r;
+    st.hp35_z1_r = bk->b1 * s_r - bk->a1 * yr + st.hp35_z2_r;
+    st.hp35_z2_r = bk->b2 * s_r - bk->a2 * yr;
+
+    *io_l = yl;
+    *io_r = yr;
 }
 
 /* Zero-libm real-time studio rack: Chorus -> Flanger -> Delay -> Reverb */
@@ -1484,6 +1631,8 @@ static inline void process_core_sample(float base_age_f,
 
         if (sink_eq_active())
             process_sink_eq_sample(&s_l, &s_r);
+        if (hp35_shelf_active())
+            process_hp35_shelf_sample(&s_l, &s_r);
 
         if (st.sat_amt > 0.001f)
         {
@@ -1600,9 +1749,10 @@ void tape_deck_fx_process_steady_block(const int16_t *in_interleaved,
 
     if (!tape_mode_active())
     {
-        const bool eq_on = sink_eq_active();
-        const bool fx_on = studio_fx_active();
-        if (!eq_on && !fx_on)
+        const bool eq_on   = sink_eq_active();
+        const bool hp35_on = hp35_shelf_active();
+        const bool fx_on   = studio_fx_active();
+        if (!eq_on && !hp35_on && !fx_on)
         {
             if (out_interleaved != in_interleaved && frames > 0)
                 memcpy(out_interleaved, in_interleaved, (size_t)frames * 2U * sizeof(int16_t));
@@ -1614,6 +1764,8 @@ void tape_deck_fx_process_steady_block(const int16_t *in_interleaved,
             float s_r = (float)in_interleaved[2 * i + 1] * inv32768;
             if (eq_on)
                 process_sink_eq_sample(&s_l, &s_r);
+            if (hp35_on)
+                process_hp35_shelf_sample(&s_l, &s_r);
             if (fx_on)
                 process_studio_fx_sample(&s_l, &s_r);
             if (s_l > 0.96f || s_l < -0.96f)

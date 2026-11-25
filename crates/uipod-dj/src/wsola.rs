@@ -18,8 +18,10 @@ pub struct WsolaStretcher {
 
     /// Sliding stereo input FIFO (`[L, R, ...]`).
     in_buf: Vec<f32>,
-    /// Number of valid stereo frames currently stored in `in_buf` (`0..=in_cap`).
+    /// Number of valid stereo frames currently stored in `in_buf` (`0..=in_cap`), including EOF pad.
     in_frames: usize,
+    /// Number of real (non-EOF-padded) stereo frames currently stored in `in_buf`.
+    real_in_frames: usize,
     /// Ideal fractional input cursor relative to index `0` of `in_buf`.
     ideal_pos: f64,
     /// Actual start index of the most recently synthesized grain (or `None` before first grain).
@@ -59,6 +61,7 @@ impl WsolaStretcher {
             hann,
             in_buf: vec![0.0; in_cap * 2],
             in_frames: 0,
+            real_in_frames: 0,
             ideal_pos: 0.0,
             last_grain_pos: None,
             ola_buf: vec![0.0; win_len * 2],
@@ -71,6 +74,7 @@ impl WsolaStretcher {
 
     pub fn reset(&mut self) {
         self.in_frames = 0;
+        self.real_in_frames = 0;
         self.ideal_pos = 0.0;
         self.last_grain_pos = None;
         self.ola_buf.fill(0.0);
@@ -84,6 +88,15 @@ impl WsolaStretcher {
         self.out_len - self.out_read
     }
 
+    /// Exact number of real input frames already ingested into WSOLA (`in_buf` + `out_fifo`)
+    /// that have not yet been consumed by the caller.
+    #[inline]
+    pub fn unplayed_input_frames(&self, tempo_ratio: f32) -> f64 {
+        let ratio = (tempo_ratio as f64).clamp(0.5, 2.0);
+        let in_unplayed = (self.real_in_frames as f64 - self.ideal_pos).max(0.0);
+        in_unplayed + (self.available_output_frames() as f64) * ratio
+    }
+
     /// Push interleaved stereo frames into the internal input window.
     /// Returns how many stereo frames were accepted.
     pub fn push_input(&mut self, src_interleaved: &[f32]) -> usize {
@@ -95,8 +108,29 @@ impl WsolaStretcher {
             let dst_off = self.in_frames * 2;
             self.in_buf[dst_off..dst_off + n * 2].copy_from_slice(&src_interleaved[..n * 2]);
             self.in_frames += n;
+            self.real_in_frames += n;
         }
         n
+    }
+
+    fn pad_eof_zeros(&mut self, needed_in_frames: usize) {
+        if self.in_frames >= needed_in_frames {
+            return;
+        }
+        let cap_frames = self.in_buf.len() / 2;
+        if needed_in_frames > cap_frames {
+            let safe_drop = (self.ideal_pos.floor().max(0.0) as usize)
+                .saturating_sub(self.search_radius + 8)
+                .min(self.last_grain_pos.unwrap_or(usize::MAX));
+            if safe_drop > 0 {
+                self.discard_input_prefix(safe_drop);
+            }
+        }
+        let target = needed_in_frames.min(cap_frames);
+        if target > self.in_frames {
+            self.in_buf[self.in_frames * 2..target * 2].fill(0.0);
+            self.in_frames = target;
+        }
     }
 
     #[inline]
@@ -110,6 +144,7 @@ impl WsolaStretcher {
             self.in_buf.copy_within(drop * 2..(drop + rem) * 2, 0);
         }
         self.in_frames = rem;
+        self.real_in_frames = self.real_in_frames.saturating_sub(drop);
         self.ideal_pos = (self.ideal_pos - drop as f64).max(0.0);
         if let Some(prev) = self.last_grain_pos {
             self.last_grain_pos = Some(prev.saturating_sub(drop));
@@ -195,9 +230,13 @@ impl WsolaStretcher {
         fine_best_pos
     }
 
-    fn synthesize_one_hop(&mut self, tempo_ratio: f64) -> bool {
+    fn synthesize_one_hop(&mut self, tempo_ratio: f64, is_eof: bool) -> bool {
         let w = self.win_len;
         let hs = self.hop_s;
+
+        if is_eof && self.ideal_pos >= self.real_in_frames as f64 {
+            return false;
+        }
 
         // Compact output FIFO if needed
         if self.out_read > 0 {
@@ -218,7 +257,12 @@ impl WsolaStretcher {
         // Require `center + search_radius + w` frames so correlation window isn't truncated
         let needed = center + self.search_radius + w;
         if self.in_frames < needed {
-            return false;
+            if is_eof && self.real_in_frames > 0 {
+                self.pad_eof_zeros(needed);
+            }
+            if self.in_frames < needed {
+                return false;
+            }
         }
 
         let chosen_pos = match self.last_grain_pos {
@@ -278,6 +322,18 @@ impl WsolaStretcher {
         tempo_ratio: f32,
         out_interleaved: &mut [f32],
     ) -> (usize, usize) {
+        self.process_with_eof(src_interleaved, tempo_ratio, false, out_interleaved)
+    }
+
+    /// Process streaming interleaved stereo input at `tempo_ratio`, optionally draining
+    /// the final lookahead window seamlessly when `is_eof` is `true`.
+    pub fn process_with_eof(
+        &mut self,
+        src_interleaved: &[f32],
+        tempo_ratio: f32,
+        is_eof: bool,
+        out_interleaved: &mut [f32],
+    ) -> (usize, usize) {
         let out_cap = out_interleaved.len() / 2;
         if out_cap == 0 {
             return (0, 0);
@@ -326,13 +382,15 @@ impl WsolaStretcher {
                 total_in += pushed;
             }
 
-            // 3. Synthesize next hop if enough input is buffered
-            if !self.synthesize_one_hop(ratio) {
-                // If more caller input remains and `in_buf` had no room, discard consumed prefix or break
+            let eof_ready = is_eof && total_in * 2 >= src_interleaved.len();
+
+            // 3. Synthesize next hop if enough input is buffered (or zero-padded at EOF)
+            if !self.synthesize_one_hop(ratio, eof_ready) {
                 if total_in * 2 < src_interleaved.len() {
                     let pushed = self.push_input(&src_interleaved[total_in * 2..]);
                     total_in += pushed;
-                    if pushed > 0 && self.synthesize_one_hop(ratio) {
+                    let eof_now = is_eof && total_in * 2 >= src_interleaved.len();
+                    if pushed > 0 && self.synthesize_one_hop(ratio, eof_now) {
                         continue;
                     }
                 }

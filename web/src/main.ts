@@ -107,6 +107,15 @@ async function boot(): Promise<void> {
     return;
   }
 
+  void fetch('./fonts/NotoSansJP-Regular.ttf')
+    .then((res) => (res.ok ? res.arrayBuffer() : null))
+    .then((buf) => {
+      if (buf && buf.byteLength > 0) {
+        uipod.load_cjk_font(new Uint8Array(buf));
+      }
+    })
+    .catch(() => {});
+
   const audio = new UIPodAudioEngine();
   audio.djBridge = {
     setConfig: (mode, length, maxStretch, keepGapless, quickCut) => {
@@ -133,10 +142,177 @@ async function boot(): Promise<void> {
         manualQuickCut,
       ),
     feedDeckBS16: (chunkS16, isEof) => uipod.dj_feed_deck_b_s16(chunkS16, isEof),
+    setTrackTiming: (deckAStartMs, deckADurMs, deckBDurMs) =>
+      uipod.dj_set_track_timing(deckAStartMs, deckADurMs, deckBDurMs),
+    getAudibleElapsedMs: (downstreamFrames) => uipod.dj_audible_elapsed_ms(downstreamFrames),
     renderS16: (frames) => uipod.dj_render_s16(frames),
     takeMidpointCrossed: () => uipod.dj_take_midpoint_crossed(),
     isActive: () => uipod.dj_is_active(),
     reset: () => uipod.dj_reset(),
+  };
+
+  // ---- Persistent Browser Track Intelligence Cache (`IndexedDB` + `localStorage` fallback) ----
+  const INTEL_IDB_NAME = 'uipod_track_intel_v1';
+  const INTEL_STORE = 'records';
+  let intelDbPromise: Promise<IDBDatabase | null> | null = null;
+
+  function openIntelIdb(): Promise<IDBDatabase | null> {
+    if (intelDbPromise) return intelDbPromise;
+    intelDbPromise = new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+      try {
+        const req = indexedDB.open(INTEL_IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(INTEL_STORE)) {
+            db.createObjectStore(INTEL_STORE);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return intelDbPromise;
+  }
+
+  async function loadIntelRecord(hexKey: string): Promise<Uint8Array | null> {
+    const db = await openIntelIdb();
+    if (db) {
+      const hit = await new Promise<Uint8Array | null>((resolve) => {
+        try {
+          const tx = db.transaction(INTEL_STORE, 'readonly');
+          const req = tx.objectStore(INTEL_STORE).get(hexKey);
+          req.onsuccess = () => {
+            const val = req.result;
+            resolve(val instanceof Uint8Array ? val : null);
+          };
+          req.onerror = () => resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+      if (hit && hit.byteLength === 512) return hit;
+    }
+    try {
+      const b64 = localStorage.getItem(`uipod_ti_${hexKey}`);
+      if (b64) {
+        const bin = atob(b64);
+        if (bin.length === 512) {
+          const out = new Uint8Array(512);
+          for (let i = 0; i < 512; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  async function saveIntelRecord(hexKey: string, bytes: Uint8Array): Promise<void> {
+    if (bytes.byteLength !== 512) return;
+    const db = await openIntelIdb();
+    if (db) {
+      try {
+        const tx = db.transaction(INTEL_STORE, 'readwrite');
+        tx.objectStore(INTEL_STORE).put(bytes, hexKey);
+        return;
+      } catch {
+        // fall through to localStorage
+      }
+    }
+    try {
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      localStorage.setItem(`uipod_ti_${hexKey}`, btoa(s));
+    } catch {
+      // ignore quota errors
+    }
+  }
+
+  function extractDecimatedMono(buf: AudioBuffer): {
+    winMono: Float32Array;
+    contourMono: Float32Array;
+    decSr: number;
+    startMs: number;
+  } {
+    const sr = buf.sampleRate;
+    const total = buf.length;
+    const ch0 = buf.getChannelData(0);
+    const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+    const decim = Math.max(1, Math.floor(sr / 11025));
+    const decSr = Math.max(4000, Math.floor(sr / decim));
+    const durSec = buf.duration;
+    const startSec = durSec > 24 ? durSec * 0.28 : 0;
+    const winSec = durSec > 20 ? 16.5 : Math.min(durSec, 14.0);
+    const startFrame = Math.min(total, Math.floor(startSec * sr));
+    const wantFrames = Math.min(total - startFrame, Math.floor(winSec * sr));
+    const outLen = Math.floor(wantFrames / decim);
+    const winMono = new Float32Array(outLen);
+    const scale = ch1 ? 0.5 / decim : 1.0 / decim;
+    for (let i = 0; i < outLen; i++) {
+      const base = startFrame + i * decim;
+      let sum = 0;
+      for (let d = 0; d < decim; d++) {
+        const idx = base + d;
+        sum += ch1 ? ch0[idx] + ch1[idx] : ch0[idx];
+      }
+      winMono[i] = sum * scale;
+    }
+
+    const contourLen = Math.min(4096, Math.max(256, Math.floor(total / 256)));
+    const contourMono = new Float32Array(contourLen);
+    for (let i = 0; i < contourLen; i++) {
+      const idx = Math.min(total - 1, Math.floor((i * total) / contourLen));
+      contourMono[i] = ch1 ? 0.5 * (ch0[idx] + ch1[idx]) : ch0[idx];
+    }
+
+    return { winMono, contourMono, decSr, startMs: Math.round(startSec * 1000) };
+  }
+
+  audio.onTrackDecoded = (trackIndex: number, buf: AudioBuffer) => {
+    void (async () => {
+      const byteEst = buf.length * buf.numberOfChannels * 2;
+      const hexKey = uipod.intel_compute_key_hex(trackIndex, byteEst);
+      if (!hexKey) return;
+      if (uipod.intel_activate_if_in_memory(trackIndex)) return;
+
+      const cached = await loadIntelRecord(hexKey);
+      if (cached && uipod.intel_load_cached_bytes(trackIndex, cached)) return;
+
+      const { winMono, contourMono, decSr, startMs } = extractDecimatedMono(buf);
+      const encoded = uipod.intel_analyze_mono_window(
+        trackIndex,
+        byteEst,
+        decSr,
+        startMs,
+        winMono,
+        contourMono,
+      );
+      if (encoded.byteLength === 512) {
+        await saveIntelRecord(hexKey, encoded);
+      }
+    })();
+  };
+
+  audio.onStreamingTrackStarted = (trackIndex: number) => {
+    void (async () => {
+      if (uipod.intel_activate_if_in_memory(trackIndex)) return;
+      const hexKey = uipod.intel_compute_key_hex(trackIndex, 0);
+      if (hexKey) {
+        const cached = await loadIntelRecord(hexKey);
+        if (cached && uipod.intel_load_cached_bytes(trackIndex, cached)) return;
+      }
+      const encoded = uipod.intel_analyze_nsf_track(trackIndex);
+      if (encoded.byteLength === 512 && hexKey) {
+        await saveIntelRecord(hexKey, encoded);
+      }
+    })();
   };
 
   try {

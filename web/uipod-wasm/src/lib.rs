@@ -20,6 +20,14 @@ use uipod_dj::{
     TransitionLength,
 };
 use uipod_nsf::{scan_nsf_container, SubtrackUri, TrackKind};
+use uipod_plugin_sdk::{PluginApuTelemetry, PluginChannelState};
+use uipod_track_intel::{
+    analyze_mono_window, analyze_nsf_bytes, audio_tap_push_apu, audio_tap_push_s16,
+    compute_contour_256_from_mono, compute_track_key_hash, decode_record_bytes,
+    encode_record_bytes, normalize_track_id, publish_active_analysis, publish_live_frame,
+    read_active_analysis, write_fixed_utf8, AnalyzeRequest, LiveTelemetryEngine,
+    TrackAnalysisRecord, TrackIntelDb, TrackKeyInput, SUBTRACK_NONE,
+};
 use uipod_ui::{ThemeColors, UiEngine, VizEngine, VIZ_PRESETS};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -54,6 +62,10 @@ pub struct UIPodWasm {
     dj_mixer: DualDeckMixer,
     dj_out_buf: Vec<i16>,
     dj_midpoint_crossed: bool,
+    intel_db: TrackIntelDb,
+    intel_live: LiveTelemetryEngine,
+    track_intel_keys: HashMap<usize, u64>,
+    active_intel_key: u64,
 }
 
 #[wasm_bindgen]
@@ -86,6 +98,10 @@ impl UIPodWasm {
             dj_mixer: DualDeckMixer::new(48_000),
             dj_out_buf: vec![0i16; 8192 * 2],
             dj_midpoint_crossed: false,
+            intel_db: TrackIntelDb::new_in_memory(),
+            intel_live: LiveTelemetryEngine::new(),
+            track_intel_keys: HashMap::new(),
+            active_intel_key: 0,
         })
     }
 
@@ -98,6 +114,60 @@ impl UIPodWasm {
         win_w: u32,
         win_h: u32,
     ) {
+        let now_ms = self.app.clock_ms;
+        if self.app.audio_playing && !pcm_interleaved.is_empty() {
+            audio_tap_push_s16(pcm_interleaved, sample_rate, 18_000, now_ms);
+            if get_nsf_active_chip_flags().is_some() {
+                audio_tap_push_apu(&get_nsf_apu_telemetry());
+            }
+        }
+        let status = if self.app.audio_playing {
+            1u8
+        } else if self.app.has_resumable {
+            2u8
+        } else {
+            0u8
+        };
+        let apu_opt = if status == 1 && get_nsf_active_chip_flags().is_some() {
+            let raw = get_nsf_apu_telemetry();
+            let mut chs = [PluginChannelState::default(); 8];
+            for (i, c) in raw.channels.iter().enumerate() {
+                chs[i] = PluginChannelState {
+                    active: c.active,
+                    muted: c.muted,
+                    onset_trigger: c.onset_trigger,
+                    duty_or_mode: c.duty_or_mode,
+                    volume: c.volume,
+                    freq_hz: c.freq_hz,
+                };
+            }
+            Some(PluginApuTelemetry {
+                has_apu_telemetry: 1,
+                channel_count: raw.channel_count,
+                chip_flags: raw.chip_flags,
+                reserved: 0,
+                mute_mask: raw.mute_mask,
+                pad: 0,
+                channels: chs,
+            })
+        } else {
+            None
+        };
+        let active_rec = read_active_analysis();
+        let live_frame = self.intel_live.step(
+            status,
+            self.active_intel_key,
+            self.app.pos_ms,
+            self.app.dur_ms,
+            18.0,
+            dt_sec,
+            pcm_interleaved,
+            sample_rate,
+            apu_opt,
+            active_rec.as_ref(),
+        );
+        publish_live_frame(&live_frame);
+
         self.app.tick_and_render(
             dt_sec,
             pcm_interleaved,
@@ -107,6 +177,11 @@ impl UIPodWasm {
             &mut self.ui,
             &mut self.viz,
         );
+    }
+
+    /// Hot-loads `NotoSansJP-Regular.ttf` fallback bytes behind `Geologica` without blocking boot.
+    pub fn load_cjk_font(&mut self, bytes: &[u8]) -> bool {
+        self.ui.add_cjk_fallback_bytes(bytes).is_ok()
     }
 
     /* ---- Hardware Inputs (TrimUI Brick) ---- */
@@ -766,14 +841,41 @@ impl UIPodWasm {
             .unwrap_or_default();
 
         self.dj_midpoint_crossed = false;
+        let hint_a = self
+            .track_intel_keys
+            .get(&track_a_idx)
+            .and_then(|&k| self.intel_db.get(k))
+            .map(|r| (r.bpm, r.bpm_confidence));
+        let hint_b = self
+            .track_intel_keys
+            .get(&track_b_idx)
+            .and_then(|&k| self.intel_db.get(k))
+            .map(|r| (r.bpm, r.bpm_confidence));
         self.dj_mixer
             .begin_deck_a_capture(sample_rate, &album_a, num_a, false, manual_quick_cut);
-        self.dj_mixer.push_deck_a_tail(tail_a_s16, |_| {});
+        self.dj_mixer.set_deck_bpm_hints(hint_a, hint_b);
+        self.dj_mixer.push_deck_a_frames(tail_a_s16);
         self.dj_mixer
             .finish_deck_a_and_begin_deck_b(&album_b, num_b, deck_b_is_native_nsf);
         self.dj_mixer.push_deck_b_frames(intro_b_s16, is_b_eof);
         self.app.dj_telemetry = self.dj_mixer.telemetry();
         self.dj_mixer.phase() != MixerPhase::Idle
+    }
+
+    pub fn dj_set_track_timing(
+        &mut self,
+        deck_a_start_ms: u32,
+        deck_a_dur_ms: u32,
+        deck_b_dur_ms: u32,
+    ) {
+        self.dj_mixer
+            .set_track_timing(deck_a_start_ms, deck_a_dur_ms, deck_b_dur_ms);
+    }
+
+    pub fn dj_audible_elapsed_ms(&self, downstream_frames: usize) -> u32 {
+        self.dj_mixer
+            .playhead_at_delay_frames(downstream_frames)
+            .audible_elapsed_ms
     }
 
     pub fn dj_feed_deck_b_s16(&mut self, chunk_s16: &[i16], is_eof: bool) {
@@ -788,15 +890,21 @@ impl UIPodWasm {
         if self.dj_out_buf.len() < want_samples {
             self.dj_out_buf.resize(want_samples, 0);
         }
-        let (frames, crossed) = self
-            .dj_mixer
-            .render_s16(&mut self.dj_out_buf[..want_samples]);
-        if crossed {
-            self.dj_midpoint_crossed = true;
+        let mut total_frames = 0usize;
+        while total_frames < max_frames {
+            let dst = &mut self.dj_out_buf[total_frames * 2..want_samples];
+            let (frames, crossed) = self.dj_mixer.render_s16(dst);
+            if crossed {
+                self.dj_midpoint_crossed = true;
+            }
+            if frames == 0 {
+                break;
+            }
+            total_frames += frames;
         }
         set_nsf_tempo_ratio(self.dj_mixer.recommended_nsf_tempo_b());
-        self.app.dj_telemetry = self.dj_mixer.telemetry();
-        self.dj_out_buf[..frames * 2].to_vec()
+        self.app.dj_telemetry = self.dj_mixer.playhead_at_delay_frames(max_frames).telemetry;
+        self.dj_out_buf[..total_frames * 2].to_vec()
     }
 
     pub fn dj_take_midpoint_crossed(&mut self) -> bool {
@@ -817,6 +925,200 @@ impl UIPodWasm {
         self.dj_midpoint_crossed = false;
         self.app.dj_telemetry = DjTelemetry::default();
         set_nsf_tempo_ratio(1.0);
+    }
+
+    /* ---- Unified Track Intelligence (`uipod-track-intel` Web Bridge) ---- */
+
+    pub fn intel_compute_key_hex(&mut self, track_idx: usize, byte_size: u32) -> String {
+        let Some(tr) = self.app.tracks.get(track_idx) else {
+            return String::new();
+        };
+        let src = tr
+            .uri
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(tr.title.as_str());
+        let norm = normalize_track_id(src, tr.subtrack_index);
+        let eff_size = if byte_size > 0 {
+            byte_size as u64
+        } else {
+            tr.duration_ms as u64
+        };
+        let h = compute_track_key_hash(&TrackKeyInput {
+            canonical_source_id: &norm.canonical_source_id,
+            file_size: eff_size,
+            mtime_sec: 0,
+            subtrack_index: norm.subtrack_index,
+        });
+        self.track_intel_keys.insert(track_idx, h);
+        format!("{h:016x}")
+    }
+
+    pub fn intel_activate_if_in_memory(&mut self, track_idx: usize) -> bool {
+        let Some(&h) = self.track_intel_keys.get(&track_idx) else {
+            return false;
+        };
+        if let Some(rec) = self.intel_db.get(h) {
+            self.active_intel_key = h;
+            publish_active_analysis(Some(&rec));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn intel_load_cached_bytes(&mut self, track_idx: usize, raw_512: &[u8]) -> bool {
+        let Some(rec) = decode_record_bytes(raw_512) else {
+            return false;
+        }
+        ;
+        self.track_intel_keys.insert(track_idx, rec.key_hash);
+        self.intel_db.upsert(rec);
+        self.active_intel_key = rec.key_hash;
+        publish_active_analysis(Some(&rec));
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn intel_analyze_mono_window(
+        &mut self,
+        track_idx: usize,
+        byte_size: u32,
+        sample_rate: u32,
+        window_start_ms: u32,
+        mono_f32: &[f32],
+        full_contour_mono: &[f32],
+    ) -> Vec<u8> {
+        let hex = self.intel_compute_key_hex(track_idx, byte_size);
+        if hex.is_empty() {
+            return Vec::new();
+        }
+        let h = self.track_intel_keys[&track_idx];
+        if let Some(existing) = self.intel_db.get(h) {
+            self.active_intel_key = h;
+            publish_active_analysis(Some(&existing));
+            return encode_record_bytes(&existing).to_vec();
+        }
+
+        let metrics = analyze_mono_window(mono_f32, sample_rate, window_start_ms, None);
+        let contour = if !full_contour_mono.is_empty() {
+            compute_contour_256_from_mono(full_contour_mono)
+        } else {
+            compute_contour_256_from_mono(mono_f32)
+        };
+        let (dur_ms, sub_idx, title, artist, album, genre) = self
+            .app
+            .tracks
+            .get(track_idx)
+            .map(|t| {
+                (
+                    t.duration_ms,
+                    t.subtrack_index.unwrap_or(SUBTRACK_NONE),
+                    t.title.clone(),
+                    t.artist.clone(),
+                    t.album.clone(),
+                    t.genre.clone(),
+                )
+            })
+            .unwrap_or((0, SUBTRACK_NONE, String::new(), String::new(), String::new(), String::new()));
+
+        let mut rec = TrackAnalysisRecord {
+            key_hash: h,
+            record_crc32: 0,
+            subtrack_index: sub_idx,
+            channels: 2,
+            analysis_flags: 0,
+            duration_ms: dur_ms,
+            sample_rate: sample_rate.max(8_000),
+            bpm: metrics.bpm,
+            bpm_confidence: metrics.bpm_confidence,
+            first_beat_offset_ms: metrics.first_beat_offset_ms,
+            tag_tbpm: 0.0,
+            tonal_balance: metrics.tonal_balance,
+            avg_rms: metrics.avg_rms,
+            crest_factor: metrics.crest_factor,
+            kick_baseline: metrics.kick_baseline,
+            snare_baseline: metrics.snare_baseline,
+            ..Default::default()
+        };
+        write_fixed_utf8(&mut rec.title, &title);
+        write_fixed_utf8(&mut rec.artist, &artist);
+        write_fixed_utf8(&mut rec.album, &album);
+        write_fixed_utf8(&mut rec.genre, &genre);
+        rec.energy_contour = contour;
+
+        self.intel_db.upsert(rec);
+        self.active_intel_key = h;
+        publish_active_analysis(Some(&rec));
+        encode_record_bytes(&rec).to_vec()
+    }
+
+    pub fn intel_analyze_nsf_track(&mut self, track_idx: usize) -> Vec<u8> {
+        let Some(tr) = self.app.tracks.get(track_idx).cloned() else {
+            return Vec::new();
+        };
+        let Some(ref raw_uri) = tr.uri else {
+            return Vec::new();
+        };
+        if raw_uri.is_empty() {
+            return Vec::new();
+        }
+        let parsed_uri = SubtrackUri::parse(raw_uri);
+        let cf = parsed_uri
+            .file_path
+            .trim()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        let base_only = cf.rsplit('/').next().unwrap_or(cf.as_str()).to_string();
+        let Some(nsf_bytes) = self
+            .nsf_containers
+            .get(&cf)
+            .or_else(|| self.nsf_containers.get(&base_only))
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        let _ = self.intel_compute_key_hex(track_idx, nsf_bytes.len() as u32);
+        let h = self.track_intel_keys[&track_idx];
+        if let Some(existing) = self.intel_db.get(h) {
+            self.active_intel_key = h;
+            publish_active_analysis(Some(&existing));
+            return encode_record_bytes(&existing).to_vec();
+        }
+        let sub_idx = tr.subtrack_index.or(parsed_uri.subtrack_index);
+        let req = AnalyzeRequest {
+            key_hash: h,
+            fs_path: cf,
+            subtrack_index: sub_idx.unwrap_or(0),
+            slice_start_ms: 0,
+            duration_ms: tr.duration_ms,
+            sample_rate_hint: 44_100,
+            title: tr.title,
+            artist: tr.artist,
+            album: tr.album,
+            genre: tr.genre,
+            tag_tbpm: None,
+            high_priority: true,
+        };
+        if let Some(rec) = analyze_nsf_bytes(&nsf_bytes, sub_idx, &req) {
+            self.intel_db.upsert(rec);
+            self.active_intel_key = h;
+            publish_active_analysis(Some(&rec));
+            encode_record_bytes(&rec).to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn hud_begin_processing(&mut self, detail: &str) -> u32 {
+        let title = if self.app.uk { "Обробка..." } else { "Processing..." };
+        self.ui.hud_progress_begin(title, detail, None, self.app.clock_ms)
+    }
+
+    pub fn hud_end_processing(&mut self, handle: u32) {
+        if handle != 0 {
+            let _ = self.ui.hud_progress_end(handle, self.app.clock_ms);
+        }
     }
 }
 

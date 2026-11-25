@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 7;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 8;
+
+/// Exact byte size of [`PluginTrackAnalysis`] (`512` bytes).
+pub const TRACK_ANALYSIS_RECORD_BYTES: usize = 512;
 
 /// Symbol name exported by every `.uipod` shared library.
 pub const UIPOD_PLUGIN_ENTRY_SYMBOL: &[u8] = b"uipod_plugin_descriptor\0";
@@ -228,6 +231,162 @@ impl PluginApuTelemetry {
     }
 }
 
+/// Bitflags in [`PluginLiveTelemetry::beat_flags`].
+pub mod beat_flag {
+    pub const FIRE_BEAT: u8 = 1 << 0;
+    pub const FIRE_STRONG_BEAT: u8 = 1 << 1;
+    pub const FIRE_BAR: u8 = 1 << 2;
+    pub const FIRE_HALF_BEAT: u8 = 1 << 3;
+}
+
+/// Persistent per-track analysis record (`512` bytes exact, C-ABI compatible with `UTI1` disk format).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PluginTrackAnalysis {
+    pub key_hash: u64,
+    pub record_crc32: u32,
+    pub subtrack_index: u16,
+    pub channels: u8,
+    pub analysis_flags: u8,
+    pub duration_ms: u32,
+    pub sample_rate: u32,
+    pub bpm: f32,
+    pub bpm_confidence: f32,
+    pub first_beat_offset_ms: u32,
+    pub tag_tbpm: f32,
+    /// Normalized 5-band spectral balance: `[sub_bass, bass, mid, high_mid, treble]`.
+    pub tonal_balance: [f32; 5],
+    pub avg_rms: f32,
+    pub crest_factor: f32,
+    pub kick_baseline: f32,
+    pub snare_baseline: f32,
+    pub title: [u8; 64],
+    pub artist: [u8; 56],
+    pub album: [u8; 40],
+    pub genre: [u8; 20],
+    /// Quantized (`0..=255`) 256-bucket structural energy contour across `0%..100%` of track duration.
+    pub energy_contour: [u8; 256],
+}
+
+impl Default for PluginTrackAnalysis {
+    fn default() -> Self {
+        Self {
+            key_hash: 0,
+            record_crc32: 0,
+            subtrack_index: 0xFFFF,
+            channels: 2,
+            analysis_flags: 0,
+            duration_ms: 0,
+            sample_rate: 44_100,
+            bpm: 120.0,
+            bpm_confidence: 0.0,
+            first_beat_offset_ms: 0,
+            tag_tbpm: 0.0,
+            tonal_balance: [0.2; 5],
+            avg_rms: 0.12,
+            crest_factor: 4.0,
+            kick_baseline: 0.05,
+            snare_baseline: 0.05,
+            title: [0; 64],
+            artist: [0; 56],
+            album: [0; 40],
+            genre: [0; 20],
+            energy_contour: [128; 256],
+        }
+    }
+}
+
+impl PluginTrackAnalysis {
+    #[inline]
+    pub const fn is_valid(&self) -> bool {
+        self.key_hash != 0
+    }
+
+    /// Interpolates the normalized `[0.0..=1.0]` structural energy contour at `pos_ms`.
+    pub fn contour_at_ms(&self, pos_ms: u32) -> f32 {
+        if self.duration_ms == 0 {
+            return (self.energy_contour[0] as f32) * (1.0 / 255.0);
+        }
+        let frac = ((pos_ms as f32) / (self.duration_ms as f32)).clamp(0.0, 1.0) * 255.0;
+        let i0 = (frac.floor() as usize).min(255);
+        let i1 = (i0 + 1).min(255);
+        let t = frac - (i0 as f32);
+        let v0 = self.energy_contour[i0] as f32;
+        let v1 = self.energy_contour[i1] as f32;
+        ((v0 + (v1 - v0) * t) * (1.0 / 255.0)).clamp(0.0, 1.0)
+    }
+}
+
+/// Lock-free 60+ FPS real-time audio & rhythm telemetry snapshot (`592` bytes exact).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PluginLiveTelemetry {
+    pub track_key_hash: u64,
+    pub beat_index: u64,
+    pub seq_generation: u32,
+    /// `0 = Stopped`, `1 = Playing`, `2 = Paused`
+    pub status: u8,
+    pub has_analysis: u8,
+    /// `0..=3` beat within `4/4` bar (`0` & `2` = strong beats).
+    pub bar_beat: u8,
+    /// Bitmask of [`beat_flag`] edges crossed on this snapshot.
+    pub beat_flags: u8,
+    pub playhead_ms: u32,
+    pub duration_ms: u32,
+    pub sample_rate: u32,
+    pub output_latency_ms: f32,
+    pub bpm: f32,
+    pub bpm_confidence: f32,
+    pub beat_phase: f32,
+    pub bar_phase: f32,
+    pub kick_impulse: f32,
+    pub snare_impulse: f32,
+    pub structural_energy: f32,
+    pub vu_l: f32,
+    pub vu_r: f32,
+    pub vu_peak_l: f32,
+    pub vu_peak_r: f32,
+    pub bands_5: [f32; 5],
+    pub spectrum_64: [u8; 64],
+    pub spectrum_peak_64: [u8; 64],
+    pub waveform_256: [i8; 256],
+    pub apu: PluginApuTelemetry,
+}
+
+impl Default for PluginLiveTelemetry {
+    fn default() -> Self {
+        Self {
+            track_key_hash: 0,
+            beat_index: 0,
+            seq_generation: 0,
+            status: 0,
+            has_analysis: 0,
+            bar_beat: 0,
+            beat_flags: 0,
+            playhead_ms: 0,
+            duration_ms: 0,
+            sample_rate: 44_100,
+            output_latency_ms: 25.0,
+            bpm: 120.0,
+            bpm_confidence: 0.0,
+            beat_phase: 0.0,
+            bar_phase: 0.0,
+            kick_impulse: 0.0,
+            snare_impulse: 0.0,
+            structural_energy: 0.5,
+            vu_l: 0.0,
+            vu_r: 0.0,
+            vu_peak_l: 0.0,
+            vu_peak_r: 0.0,
+            bands_5: [0.0; 5],
+            spectrum_64: [0; 64],
+            spectrum_peak_64: [0; 64],
+            waveform_256: [0; 256],
+            apu: PluginApuTelemetry::default(),
+        }
+    }
+}
+
 /// Snapshot of button edges, held buttons, and system requests from a single poll step.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -427,6 +586,10 @@ pub struct UIPodPluginApi {
 
     /* ---- Hardware APU Channel Telemetry Extension (v7+) ---- */
     pub audio_get_apu_telemetry: unsafe extern "C" fn(out: *mut PluginApuTelemetry) -> bool,
+
+    /* ---- Unified Track Intelligence Extension (v8+) ---- */
+    pub audio_get_track_analysis: unsafe extern "C" fn(out: *mut PluginTrackAnalysis) -> bool,
+    pub audio_get_live_telemetry: unsafe extern "C" fn(out: *mut PluginLiveTelemetry) -> bool,
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -859,6 +1022,37 @@ impl<'a> HostContext<'a> {
         out
     }
 
+    /// Reads the cached `512-byte` [`PluginTrackAnalysis`] for the active track (`None` when stopped
+    /// or on older `< v8` hosts).
+    #[inline]
+    pub fn audio_track_analysis(&self) -> Option<PluginTrackAnalysis> {
+        if self.api.api_version < 8 {
+            return None;
+        }
+        let mut out = PluginTrackAnalysis::default();
+        let ok = unsafe { (self.api.audio_get_track_analysis)(&mut out) };
+        if ok && out.is_valid() {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    /// Reads the lock-free 60+ FPS [`PluginLiveTelemetry`] snapshot (`None` on older `< v8` hosts).
+    #[inline]
+    pub fn audio_live_telemetry(&self) -> Option<PluginLiveTelemetry> {
+        if self.api.api_version < 8 {
+            return None;
+        }
+        let mut out = PluginLiveTelemetry::default();
+        let ok = unsafe { (self.api.audio_get_live_telemetry)(&mut out) };
+        if ok {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
     /// Total number of deduplicated Music tracks available in UIPod's library.
     #[inline]
     pub fn library_track_count(&self) -> usize {
@@ -1014,10 +1208,14 @@ mod tests {
 
     #[test]
     fn verify_plugin_apu_telemetry_c_abi_and_triggers() {
-        assert_eq!(UIPOD_PLUGIN_API_VERSION, 7);
+        assert_eq!(UIPOD_PLUGIN_API_VERSION, 8);
         assert_eq!(size_of::<PluginChannelState>(), 12);
         assert_eq!(align_of::<PluginChannelState>(), 4);
         assert_eq!(size_of::<PluginApuTelemetry>(), 8 + 8 * 12);
+        assert_eq!(size_of::<PluginTrackAnalysis>(), TRACK_ANALYSIS_RECORD_BYTES);
+        assert_eq!(align_of::<PluginTrackAnalysis>(), 8);
+        assert_eq!(size_of::<PluginLiveTelemetry>(), 592);
+        assert_eq!(align_of::<PluginLiveTelemetry>(), 8);
 
         let mut tel = PluginApuTelemetry::default();
         assert!(!tel.is_available());

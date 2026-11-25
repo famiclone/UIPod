@@ -392,6 +392,11 @@ impl NsfEngine {
     }
 
     #[inline]
+    pub fn frame_speed_us(&self) -> u32 {
+        self.parsed.frame_speed_us() as u32
+    }
+
+    #[inline]
     pub fn current_subtrack(&self) -> u16 {
         self.current_subtrack
     }

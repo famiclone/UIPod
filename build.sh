@@ -50,6 +50,7 @@ docker run --rm \
                target/aarch64-unknown-linux-gnu/release/libtetris.so \
                target/aarch64-unknown-linux-gnu/release/libsound_racer.so \
                target/aarch64-unknown-linux-gnu/release/libpulsar_vanguard.so \
+               target/aarch64-unknown-linux-gnu/release/libbeat_stack.so \
                target/aarch64-unknown-linux-gnu/release/libmusic_quiz.so \
                target/aarch64-unknown-linux-gnu/release/libstopwatch.so \
                target/aarch64-unknown-linux-gnu/release/libtext_viewer.so \

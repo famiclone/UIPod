@@ -273,6 +273,22 @@ char* sb_create_from_settings(enum screen_type screen)
     ptr = buf;
     ptr[0] = '\0';
 
+#if NB_SCREENS > 1
+    if (screen == SCREEN_REMOTE)
+        ptr2 = global_settings.remote_ui_vp_config;
+    else
+#endif
+        ptr2 = global_settings.ui_vp_config;
+
+    /* UIPod: built-in in-memory layout descriptor (`Header` + 8-row content band)
+     * so cold boot and runtime title routing work with zero `.sbs` files on disk. */
+    if (screen == SCREEN_MAIN && bar_position == STATUSBAR_OFF &&
+        (!ptr2[0] || ptr2[0] == '-'))
+    {
+        snprintf(buf, sizeof(buf), "%%wd\n%%?Lt<|>\n%%Vi(-,32,144,960,592,1)\n");
+        return buf;
+    }
+
     /* setup the inbuilt statusbar */
     if (bar_position != STATUSBAR_OFF)
     {
@@ -287,12 +303,6 @@ char* sb_create_from_settings(enum screen_type screen)
         ptr += len;
     }
     /* %Vi viewport, colours handled by the parser */
-#if NB_SCREENS > 1
-    if (screen == SCREEN_REMOTE)
-        ptr2 = global_settings.remote_ui_vp_config;
-    else
-#endif
-        ptr2 = global_settings.ui_vp_config;
 
     if (ptr2[0] && ptr2[0] != '-') /* from ui viewport setting */
     {

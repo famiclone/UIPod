@@ -9,8 +9,9 @@
 
 use std::f32::consts::PI;
 
-/// `-48 dBFS` linear RMS threshold (`10^(-48/20) = 0.003981`).
-pub const SILENCE_THRESHOLD_RMS: f32 = 0.003981;
+/// `-66 dBFS` linear RMS threshold (`10^(-66/20) = 0.000501`) — trims true digital
+/// silence/dither while preserving quiet acoustic/ambient fade-out tails.
+pub const SILENCE_THRESHOLD_RMS: f32 = 0.000501;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeckCueAnalysis {

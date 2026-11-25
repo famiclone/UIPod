@@ -159,17 +159,44 @@ static size_t pcm_size;
  * whichever thread is pulling data. */
 static pthread_mutex_t pcm_mtx;
 
+#define DIRECT_HW_RATE      48000U
+#define DIRECT_HW_PERIOD    512U
+#define DIRECT_HW_PERIODS   4U
+#define DIRECT_BUSY_RETRIES 4
+
 static SDL_Thread *writer_thread;
 static SDL_sem *writer_wake;        /* posted on play and shutdown */
 static volatile bool writer_run;
 static volatile bool dev_playing;   /* Rockbox has handed us a buffer */
 static bool open_shared;            /* the device is the "Playback" dmix bus */
+static bool open_direct_hw;         /* direct "hw:0,0" 48 kHz exclusive mode */
+static volatile bool s_want_direct_hw = true;
+static bool s_direct_hw_fallback;
+static int  s_direct_busy_retries;
 static int cur_route;               /* sink audiomon last published */
 static volatile bool private_open;      /* a USB or Bluetooth device is open */
 static volatile unsigned int out_delay_us;  /* written to the output, not yet heard */
 static volatile Uint32 out_delay_tick;      /* SDL_GetTicks() when out_delay_us was stamped */
 
+static pthread_mutex_t click_pcm_mtx = PTHREAD_MUTEX_INITIALIZER;
+static snd_pcm_t *s_click_pcm;
+static volatile int s_direct_click_pos = 96;
+
 static void viz_pcm_push(const void *src_v, unsigned frames_n);
+static void direct_rs_reset(void);
+
+static void close_click_dmix_sync(void)
+{
+    pthread_mutex_lock(&click_pcm_mtx);
+    if (s_click_pcm)
+    {
+        trimpod_alsa_lock();
+        snd_pcm_close(s_click_pcm);
+        trimpod_alsa_unlock();
+        s_click_pcm = NULL;
+    }
+    pthread_mutex_unlock(&click_pcm_mtx);
+}
 
 /* Bluetooth uses bt_pipe and leaves `handle` NULL, so every "do we have an
  * output?" test must ask this, not `handle`.  Getting that wrong meant the
@@ -279,6 +306,55 @@ static int set_hwparams(snd_pcm_t *pcm, unsigned long sampr)
     }
 
     err = 0;
+error:
+    snd_pcm_hw_params_free(params);
+    return err;
+}
+
+/* Direct "hw:0,0" setup at the A133P audiocodec's true 48 kHz hardware clock */
+static int set_hwparams_direct(snd_pcm_t *pcm)
+{
+    snd_pcm_hw_params_t *params;
+    unsigned int srate = DIRECT_HW_RATE;
+    int err;
+
+    snd_pcm_hw_params_malloc(&params);
+    period_size = DIRECT_HW_PERIOD;
+
+    if ((err = snd_pcm_hw_params_any(pcm, params)) < 0 ||
+        (err = snd_pcm_hw_params_set_access(pcm, params,
+                                            SND_PCM_ACCESS_RW_INTERLEAVED)) < 0 ||
+        (err = snd_pcm_hw_params_set_format(pcm, params, format)) < 0 ||
+        (err = snd_pcm_hw_params_set_channels(pcm, params, channels)) < 0 ||
+        (err = snd_pcm_hw_params_set_rate_near(pcm, params, &srate, 0)) < 0)
+        goto error;
+
+    if (srate != DIRECT_HW_RATE)
+    {
+        err = -EINVAL;
+        goto error;
+    }
+    real_sample_rate = srate;
+
+    if ((err = snd_pcm_hw_params_set_period_size_near(pcm, params,
+                                                      &period_size, NULL)) < 0)
+        goto error;
+
+    buffer_size = period_size * DIRECT_HW_PERIODS;
+    if ((err = snd_pcm_hw_params_set_buffer_size_near(pcm, params,
+                                                      &buffer_size)) < 0)
+        goto error;
+
+    if (frames)
+        free(frames);
+    frames = calloc(1, period_size * channels * sizeof(int16_t));
+    if (!frames)
+    {
+        err = -ENOMEM;
+        goto error;
+    }
+
+    err = snd_pcm_hw_params(pcm, params);
 error:
     snd_pcm_hw_params_free(params);
     return err;
@@ -465,6 +541,7 @@ static bool dev_open(void)
     int err;
 
     open_shared = false;
+    open_direct_hw = false;
     if (route_is_bt())
         return bt_open();
 
@@ -474,6 +551,50 @@ static bool dev_open(void)
     {
         name = usb;
         route = TRIMPOD_SINK_USB;
+    }
+    else if (s_want_direct_hw && !s_direct_hw_fallback)
+    {
+        /* Release UIPod's own click dmix handle first so hw:0,0 is never busy */
+        close_click_dmix_sync();
+
+        trimpod_alsa_lock();
+        err = snd_pcm_open(&handle, "hw:0,0", SND_PCM_STREAM_PLAYBACK,
+                           SND_PCM_NONBLOCK);
+        if (err == -EBUSY && s_direct_busy_retries < DIRECT_BUSY_RETRIES)
+        {
+            s_direct_busy_retries++;
+            handle = NULL;
+            trimpod_alsa_unlock();
+            return false;
+        }
+        if (err == 0)
+        {
+            if (set_hwparams_direct(handle) == 0 &&
+                set_swparams(handle) == 0 &&
+                snd_pcm_prepare(handle) == 0)
+            {
+                trimpod_alsa_unlock();
+                s_direct_busy_retries = 0;
+                open_route = TRIMPOD_SINK_SPEAKER;
+                private_open = false;
+                open_shared = false;
+                open_direct_hw = true;
+                route_lost_sent = false;
+                direct_rs_reset();
+                fprintf(stderr,
+                        "pcm: opened direct hw:0,0 at %u Hz (src %u Hz, period %lu, buffer %lu)\n",
+                        real_sample_rate, last_sample_rate,
+                        (unsigned long)period_size, (unsigned long)buffer_size);
+                return true;
+            }
+            snd_pcm_close(handle);
+            handle = NULL;
+        }
+        trimpod_alsa_unlock();
+        s_direct_hw_fallback = true;
+        fprintf(stderr, "pcm: direct hw:0,0 unavailable (%s), falling back to Playback\n",
+                snd_strerror(err));
+        name = "Playback";
     }
     else
         name = "Playback";
@@ -545,6 +666,8 @@ static void dev_close(void)
     snd_pcm_close(h);
     trimpod_alsa_unlock();
     private_open = false;
+    open_shared = false;
+    open_direct_hw = false;
     logf("pcm: closed");
 }
 
@@ -630,11 +753,12 @@ static bool tape_pull_one_frame(int16_t *out_l, int16_t *out_r)
 /* Fill one period, padding with silence when Rockbox runs short.  The stream is
  * never stopped while open -- a restart clicks -- so a private route is fed
  * silence until it closes for idle (see writer_fn). */
-static void copy_frames(void)
+static void mix_direct_click_into_period(int16_t *dst_stereo, int nframes);
+
+static void pull_source_frames(int16_t *out_buf, ssize_t want_frames, unsigned int sr)
 {
-    ssize_t frames_left = period_size;
+    ssize_t frames_left = want_frames;
     bool new_buffer = false;
-    unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
     if (!sr)
         sr = 44100;
 
@@ -697,7 +821,7 @@ static void copy_frames(void)
                 viz_pcm_push(tape_scratch, (unsigned)nframes);
                 sink_lock();
 
-                int16_t *dst = &frames[2 * (period_size - frames_left)];
+                int16_t *dst = &out_buf[2 * (want_frames - frames_left)];
                 pcm_copy_buffer(dst, tape_scratch, (size_t)nframes * FRAME_BYTES);
                 frames_left -= nframes;
 
@@ -746,7 +870,7 @@ static void copy_frames(void)
                 if (produced <= 0)
                     break;
 
-                int16_t *dst = &frames[2 * (period_size - frames_left)];
+                int16_t *dst = &out_buf[2 * (want_frames - frames_left)];
                 pcm_copy_buffer(dst, tape_scratch, (size_t)produced * FRAME_BYTES);
                 viz_pcm_push(tape_scratch, (unsigned)produced);
                 frames_left -= produced;
@@ -783,7 +907,7 @@ static void copy_frames(void)
             }
 
             ssize_t nframes = MIN((ssize_t)pcm_size / FRAME_BYTES, frames_left);
-            int16_t *dst = &frames[2 * (period_size - frames_left)];
+            int16_t *dst = &out_buf[2 * (want_frames - frames_left)];
 
             if (mute_stopped_tape)
             {
@@ -810,32 +934,259 @@ static void copy_frames(void)
     }
 
     if (frames_left > 0)
-        memset(&frames[2 * (period_size - frames_left)], 0,
-               frames_left * FRAME_BYTES);
+        memset(&out_buf[2 * (want_frames - frames_left)], 0,
+               (size_t)frames_left * FRAME_BYTES);
 
     /* Overlay electro-mechanical FF / Rewind motor sound across the full period
      * even during the 3s mixer silence window right after `audio_pre_ff_rewind`. */
     if (tape_deck_fx_ff_active())
     {
-        ssize_t rem = period_size;
+        ssize_t rem = want_frames;
         while (rem > 0)
         {
             ssize_t chunk = MIN(rem, (ssize_t)TAPE_SCRATCH_FRAMES);
-            int16_t *dst = &frames[2 * (period_size - rem)];
+            int16_t *dst = &out_buf[2 * (want_frames - rem)];
             tape_deck_fx_render_ff_period(tape_scratch, (int)chunk, sr);
             pcm_copy_buffer(dst, tape_scratch, (size_t)chunk * FRAME_BYTES);
             rem -= chunk;
         }
-        frames_left = 0;
     }
 
     sink_unlock();
 }
 
+/* --- 16-tap Nuttall Polyphase Windowed-Sinc Stereo Resampler (Direct hw:0,0) -
+ * Converts arbitrary Rockbox rates (44.1 / 22.05 / 88.2 / 96 / 192 kHz) cleanly
+ * to the A133P audiocodec's native 48 kHz clock (>90 dB stopband, C1-continuous
+ * zero-endpoint Nuttall window, plus 2nd-order Butterworth 21 kHz anti-aliasing
+ * pre-filter when downsampling Hi-Res >48 kHz sources).  48 kHz passes 1:1. */
+#define RS_TAPS        16
+#define RS_PHASES      256
+#define RS_RING_FRAMES 2048U
+#define RS_RING_MASK   (RS_RING_FRAMES - 1U)
+#define RS_PULL_CHUNK  256
+
+static float s_sinc_tbl[RS_PHASES + 1][RS_TAPS];
+static struct
+{
+    float    ring_l[RS_RING_FRAMES];
+    float    ring_r[RS_RING_FRAMES];
+    int16_t  pull_buf[RS_PULL_CHUNK * 2];
+    uint32_t w_pos;
+    uint32_t r_pos;
+    double   frac;
+    bool     seeded;
+    uint32_t drain_zeros_pushed;
+    unsigned int aa_sr;
+    float    aa_b0, aa_b1, aa_b2, aa_a1, aa_a2;
+    float    aa_z1_l, aa_z2_l, aa_z1_r, aa_z2_r;
+} s_rs;
+
+static void init_direct_resampler(void)
+{
+    const double pi = 3.14159265358979323846;
+    const double fc = 0.455; /* flat to ~20.1 kHz at 44.1 kHz, >92 dB stopband */
+
+    for (int p = 0; p <= RS_PHASES; p++)
+    {
+        double frac = (double)p / (double)RS_PHASES;
+        double sum = 0.0;
+        double row[RS_TAPS];
+
+        for (int k = 0; k < RS_TAPS; k++)
+        {
+            double x = (double)k - (7.0 + frac);
+            double u = 0.5 + x / (double)RS_TAPS;
+            double win = 0.0;
+            if (u > 0.0 && u < 1.0)
+            {
+                win = 0.355768
+                    - 0.487396 * cos(2.0 * pi * u)
+                    + 0.144232 * cos(4.0 * pi * u)
+                    - 0.012604 * cos(6.0 * pi * u);
+            }
+            double sinc = (fabs(x) < 1e-9)
+                        ? (2.0 * fc)
+                        : (sin(2.0 * pi * fc * x) / (pi * x));
+            row[k] = sinc * win;
+            sum += row[k];
+        }
+
+        double inv = (fabs(sum) > 1e-12) ? (1.0 / sum) : 1.0;
+        for (int k = 0; k < RS_TAPS; k++)
+            s_sinc_tbl[p][k] = (float)(row[k] * inv);
+    }
+}
+
+static void direct_rs_reset(void)
+{
+    s_rs.w_pos = 0;
+    s_rs.r_pos = 0;
+    s_rs.frac = 0.0;
+    s_rs.seeded = false;
+    s_rs.drain_zeros_pushed = 0;
+    s_rs.aa_z1_l = s_rs.aa_z2_l = 0.0f;
+    s_rs.aa_z1_r = s_rs.aa_z2_r = 0.0f;
+}
+
+static void direct_rs_update_aa(unsigned int src_sr)
+{
+    if (s_rs.aa_sr == src_sr)
+        return;
+    s_rs.aa_sr = src_sr;
+    s_rs.aa_z1_l = s_rs.aa_z2_l = 0.0f;
+    s_rs.aa_z1_r = s_rs.aa_z2_r = 0.0f;
+    if (src_sr <= DIRECT_HW_RATE)
+        return;
+
+    const double pi = 3.14159265358979323846;
+    double w0 = 2.0 * pi * 21000.0 / (double)src_sr;
+    double cw = cos(w0);
+    double alpha = sin(w0) / 1.4142135623730951;
+    double b0 = (1.0 - cw) * 0.5;
+    double b1 = 1.0 - cw;
+    double b2 = (1.0 - cw) * 0.5;
+    double a0 = 1.0 + alpha;
+    double a1 = -2.0 * cw;
+    double a2 = 1.0 - alpha;
+    double inv_a0 = 1.0 / a0;
+    s_rs.aa_b0 = (float)(b0 * inv_a0);
+    s_rs.aa_b1 = (float)(b1 * inv_a0);
+    s_rs.aa_b2 = (float)(b2 * inv_a0);
+    s_rs.aa_a1 = (float)(a1 * inv_a0);
+    s_rs.aa_a2 = (float)(a2 * inv_a0);
+}
+
+static void direct_rs_push_chunk(unsigned int src_sr)
+{
+    pull_source_frames(s_rs.pull_buf, RS_PULL_CHUNK, src_sr);
+    bool use_aa = (src_sr > DIRECT_HW_RATE);
+    if (use_aa)
+        direct_rs_update_aa(src_sr);
+
+    for (int i = 0; i < RS_PULL_CHUNK; i++)
+    {
+        float sl = (float)s_rs.pull_buf[2 * i];
+        float sr = (float)s_rs.pull_buf[2 * i + 1];
+        if (use_aa)
+        {
+            float yl = s_rs.aa_b0 * sl + s_rs.aa_z1_l;
+            s_rs.aa_z1_l = s_rs.aa_b1 * sl - s_rs.aa_a1 * yl + s_rs.aa_z2_l;
+            s_rs.aa_z2_l = s_rs.aa_b2 * sl - s_rs.aa_a2 * yl;
+            sl = yl;
+
+            float yr = s_rs.aa_b0 * sr + s_rs.aa_z1_r;
+            s_rs.aa_z1_r = s_rs.aa_b1 * sr - s_rs.aa_a1 * yr + s_rs.aa_z2_r;
+            s_rs.aa_z2_r = s_rs.aa_b2 * sr - s_rs.aa_a2 * yr;
+            sr = yr;
+        }
+        uint32_t m = s_rs.w_pos & RS_RING_MASK;
+        s_rs.ring_l[m] = sl;
+        s_rs.ring_r[m] = sr;
+        s_rs.w_pos++;
+    }
+}
+
+static void copy_frames(void)
+{
+    if (!open_direct_hw)
+    {
+        unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
+        pull_source_frames(frames, (ssize_t)period_size, sr ? sr : 44100U);
+        return;
+    }
+
+    unsigned int src_sr = last_sample_rate ? last_sample_rate : 44100U;
+    bool active_src = dev_playing || tape_deck_fx_ff_active();
+    if (active_src)
+    {
+        s_rs.drain_zeros_pushed = 0;
+    }
+    else if (!s_rs.seeded || s_rs.drain_zeros_pushed >= (uint32_t)(RS_PULL_CHUNK * 2))
+    {
+        /* Only reset sinc ring AFTER all real buffered tail samples have drained out */
+        if (s_rs.seeded)
+            direct_rs_reset();
+        memset(frames, 0, (size_t)period_size * FRAME_BYTES);
+        mix_direct_click_into_period(frames, (int)period_size);
+        return;
+    }
+
+    if (src_sr == DIRECT_HW_RATE)
+    {
+        if (s_rs.seeded)
+            direct_rs_reset();
+        pull_source_frames(frames, (ssize_t)period_size, DIRECT_HW_RATE);
+        mix_direct_click_into_period(frames, (int)period_size);
+        return;
+    }
+
+    if (!s_rs.seeded)
+    {
+        direct_rs_reset();
+        for (uint32_t z = 0; z < 8U; z++)
+        {
+            s_rs.ring_l[z] = 0.0f;
+            s_rs.ring_r[z] = 0.0f;
+        }
+        s_rs.w_pos = 8U;
+        s_rs.seeded = true;
+    }
+
+    const double step = (double)src_sr / (double)DIRECT_HW_RATE;
+    for (snd_pcm_uframes_t i = 0; i < period_size; i++)
+    {
+        while ((s_rs.w_pos - s_rs.r_pos) < (uint32_t)(RS_TAPS + 4))
+        {
+            direct_rs_push_chunk(src_sr);
+            if (!active_src)
+                s_rs.drain_zeros_pushed += (uint32_t)RS_PULL_CHUNK;
+        }
+
+        float pf = (float)(s_rs.frac * (double)RS_PHASES);
+        int pi = (int)pf;
+        float mu = pf - (float)pi;
+        if (pi >= RS_PHASES)
+        {
+            pi = RS_PHASES - 1;
+            mu = 1.0f;
+        }
+
+        const float *c0 = s_sinc_tbl[pi];
+        const float *c1 = s_sinc_tbl[pi + 1];
+        float acc_l = 0.0f;
+        float acc_r = 0.0f;
+        uint32_t base = s_rs.r_pos;
+        for (int k = 0; k < RS_TAPS; k++)
+        {
+            float w = c0[k] + (c1[k] - c0[k]) * mu;
+            uint32_t m = (base + (uint32_t)k) & RS_RING_MASK;
+            acc_l += s_rs.ring_l[m] * w;
+            acc_r += s_rs.ring_r[m] * w;
+        }
+
+        if (acc_l > 32767.0f)       acc_l = 32767.0f;
+        else if (acc_l < -32768.0f) acc_l = -32768.0f;
+        if (acc_r > 32767.0f)       acc_r = 32767.0f;
+        else if (acc_r < -32768.0f) acc_r = -32768.0f;
+
+        frames[2 * i]     = (int16_t)acc_l;
+        frames[2 * i + 1] = (int16_t)acc_r;
+
+        s_rs.frac += step;
+        uint32_t adv = (uint32_t)s_rs.frac;
+        s_rs.r_pos += adv;
+        s_rs.frac -= (double)adv;
+    }
+
+    mix_direct_click_into_period(frames, (int)period_size);
+}
+
 /* --- the writer thread (replaces upstream's SIGIO handler) ----------------- */
 
 /* Returns false if the device died and was abandoned. */
-static bool writer_step(bool *pending)
+static bool writer_step(snd_pcm_uframes_t *pending_rem,
+                        snd_pcm_uframes_t *pending_off)
 {
     snd_pcm_sframes_t space, n, delay;
     int err;
@@ -846,10 +1197,11 @@ static bool writer_step(bool *pending)
         size_t want = period_size * FRAME_BYTES;
         struct pollfd pfd = { .fd = fileno(bt_pipe), .events = POLLOUT };
 
-        if (!*pending)
+        if (*pending_rem == 0)
         {
             copy_frames();
-            *pending = true;
+            *pending_off = 0;
+            *pending_rem = period_size;
         }
 
         /* The pipe holds two periods, so writing blind would park us in the
@@ -879,7 +1231,8 @@ static bool writer_step(bool *pending)
             return false;
         }
         out_delay_tick = SDL_GetTicks();
-        *pending = false;
+        *pending_off = 0;
+        *pending_rem = 0;
         return true;
     }
 
@@ -910,23 +1263,39 @@ static bool writer_step(bool *pending)
     }
 
     /* Top the device up as far as it will take rather than handing over one
-     * period per wakeup, so a scheduling hiccup is made up immediately. */
-    while (writer_run && space >= (snd_pcm_sframes_t)period_size)
+     * period per wakeup, preserving any partial non-blocking write remainder
+     * so zero PCM frames are ever dropped! */
+    while (writer_run &&
+           (space >= (snd_pcm_sframes_t)period_size ||
+            (*pending_rem > 0 && space > 0)))
     {
-        if (!*pending)
+        if (*pending_rem == 0)
         {
             copy_frames();
-            *pending = true;            /* a filled period is never dropped */
+            *pending_off = 0;
+            *pending_rem = period_size;
         }
 
-        n = snd_pcm_writei(handle, frames, period_size);
-        if (n >= 0)
+        n = snd_pcm_writei(handle,
+                           frames + (*pending_off) * 2U,
+                           *pending_rem);
+        if (n > 0)
         {
-            *pending = false;
+            snd_pcm_uframes_t u = (snd_pcm_uframes_t)n;
+            if (u >= *pending_rem)
+            {
+                *pending_off = 0;
+                *pending_rem = 0;
+            }
+            else
+            {
+                *pending_off += u;
+                *pending_rem -= u;
+            }
             space -= n;
             continue;
         }
-        if (n == -EAGAIN)
+        if (n == 0 || n == -EAGAIN)
             break;                      /* no room after all; go re-wait */
         if (n == -EPIPE || n == -ESTRPIPE)
         {
@@ -958,8 +1327,9 @@ static bool want_open(void)
 
 static int writer_fn(void *param)
 {
-    bool pending = false;
-    Uint32 retry_at = 0, route_at = 0;
+    snd_pcm_uframes_t pending_rem = 0;
+    snd_pcm_uframes_t pending_off = 0;
+    Uint32 retry_at = 0, route_at = 0, last_active_tick = 0;
 
     (void)param;
 
@@ -971,6 +1341,9 @@ static int writer_fn(void *param)
 
     while (writer_run)
     {
+        if (dev_playing || tape_deck_fx_ff_active())
+            last_active_tick = SDL_GetTicks();
+
         /* Poll the route whether or not a device is open: with the device
          * closed this is the only signal that audiomon has repointed
          * `default`, and therefore that reopening is worth trying. */
@@ -982,6 +1355,7 @@ static int writer_fn(void *param)
             {
                 fprintf(stderr, "pcm: route %d -> %d\n", cur_route, route);
                 cur_route = route;
+                tape_deck_fx_set_hp35_route_codec(route == TRIMPOD_SINK_SPEAKER);
                 /* Either notice can arrive first -- this poll, or the write
                  * error from a device that has gone -- so leaving a private
                  * route this way is a loss too. */
@@ -989,6 +1363,20 @@ static int writer_fn(void *param)
                     dev_lost("route changed");
                 else
                     dev_close();
+                pending_rem = 0;
+                pending_off = 0;
+            }
+        }
+
+        if (dev_is_open() && open_route == TRIMPOD_SINK_SPEAKER && !audiodev)
+        {
+            bool want_direct = s_want_direct_hw && !s_direct_hw_fallback;
+            if (open_direct_hw != want_direct)
+            {
+                dev_close();
+                pending_rem = 0;
+                pending_off = 0;
+                continue;
             }
         }
 
@@ -996,7 +1384,17 @@ static int writer_fn(void *param)
             req_sample_rate != last_sample_rate)
         {
             logf("pcm: rate %u -> %u", last_sample_rate, req_sample_rate);
-            dev_close();
+            if (open_direct_hw)
+            {
+                last_sample_rate = req_sample_rate;
+                direct_rs_reset();
+            }
+            else
+            {
+                dev_close();
+                pending_rem = 0;
+                pending_off = 0;
+            }
         }
 
         if (!dev_is_open())
@@ -1011,7 +1409,13 @@ static int writer_fn(void *param)
                 if (req_sample_rate)
                     last_sample_rate = req_sample_rate;
                 if (!dev_open())
-                    retry_at = SDL_GetTicks() + REOPEN_DELAY_MS;
+                {
+                    Uint32 dly = (s_want_direct_hw && !s_direct_hw_fallback &&
+                                  s_direct_busy_retries > 0)
+                               ? 150U
+                               : REOPEN_DELAY_MS;
+                    retry_at = SDL_GetTicks() + dly;
+                }
             }
             SDL_Delay(20);
             continue;
@@ -1020,24 +1424,27 @@ static int writer_fn(void *param)
         /* A private route closes when the sink stops, which the mixer does
          * after three seconds of silence, so skips and short pauses keep it
          * open. */
-        if (private_open && !dev_playing && !tape_deck_fx_ff_active())
+        if (private_open && !dev_playing && !tape_deck_fx_ff_active() &&
+            !s_rs.seeded && pending_rem == 0)
         {
             fprintf(stderr, "pcm: idle, closing\n");
             dev_close();
-            pending = false;            /* silence */
+            pending_rem = 0;
+            pending_off = 0;
             continue;
         }
 
-        /* Idle on the dmix bus: sleep instead of feeding it silence.  Its slave
-         * never stops and the kernel fills it with silence, so the codec stays
-         * powered and resuming cannot click. */
-        if (open_shared && !dev_playing && !tape_deck_fx_ff_active() && !pending)
+        /* Keep shared dmix stream warm for 3s after playback stops (and until
+         * sinc tail drains) so track transitions never trigger -EPIPE XRUNs. */
+        if (open_shared && !dev_playing && !tape_deck_fx_ff_active() &&
+            !s_rs.seeded && pending_rem == 0 &&
+            SDL_TICKS_PASSED(SDL_GetTicks(), last_active_tick + 3000U))
         {
             SDL_SemWaitTimeout(writer_wake, ROUTE_POLL_MS);
             continue;
         }
 
-        if (!writer_step(&pending))
+        if (!writer_step(&pending_rem, &pending_off))
             retry_at = SDL_GetTicks() + REOPEN_DELAY_MS;
     }
 
@@ -1055,6 +1462,20 @@ static int writer_fn(void *param)
 static int16_t viz_pcm_ring[VIZ_PCM_FRAMES * 2];
 static volatile unsigned viz_pcm_w;    /* total stereo frames ever written */
 
+extern void uipod_rs_intel_audio_tap_push(const int16_t *stereo_s16,
+                                          size_t frames,
+                                          uint32_t sample_rate,
+                                          uint32_t output_delay_us,
+                                          uint64_t now_ms);
+
+static unsigned int viz_sample_rate(void)
+{
+    unsigned int sr = open_direct_hw
+                    ? last_sample_rate
+                    : (real_sample_rate ? real_sample_rate : last_sample_rate);
+    return sr ? sr : 44100U;
+}
+
 static void viz_pcm_push(const void *src_v, unsigned frames_n)
 {
     const int16_t *src = src_v;
@@ -1068,6 +1489,13 @@ static void viz_pcm_push(const void *src_v, unsigned frames_n)
         w++;
     }
     viz_pcm_w = w;
+
+    unsigned sr = viz_sample_rate();
+    uipod_rs_intel_audio_tap_push(src,
+                                  (size_t)frames_n,
+                                  (uint32_t)sr,
+                                  (uint32_t)out_delay_us,
+                                  (uint64_t)SDL_GetTicks());
 }
 
 /* Copy the most recent up-to max_frames stereo frames into out (LRLR).
@@ -1113,9 +1541,7 @@ static unsigned int live_output_delay_us(void)
 unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
                              unsigned *sample_rate_out)
 {
-    unsigned sr = real_sample_rate ? real_sample_rate : last_sample_rate;
-    if (!sr)
-        sr = 44100;
+    unsigned sr = viz_sample_rate();
     if (sample_rate_out)
         *sample_rate_out = sr;
     if (!dev_playing || !out || max_frames == 0)
@@ -1250,9 +1676,28 @@ static snd_pcm_t *open_click_dmix(void)
     return pcm;
 }
 
+static void mix_direct_click_into_period(int16_t *dst_stereo, int nframes)
+{
+    int cur = __atomic_load_n(&s_direct_click_pos, __ATOMIC_ACQUIRE);
+    if (cur >= CLICK_WAVE_FRAMES)
+        return;
+    for (int i = 0; i < nframes && cur < CLICK_WAVE_FRAMES; i++, cur++)
+    {
+        int32_t c = s_click_stereo[2 * cur];
+        int32_t l = (int32_t)dst_stereo[2 * i] + c;
+        int32_t r = (int32_t)dst_stereo[2 * i + 1] + c;
+        if (l > 32767)       l = 32767;
+        else if (l < -32768) l = -32768;
+        if (r > 32767)       r = 32767;
+        else if (r < -32768) r = -32768;
+        dst_stereo[2 * i]     = (int16_t)l;
+        dst_stereo[2 * i + 1] = (int16_t)r;
+    }
+    __atomic_store_n(&s_direct_click_pos, cur, __ATOMIC_RELEASE);
+}
+
 static int click_fn(void *param)
 {
-    snd_pcm_t *click_pcm = NULL;
     (void)param;
 
     while (click_run)
@@ -1263,55 +1708,57 @@ static int click_fn(void *param)
 
         click_pending = false;
 
-        if (audiodev || cur_route != TRIMPOD_SINK_SPEAKER)
+        pthread_mutex_lock(&click_pcm_mtx);
+        if (audiodev || cur_route != TRIMPOD_SINK_SPEAKER ||
+            open_direct_hw || (s_want_direct_hw && !s_direct_hw_fallback))
         {
-            if (click_pcm)
+            if (s_click_pcm)
             {
                 trimpod_alsa_lock();
-                snd_pcm_close(click_pcm);
+                snd_pcm_close(s_click_pcm);
                 trimpod_alsa_unlock();
-                click_pcm = NULL;
+                s_click_pcm = NULL;
             }
+            pthread_mutex_unlock(&click_pcm_mtx);
             continue;
         }
 
-        if (!click_pcm)
+        if (!s_click_pcm)
         {
-            click_pcm = open_click_dmix();
-            if (!click_pcm)
+            s_click_pcm = open_click_dmix();
+            if (!s_click_pcm)
+            {
+                pthread_mutex_unlock(&click_pcm_mtx);
                 continue;
+            }
         }
 
-        snd_pcm_state_t st = snd_pcm_state(click_pcm);
+        snd_pcm_state_t st = snd_pcm_state(s_click_pcm);
         if (st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP ||
             st == SND_PCM_STATE_SUSPENDED)
         {
-            snd_pcm_prepare(click_pcm);
+            snd_pcm_prepare(s_click_pcm);
         }
 
-        snd_pcm_sframes_t wr = snd_pcm_writei(click_pcm, s_click_stereo,
+        snd_pcm_sframes_t wr = snd_pcm_writei(s_click_pcm, s_click_stereo,
                                               CLICK_BUF_FRAMES);
         if (wr < 0)
         {
-            wr = snd_pcm_recover(click_pcm, (int)wr, 1);
+            wr = snd_pcm_recover(s_click_pcm, (int)wr, 1);
             if (wr == 0)
-                (void)snd_pcm_writei(click_pcm, s_click_stereo, CLICK_BUF_FRAMES);
+                (void)snd_pcm_writei(s_click_pcm, s_click_stereo, CLICK_BUF_FRAMES);
             else
             {
                 trimpod_alsa_lock();
-                snd_pcm_close(click_pcm);
+                snd_pcm_close(s_click_pcm);
                 trimpod_alsa_unlock();
-                click_pcm = NULL;
+                s_click_pcm = NULL;
             }
         }
+        pthread_mutex_unlock(&click_pcm_mtx);
     }
 
-    if (click_pcm)
-    {
-        trimpod_alsa_lock();
-        snd_pcm_close(click_pcm);
-        trimpod_alsa_unlock();
-    }
+    close_click_dmix_sync();
     return 0;
 }
 
@@ -1322,8 +1769,8 @@ const void *pcm_alsa_click_samples(size_t *byte_size_out)
     return s_click_stereo;
 }
 
-/* Returns true if handled (played on low-latency dmix, rate-limited, or
- * suppressed because a private BT/USB route is currently closed/idle).
+/* Returns true if handled (played on direct hw:0,0 edge, low-latency dmix,
+ * rate-limited, or suppressed because a private BT/USB route is closed/idle).
  * Returns false when a private BT/USB stream is actively playing so the caller
  * can mix the click into `PCM_MIXER_CHAN_BEEP`. */
 bool pcm_alsa_menu_click(void)
@@ -1335,6 +1782,13 @@ bool pcm_alsa_menu_click(void)
 
     if (!audiodev && cur_route == TRIMPOD_SINK_SPEAKER)
     {
+        if (open_direct_hw || (s_want_direct_hw && !s_direct_hw_fallback))
+        {
+            __atomic_store_n(&s_direct_click_pos, 0, __ATOMIC_RELEASE);
+            if (writer_wake)
+                SDL_SemPost(writer_wake);
+            return true;
+        }
         if (click_sem && !click_pending)
         {
             click_pending = true;
@@ -1395,7 +1849,9 @@ static void sink_dma_init(void)
     last_sample_rate = hw_freq_sampr[HW_FREQ_DEFAULT];
     cur_route = trimpod_audio_sink();
     init_click_waveform();
+    init_direct_resampler();
     tape_deck_fx_init();
+    tape_deck_fx_set_hp35_route_codec(cur_route == TRIMPOD_SINK_SPEAKER);
 
     writer_wake = SDL_CreateSemaphore(0);
     writer_run = true;
@@ -1423,6 +1879,21 @@ unsigned int pcm_alsa_output_delay_us(void)
 
 void pcm_alsa_wake_writer(void)
 {
+    if (writer_wake)
+        SDL_SemPost(writer_wake);
+}
+
+void pcm_alsa_set_direct_hw(bool enabled)
+{
+    bool prev = s_want_direct_hw;
+    s_want_direct_hw = enabled;
+    if (enabled && (!prev || s_direct_hw_fallback))
+    {
+        s_direct_hw_fallback = false;
+        s_direct_busy_retries = 0;
+    }
+    if (enabled)
+        close_click_dmix_sync();
     if (writer_wake)
         SDL_SemPost(writer_wake);
 }

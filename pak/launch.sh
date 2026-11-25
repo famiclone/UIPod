@@ -1,6 +1,6 @@
 #!/bin/sh
-# UIPod — Rockbox-based media player for the TrimUI Brick (NextUI).
-# Launches our independently-built UIPod SDL app with the 1ST_GEN_REMIX theme.
+# UIPod — pure-Rust GPU UI media player for the TrimUI Brick (NextUI).
+# Launches our independently-built UIPod SDL application.
 PAK_DIR="$(dirname "$0")"
 RBDIR="$PAK_DIR/uipod"
 RBDIR_BIND="/tmp/uipod"
@@ -25,14 +25,10 @@ if [ ! -f "$RBDIR_BIND/uipod" ]; then
   mount --bind "$RBDIR" "$RBDIR_BIND"
 fi
 
-# Rewrite bundled theme cfgs from the canonical /.rockbox to the live bind path,
-# and migrate any pre-rename /tmp/trimpod or pre-HiDPI config.cfg references seamlessly.
-for theme in "$RBDIR"/themes/*.cfg; do
-  [ -f "$theme" ] && sed -i 's#/\.rockbox#/tmp/uipod#g; s#/tmp/trimpod#/tmp/uipod#g; s#^font: .*Geologica\.fnt$#font: -#; s#^font: .*24-ChicagoFLF\.fnt$#font: -#' "$theme"
-done
+# Migrate any pre-rename /tmp/trimpod or legacy skin/font config.cfg references seamlessly.
 for cfg in "$RBDIR/config.cfg" "$HOME/.config/rockbox.org/config.cfg"; do
   if [ -f "$cfg" ]; then
-    sed -i 's#/tmp/trimpod#/tmp/uipod#g; s#^font: .*Geologica\.fnt$#font: -#; s#^font: .*24-ChicagoFLF\.fnt$#font: -#; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
+    sed -i 's#/tmp/trimpod#/tmp/uipod#g; s#^sbs: .*1ST_GEN_REMIX.*$#sbs: -#; s#^wps: .*1ST_GEN_REMIX.*$#wps: -#; s#^font: .*Geologica\.fnt$#font: -#; s#^font: .*24-ChicagoFLF\.fnt$#font: -#; s/^scroll step: 6$/scroll step: 19/; s/^screen scroll step: 16$/screen scroll step: 51/; s/^scrollbar width: 6$/scrollbar width: 19/' "$cfg"
   fi
 done
 

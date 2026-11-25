@@ -264,6 +264,13 @@ void sdl_gl_set_video_through(bool on, int overlay_rows)
     video_overlay_rows = overlay_rows;
 }
 
+bool sdl_gl_get_video_through(int *out_overlay_rows)
+{
+    if (out_overlay_rows)
+        *out_overlay_rows = video_overlay_rows;
+    return video_through;
+}
+
 /* Present the current LCD framebuffer faded toward black (1=normal, 0=black) and
  * swap.  Used for the visualizer entry fade-out (same fade technique as the
  * visualizer's own preset transitions, applied to the Now Playing image). */
@@ -319,10 +326,9 @@ void sdl_window_render(void)
         return;   /* visualizer owns the GL context/window right now */
     if (lcd_panel_is_dark())
         return;   /* panel off: the surfaces stay current, the present is waste */
-    if (s_gpu_active && !video_through)
+    if (s_gpu_active && s_gpu_repaint_fn)
     {
-        if (s_gpu_repaint_fn)
-            s_gpu_repaint_fn();
+        s_gpu_repaint_fn();
         return;
     }
     s_gpu_active = false;

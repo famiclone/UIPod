@@ -49,7 +49,8 @@ void uipod_dj_on_end_of_data(void);
 /* Record skip delta (`+1` = single R1 Next; anything else = instant cut). */
 void uipod_dj_note_skip_delta(int toskip);
 
-/* Called inside `pcmbuf_start_track_change(TRACK_CHANGE_MANUAL)` BEFORE `pcmbuf_play_stop()`. */
-void uipod_dj_on_manual_skip(void);
+/* Called inside `pcmbuf_start_track_change(TRACK_CHANGE_MANUAL)`.
+ * Returns true when a Quick DJ Cut transition was armed into `DualDeckMixer`. */
+bool uipod_dj_on_manual_skip(void);
 
 #endif /* UIPOD_DJ_H */

@@ -158,6 +158,10 @@ void   uipod_rs_dj_set_config(uint8_t mode,
                               int quick_cut_on_next);
 int    uipod_rs_dj_get_phase(void);
 void   uipod_rs_dj_reset(void);
+void   uipod_rs_dj_flush_to_gapless_drain(void);
+void   uipod_rs_dj_set_track_timing(uint32_t deck_a_start_ms,
+                                    uint32_t deck_a_duration_ms,
+                                    uint32_t deck_b_duration_ms);
 int    uipod_rs_dj_should_gapless_album(int shuffle_active,
                                         const char *album_a,
                                         int track_a,
@@ -168,6 +172,11 @@ void   uipod_rs_dj_begin_deck_a(uint32_t sample_rate,
                                 int track_a,
                                 int shuffle_active,
                                 int manual_quick_cut);
+void   uipod_rs_dj_push_deck_a_frames(const int16_t *stereo_s16,
+                                      size_t frames);
+size_t uipod_rs_dj_pop_spill_s16(int16_t *out_stereo_s16,
+                                 size_t max_frames,
+                                 uint32_t *out_elapsed_ms);
 size_t uipod_rs_dj_push_deck_a(const int16_t *stereo_s16,
                                size_t frames,
                                int16_t *spill_out,
@@ -181,7 +190,13 @@ int    uipod_rs_dj_push_deck_b(const int16_t *stereo_s16,
 size_t uipod_rs_dj_render_s16(int16_t *out_stereo_s16,
                               size_t max_frames,
                               int *out_midpoint_crossed);
+size_t uipod_rs_dj_render_s16_timed(int16_t *out_stereo_s16,
+                                    size_t max_frames,
+                                    int *out_midpoint_crossed,
+                                    uint32_t *out_elapsed_ms);
 int    uipod_rs_dj_get_telemetry(struct uipod_rs_dj_telemetry *out_tel);
+int    uipod_rs_dj_get_telemetry_synced(struct uipod_rs_dj_telemetry *out_tel,
+                                        size_t downstream_frames);
 
 #ifdef __cplusplus
 }

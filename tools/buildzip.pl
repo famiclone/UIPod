@@ -384,9 +384,6 @@ sub buildzip {
     glob_mkdir("$temp_dir/eqs");
     glob_copy("$ROOT/lib/rbcodec/dsp/eqs/*.cfg", "$temp_dir/eqs/"); # equalizer presets
 
-    glob_mkdir("$temp_dir/wps");
-    glob_mkdir("$temp_dir/icons");
-    glob_mkdir("$temp_dir/themes");
     glob_mkdir("$temp_dir/codepages");
 
     if($bitmap) {
@@ -397,10 +394,6 @@ sub buildzip {
     }
 
     glob_move('*.cp', "$temp_dir/codepages/");
-
-    if($bitmap && $depth > 1) {
-        glob_mkdir("$temp_dir/backdrops");
-    }
 
     glob_mkdir("$temp_dir/codecs");
 
@@ -444,29 +437,6 @@ sub buildzip {
         )) {
         copy("$ROOT/docs/$_", "$temp_dir/docs/$_.txt");
     }
-    if ($fonts) {
-        copy("$ROOT/docs/profontdoc.txt", "$temp_dir/docs/profontdoc.txt");
-    }
-    for(("sample.colours",
-         "sample.icons"
-        )) {
-        copy("$ROOT/docs/$_", "$temp_dir/docs/$_");
-    }
-
-    # Now do the WPS dance
-    if(-d "$ROOT/assets/wps") {
-        my $wps_build_cmd="perl $ROOT/assets/wps/wpsbuild.pl ";
-        $wps_build_cmd=$wps_build_cmd."-v " if $verbose;
-        $wps_build_cmd=$wps_build_cmd." --tempdir=$temp_dir --rbdir=$rbdir -r $ROOT -m $modelname $ROOT/assets/wps/WPSLIST $target";
-        print "wpsbuild: $wps_build_cmd\n" if $verbose;
-        system("$wps_build_cmd");
-        print "wps_build_cmd: done\n" if $verbose;
-    }
-    else {
-        print STDERR "No wps module present, can't do the WPS magic!\n";
-    }
-
-    copy("$temp_dir/wps/rockbox_none.sbs", "$temp_dir/wps/rockbox_none.rsbs");
 
     # and the info file
     copy("rockbox-info.txt", "$temp_dir/rockbox-info.txt");

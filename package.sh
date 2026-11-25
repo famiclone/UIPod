@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Assemble dist/UIPod.pak from the build (build-uipod), the bundled theme
-# (assets/theme), and the static pak files (pak/ -- launch.sh, licenses,
-# config.cfg and the .sys device files).
+# Assemble dist/UIPod.pak from the build (build-uipod), fonts/AutoEQ assets,
+# and the static pak files (pak/ -- launch.sh, licenses, config.cfg and .sys).
 # Run ./build.sh first (it produces the runtime zip via 'make fullzip').
 # The app's data dir is /tmp/uipod (NOT /tmp/rockbox) to avoid clashing with
 # other Rockbox installs; inside the pak it lives in uipod/ and the binary is
@@ -11,7 +10,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 ZIP="$ROOT/build-uipod/uipod-full.zip"
 PAK="$ROOT/dist/UIPod.pak"
-THEME="$ROOT/assets/theme/1ST_GEN_REMIX/.rockbox"
 UIPOD_VERSION="${UIPOD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo "v0.1.0")}"
 SAFE_VER="$(printf '%s' "$UIPOD_VERSION" | sed 's/[^A-Za-z0-9._+-]/-/g')"
 BRICK_ZIP="$ROOT/dist/UIPod-${SAFE_VER}-brick.zip"
@@ -27,27 +25,15 @@ unzip -q "$ZIP" -d "$tmp"
 cp -a "$tmp/tmp/uipod" "$PAK/uipod"
 rm -rf "$tmp"
 
-echo ">> Pruning stock Rockbox themes (1ST_GEN_REMIX is the only theme)"
-# The build zip bundles the stock themes (cabbiev2, classic_statusbar, ...).
-# Drop them; keep only 1ST_GEN_REMIX + the failsafe the skin engine falls back to.
-find "$PAK/uipod/themes" -type f \
-     ! -name 'rockbox_failsafe.cfg' ! -name 'rockbox_default_icons.cfg' -delete 2>/dev/null
-find "$PAK/uipod/wps" -mindepth 1 -maxdepth 1 \
-     ! -name 'rockbox_failsafe*' -exec rm -rf {} + 2>/dev/null
-rm -rf "$PAK/uipod/backdrops" 2>/dev/null
-
-echo ">> Injecting 1ST_GEN_REMIX theme"
-cp -a "$THEME/wps/." "$PAK/uipod/wps/"
-cp -a "$THEME/themes/." "$PAK/uipod/themes/"
-
-echo ">> Pruning stock Rockbox bitmap fonts (Geologica .ttf is embedded in uipod-ui)"
+echo ">> Pruning legacy Rockbox skin & bitmap font directories (uipod-ui renders natively)"
+rm -rf "$PAK/uipod/themes" "$PAK/uipod/wps" "$PAK/uipod/backdrops" "$PAK/uipod/icons" 2>/dev/null || true
 rm -f "$PAK/uipod/fonts/"*.fnt "$PAK/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 
-echo ">> Injecting runtime CJK fallback font & font licenses (see assets/fonts)"
+echo ">> Injecting runtime Noto Sans CJK fallback font & font licenses (see assets/fonts)"
 # Geologica-{Regular,Medium,SemiBold,Bold}.ttf are embedded into `uipod` via Rust `include_bytes!`;
-# only the runtime CJK fallback `PixelMplus12-Regular.ttf` ships on disk.
+# only the runtime CJK fallback `NotoSansJP-Regular.ttf` ships on disk.
 mkdir -p "$PAK/uipod/fonts"
-cp -a "$ROOT/assets/fonts/PixelMplus12-Regular.ttf" "$PAK/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSansJP-Regular.ttf" "$PAK/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$PAK/uipod/fonts/COPYING-fonts.txt"
 
 echo ">> Injecting AutoEQ headphone database & EQ presets folder (see assets/autoeq)"

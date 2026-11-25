@@ -53,6 +53,7 @@
 #include "uipod_playlists.h"
 #include "uipod_rs_codecs.h"
 #include "uipod_dj.h"
+#include "uipod_track_intel.h"
 #include "tape_deck_fx.h"
 #include <stdio.h>
 
@@ -1152,6 +1153,7 @@ static void audio_playlist_track_change(void)
         uipod_jellyfin_on_track_change(id3->path);
         uipod_lastfm_on_track_change(id3);
         uipod_listenbrainz_on_track_change(id3);
+        uipod_track_intel_on_track_change(id3);
         if (uipod_prefetch_on_track_change() && filling == STATE_FULL)
             audio_queue_post(Q_AUDIO_BUFFERING, BUFFER_EVENT_BUFFER_LOW);
         send_track_event(PLAYBACK_EVENT_TRACK_CHANGE,
@@ -1168,6 +1170,7 @@ static void audio_playlist_track_change(void)
 static void audio_update_and_announce_next_track(const struct mp3entry *id3_next)
 {
     id3_write_locked(NEXTTRACK_ID3, id3_next);
+    uipod_track_intel_on_next_track(id3_get(NEXTTRACK_ID3));
     send_track_event(PLAYBACK_EVENT_NEXTTRACKID3_AVAILABLE,
                      0,  id3_get(NEXTTRACK_ID3));
 }
@@ -3221,10 +3224,10 @@ void audio_playback_handler(struct queue_event *ev)
             }
             else
             {
-                /* If doing auto skip, poll pcmbuf track notifications a bit
-                   faster to promply detect the transition */
+                /* If doing auto skip, poll pcmbuf track notifications at 20 ms
+                   so metadata/deck handoff responds without 100-500 ms lag */
                 queue_wait_w_tmo(&audio_queue, ev,
-                    skip_pending == TRACK_SKIP_NONE ? HZ/2 : HZ/10);
+                    skip_pending == TRACK_SKIP_NONE ? HZ/4 : HZ/50);
             }
             break;
 

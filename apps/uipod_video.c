@@ -49,7 +49,7 @@
 extern void retrohh_cpu_hold_dynamic(void);     /* power-target.c owns CPU policy */
 extern void retrohh_cpu_release_dynamic(void);
 
-/* The bar and text of the Now Playing panels (1ST_GEN_REMIX.wps), on a taller strip. */
+/* Bottom overlay strip geometry (rendered in vector Geologica via `uipod-ui`). */
 #define STRIP_TOP    576
 #define STRIP_ROWS   (LCD_HEIGHT - STRIP_TOP)
 #define BAR_X        64
@@ -58,8 +58,6 @@ extern void retrohh_cpu_release_dynamic(void);
 #define BAR_H        42
 #define TEXT_Y       672
 #define TEXT_H       80
-#define BAR_BMP_DIR  ROCKBOX_DIR "/wps/1ST_GEN_REMIX"
-#define BAR_BMP_BYTES ((BAR_W + 16) * (BAR_H + 4) * 4 + 256)
 
 #define SEEK_STEP_MS        10000
 #define SEEK_END_MARGIN_MS  1000
@@ -138,11 +136,6 @@ static struct
     enum retrohh_video_aspect shown_aspect;
     bool drawn_once;
 } v;
-
-static unsigned char bar_fill_data[BAR_BMP_BYTES], bar_track_data[BAR_BMP_BYTES];
-static struct bitmap bar_fill = { .data = bar_fill_data };
-static struct bitmap bar_track = { .data = bar_track_data };
-static bool have_bar_bitmaps;
 
 /* ---- resume points ---------------------------------------------------- */
 
@@ -261,20 +254,6 @@ static void resume_save(int position_ms, int duration_ms)
 
 /* ---- overlay ---------------------------------------------------------- */
 
-/* As the theme loads them, so they draw in its colors.  pb_back.bmp is the fill
- * and pb.bmp the track: %pb(...,PBB,backdrop,PB). */
-static void load_bar_bitmaps(void)
-{
-    if (have_bar_bitmaps)
-        return;
-    have_bar_bitmaps =
-        read_bmp_file(BAR_BMP_DIR "/pb_back.bmp", &bar_fill, sizeof bar_fill_data,
-                      FORMAT_ANY, NULL) > 0 &&
-        read_bmp_file(BAR_BMP_DIR "/pb.bmp", &bar_track, sizeof bar_track_data,
-                      FORMAT_ANY, NULL) > 0;
-}
-
-/* Each part of a panel has its own viewport, as in the theme: it clips the bar. */
 static void panel_viewport(struct screen *display, int x, int y, int w, int h)
 {
     static struct viewport vp;
@@ -295,14 +274,7 @@ static void draw_bar(struct screen *display, int value, int max)
     if (max <= 0)
         max = 1;
     panel_viewport(display, BAR_X, BAR_Y, BAR_W, BAR_H);
-    if (have_bar_bitmaps)
-    {
-        display->bmp_part(&bar_track, 0, 0, 0, 0, BAR_W, BAR_H);
-        gui_bitmap_scrollbar_draw(display, &bar_fill, 0, 0, BAR_W, BAR_H,
-                                  max, 0, value, HORIZONTAL | DONT_CLEAR_EXCESS);
-    }
-    else
-        gui_scrollbar_draw(display, 0, 0, BAR_W, BAR_H, max, 0, value, HORIZONTAL);
+    gui_scrollbar_draw(display, 0, 0, BAR_W, BAR_H, max, 0, value, HORIZONTAL);
     panel_viewport(display, BAR_X, TEXT_Y, BAR_W, TEXT_H);
 }
 
@@ -551,9 +523,9 @@ static void overlay_update(void)
     int rows = (panel != PANEL_NONE) ? STRIP_ROWS
              : (cue_idx >= 0 ? SUB_STRIP_ROWS : 0);
     retrohh_video_set_overlay(true, rows);
+    bool rendered_gpu = false;
     if (panel != PANEL_NONE)
     {
-        bool rendered_gpu = false;
         if (panel == PANEL_VOLUME)
         {
             char label[32];
@@ -591,14 +563,19 @@ static void overlay_update(void)
     else if (cue_idx >= 0)
     {
         const struct srt_cue *cue = &s_srt_cues[cue_idx];
-        if (!uipod_gpu_render_video_overlay(3, 0.0f, NULL, NULL, NULL,
-                                            cue->line1,
-                                            cue->line2[0] ? cue->line2 : NULL))
-        {
+        rendered_gpu = uipod_gpu_render_video_overlay(3, 0.0f, NULL, NULL, NULL,
+                                                      cue->line1,
+                                                      cue->line2[0] ? cue->line2 : NULL);
+        if (!rendered_gpu)
             draw_subtitle_cue(&screens[SCREEN_MAIN], cue);
-        }
     }
-    screens[SCREEN_MAIN].update();
+    else
+    {
+        rendered_gpu = uipod_gpu_render_video_overlay(0, 0.0f, NULL, NULL, NULL, NULL, NULL);
+    }
+
+    if (!rendered_gpu)
+        screens[SCREEN_MAIN].update();
 }
 
 static void show_progress(void)
@@ -1188,7 +1165,6 @@ static void run_video_common(const char *play_target)
 {
     if (audio_status())
         audio_stop();
-    load_bar_bitmaps();
 
     retrohh_cpu_hold_dynamic();
     backlight_set_timeout(0);           /* a video is active use, not idle */

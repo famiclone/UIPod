@@ -3642,3 +3642,73 @@
     *: "Спочатку вкажіть токен"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_DIRECT_DAC
+  desc: UIPod Direct ALSA hw:0,0 DAC output bypassing dmix
+  user: core
+  <source>
+    *: "Direct DAC (hw:0,0)"
+  </source>
+  <dest>
+    *: "Прямий ЦАП (hw:0,0)"
+  </dest>
+  <voice>
+    *: "Прямий ЦАП"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_SHELF
+  desc: UIPod 3.5mm Headphone Smooth Bass Low-Shelf filter
+  user: core
+  <source>
+    *: "3.5mm Low-Shelf"
+  </source>
+  <dest>
+    *: "НЧ-фільтр 3.5 мм"
+  </dest>
+  <voice>
+    *: "НЧ-фільтр 3.5 мм"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_SUBTLE
+  desc: UIPod 3.5mm Low-Shelf Subtle profile
+  user: core
+  <source>
+    *: "Subtle (+2.5 dB)"
+  </source>
+  <dest>
+    *: "М'який (+2.5 дБ)"
+  </dest>
+  <voice>
+    *: "М'який"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_WARM
+  desc: UIPod 3.5mm Low-Shelf Warm profile
+  user: core
+  <source>
+    *: "Warm (+4.0 dB)"
+  </source>
+  <dest>
+    *: "Теплий (+4.0 дБ)"
+  </dest>
+  <voice>
+    *: "Теплий"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_DEEP
+  desc: UIPod 3.5mm Low-Shelf Deep profile
+  user: core
+  <source>
+    *: "Deep (+6.0 dB)"
+  </source>
+  <dest>
+    *: "Глибокий (+6.0 дБ)"
+  </dest>
+  <voice>
+    *: "Глибокий"
+  </voice>
+</phrase>

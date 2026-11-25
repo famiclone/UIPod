@@ -813,6 +813,24 @@ pub extern "C" fn uipod_rs_ui_plugin_present_gpu(win_w: u32, win_h: u32) -> bool
 }
 
 #[no_mangle]
+pub extern "C" fn uipod_rs_ui_present_video_overlay_gpu(
+    win_w: u32,
+    win_h: u32,
+    bottom_rows_768: u32,
+) -> bool {
+    let mut guard = match SYNC_ENGINE.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let Some(wrap) = guard.as_mut() else {
+        return false;
+    };
+    wrap.0
+        .present_video_overlay_gpu(win_w, win_h, bottom_rows_768);
+    true
+}
+
+#[no_mangle]
 pub extern "C" fn uipod_rs_ui_plugin_flush_fbo() -> bool {
     let mut guard = match SYNC_ENGINE.lock() {
         Ok(g) => g,

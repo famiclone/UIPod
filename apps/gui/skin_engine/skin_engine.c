@@ -302,7 +302,8 @@ static char* get_skin_filename(char *buf, size_t buf_size,
     }
 
     buf[0] = '\0'; /* force it to reload the default */
-    if (strcmp(setting, FAILSAFENAME) && strcmp(setting, "-"))
+    if (strcmp(setting, FAILSAFENAME) && strcmp(setting, "-") &&
+        strstr(setting, "1ST_GEN_REMIX") == NULL)
     {
         snprintf(buf, buf_size, WPS_DIR "/%s.%s", setting, ext);
     }

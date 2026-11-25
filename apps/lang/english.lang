@@ -20738,3 +20738,73 @@
     *: "Set User Token first"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_DIRECT_DAC
+  desc: UIPod Direct ALSA hw:0,0 DAC output bypassing dmix
+  user: core
+  <source>
+    *: "Direct DAC (hw:0,0)"
+  </source>
+  <dest>
+    *: "Direct DAC (hw:0,0)"
+  </dest>
+  <voice>
+    *: "Direct DAC"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_SHELF
+  desc: UIPod 3.5mm Headphone Smooth Bass Low-Shelf filter
+  user: core
+  <source>
+    *: "3.5mm Low-Shelf"
+  </source>
+  <dest>
+    *: "3.5mm Low-Shelf"
+  </dest>
+  <voice>
+    *: "3.5mm Low-Shelf"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_SUBTLE
+  desc: UIPod 3.5mm Low-Shelf Subtle profile
+  user: core
+  <source>
+    *: "Subtle (+2.5 dB)"
+  </source>
+  <dest>
+    *: "Subtle (+2.5 dB)"
+  </dest>
+  <voice>
+    *: "Subtle"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_WARM
+  desc: UIPod 3.5mm Low-Shelf Warm profile
+  user: core
+  <source>
+    *: "Warm (+4.0 dB)"
+  </source>
+  <dest>
+    *: "Warm (+4.0 dB)"
+  </dest>
+  <voice>
+    *: "Warm"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_UIPOD_HP35_DEEP
+  desc: UIPod 3.5mm Low-Shelf Deep profile
+  user: core
+  <source>
+    *: "Deep (+6.0 dB)"
+  </source>
+  <dest>
+    *: "Deep (+6.0 dB)"
+  </dest>
+  <voice>
+    *: "Deep"
+  </voice>
+</phrase>

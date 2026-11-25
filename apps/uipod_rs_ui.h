@@ -316,6 +316,9 @@ void  uipod_rs_ui_plugin_draw_scrollbar(uint32_t bg_rgb, uint32_t fg_rgb,
                                         size_t visible);
 bool  uipod_rs_ui_plugin_present(uint8_t *fb_bgr);
 bool  uipod_rs_ui_plugin_present_gpu(uint32_t win_w, uint32_t win_h);
+bool  uipod_rs_ui_present_video_overlay_gpu(uint32_t win_w,
+                                            uint32_t win_h,
+                                            uint32_t bottom_rows_768);
 bool  uipod_rs_ui_plugin_flush_fbo(void);
 bool  uipod_rs_ui_plugin_sync_fb(uint8_t *fb_bgr);
 

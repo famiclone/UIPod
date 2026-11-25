@@ -151,10 +151,10 @@ static const int fx_speed_values[] =
 
 static const char graphic_numeric[] = "graphic,numeric";
 
-/* Default theme settings */
-#define DEFAULT_WPSNAME  "1ST_GEN_REMIX"
-#define DEFAULT_SBSNAME  "1ST_GEN_REMIX"
-#define DEFAULT_FMS_NAME "cabbiev2"
+/* Default theme settings (UIPod renders 100% of its UI via uipod-ui) */
+#define DEFAULT_WPSNAME  "-"
+#define DEFAULT_SBSNAME  "-"
+#define DEFAULT_FMS_NAME "-"
 
 #if LCD_HEIGHT <= 64
   #define DEFAULT_FONT_HEIGHT 8
@@ -187,30 +187,8 @@ static const char graphic_numeric[] = "graphic,numeric";
 #define DEFAULT_FONTNAME _EXPAND(DEFAULT_FONT_HEIGHT) "-Adobe-Helvetica"
 #endif
 
-#ifdef HAVE_LCD_COLOR
-  #if DEFAULT_FONT_HEIGHT >= 31
-    #define DEFAULT_ICONSET "tango_icons.32x32"
-    #define DEFAULT_VIEWERS_ICONSET "tango_icons_viewers.32x32"
-  #elif DEFAULT_FONT_HEIGHT >= 23
-    #define DEFAULT_ICONSET "tango_icons.24x24"
-    #define DEFAULT_VIEWERS_ICONSET "tango_icons_viewers.24x24"
-  #elif DEFAULT_FONT_HEIGHT >= 15
-    #define DEFAULT_ICONSET "tango_icons.16x16"
-    #define DEFAULT_VIEWERS_ICONSET "tango_icons_viewers.16x16"
-  #elif DEFAULT_FONT_HEIGHT >= 11
-    #define DEFAULT_ICONSET "tango_icons.12x12"
-    #define DEFAULT_VIEWERS_ICONSET "tango_icons_viewers.12x12"
-  #elif DEFAULT_FONT_HEIGHT >= 7
-    #define DEFAULT_ICONSET "tango_icons.8x8"
-    #define DEFAULT_VIEWERS_ICONSET "tango_icons_viewers.8x8"
-  #endif
-#elif LCD_DEPTH > 1 /* greyscale */
-  #define DEFAULT_ICONSET "tango_small_mono"
-  #define DEFAULT_VIEWERS_ICONSET "tango_small_viewers_mono"
-#else /* monochrome */
-  #define DEFAULT_ICONSET ""
-  #define DEFAULT_VIEWERS_ICONSET ""
-#endif
+#define DEFAULT_ICONSET "-"
+#define DEFAULT_VIEWERS_ICONSET "-"
 
 /* UIPod: the Classic Dark pairing (power_menu.c's theme table), so a config
  * with a missing colour line still lands on a named theme, not stock Rockbox's
@@ -224,7 +202,7 @@ static const char graphic_numeric[] = "graphic,numeric";
 #define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0x00, 0x00, 0x00)
 #define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x80, 0x80, 0x80)
 
-#define DEFAULT_BACKDROP    BACKDROP_DIR "/cabbiev2.bmp"
+#define DEFAULT_BACKDROP    "-"
 
 #define DEFAULT_BACKLIGHT_TIMEOUT 15
 
@@ -399,6 +377,24 @@ static void dj_bool_cb(bool val)
 {
     (void)val;
     uipod_dj_apply_settings();
+}
+
+void uipod_audio_hw_apply(void)
+{
+    pcm_alsa_set_direct_hw(global_settings.direct_dac_hw0);
+    tape_deck_fx_set_hp35_profile(global_settings.hp35_low_shelf);
+}
+
+static void direct_dac_bool_cb(bool val)
+{
+    (void)val;
+    uipod_audio_hw_apply();
+}
+
+static void hp35_shelf_int_cb(int val)
+{
+    (void)val;
+    uipod_audio_hw_apply();
 }
 
 static void tape_bool_cb(bool val)
@@ -746,7 +742,7 @@ const struct settings_list settings[] = {
                     ID2P(LANG_INVERT_CURSOR_BAR)),
  #endif
     CHOICE_SETTING(F_THEMESETTING|F_TEMPVAR|F_NEEDAPPLY, statusbar,
-                  LANG_STATUS_BAR, STATUSBAR_TOP, "statusbar","off,top,bottom",
+                  LANG_STATUS_BAR, STATUSBAR_OFF, "statusbar","off,top,bottom",
                   NULL, 3, ID2P(LANG_OFF), ID2P(LANG_STATUSBAR_TOP),
                   ID2P(LANG_STATUSBAR_BOTTOM)),
     CHOICE_SETTING(F_THEMESETTING|F_TEMPVAR, scrollbar,
@@ -1290,6 +1286,15 @@ const struct settings_list settings[] = {
                   "dj keep album gapless", dj_bool_cb),
     OFFON_SETTING(F_SOUNDSETTING, dj_quick_cut_next, LANG_UIPOD_DJ_QUICK_CUT, true,
                   "dj quick cut next", dj_bool_cb),
+    OFFON_SETTING(F_SOUNDSETTING, direct_dac_hw0, LANG_UIPOD_DIRECT_DAC, true,
+                  "direct dac hw0", direct_dac_bool_cb),
+    CHOICE_SETTING(F_SOUNDSETTING, hp35_low_shelf, LANG_UIPOD_HP35_SHELF, 2,
+                   "hp35 low shelf", "off,subtle,warm,deep",
+                   hp35_shelf_int_cb, 4,
+                   ID2P(LANG_OFF),
+                   ID2P(LANG_UIPOD_HP35_SUBTLE),
+                   ID2P(LANG_UIPOD_HP35_WARM),
+                   ID2P(LANG_UIPOD_HP35_DEEP)),
 
 };
 

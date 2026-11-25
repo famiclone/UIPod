@@ -195,6 +195,15 @@ fn compute_track_hash(tr: &AudioTrackInfo) -> u64 {
     }
 }
 
+fn compute_track_hash_with_intel(ctx: &HostContext, tr: &AudioTrackInfo) -> u64 {
+    if let Some(rec) = ctx.audio_track_analysis() {
+        if rec.key_hash != 0 {
+            return rec.key_hash;
+        }
+    }
+    compute_track_hash(tr)
+}
+
 /// Compact 6-byte quantized audio feature frame for one `50 ms` slice of a song.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 struct TrackSlot {
@@ -1553,7 +1562,7 @@ fn build_map_for_track(ctx: &HostContext, tr: Option<&AudioTrackInfo>) -> (Track
     let Some(t) = tr else {
         return (TrackMap::new_empty(0, 0), false, false);
     };
-    let hash = compute_track_hash(t);
+    let hash = compute_track_hash_with_intel(ctx, t);
     let free = is_chiptune_or_module(&t.path);
     let subtune = is_subtune_chiptune(&t.path) && t.duration_ms > 0 && t.duration_ms != 150_000;
     if free {
@@ -1810,7 +1819,10 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
     }
 
     let live_tr = ctx.audio_track_info().or(init_tr);
-    let active_hash = live_tr.as_ref().map(compute_track_hash).unwrap_or(init_hash);
+    let active_hash = live_tr
+        .as_ref()
+        .map(|t| compute_track_hash_with_intel(ctx, t))
+        .unwrap_or(init_hash);
     let (active_map, active_free, active_subtune) = if active_hash == init_hash {
         (init_map, init_free, init_subtune)
     } else {
@@ -1878,7 +1890,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 state.advance_horizon(ctx, &mut pcm_ahead);
             }
             if let Some(tr) = ctx.audio_track_info() {
-                let h = compute_track_hash(&tr);
+                let h = compute_track_hash_with_intel(ctx, &tr);
                 if h != state.map.hash {
                     let (nmap, nfree, nsub) = build_map_for_track(ctx, Some(&tr));
                     let sp = if nfree { 0 } else { tr.position_ms };
@@ -1955,43 +1967,86 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
             }
             state.scroll_phase = (state.scroll_phase + 0.05 + state.intensity * 0.07).fract();
 
-            let apu = ctx.audio_apu_telemetry();
-            let n_live = ctx.audio_read_pcm(0, &mut pcm_live);
-            if apu.is_available() {
-                let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
-                let lf_low = if n_live >= 32 {
-                    analyze_stereo_window(&pcm_live, n_live).low * 1.35
-                } else {
-                    0.0
-                };
-                state.live_kick = (state.live_kick * 0.70).max(kick_hw.max(lf_low).clamp(0.0, 1.0));
-                let n_ch = (apu.channel_count as usize).clamp(1, 8);
-                for (i, dst) in state.live_bars.iter_mut().enumerate() {
-                    let ch_idx = (i * n_ch) / 16;
-                    let mut src = apu.audible_volume(ch_idx);
-                    if apu.audible_onset(ch_idx) {
-                        src = (src + 0.35).min(1.0);
+            if let Some(live) = ctx.audio_live_telemetry() {
+                let apu = live.apu;
+                if apu.is_available() {
+                    let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
+                    state.live_kick =
+                        (state.live_kick * 0.70).max(kick_hw.max(live.kick_impulse).clamp(0.0, 1.0));
+                    let n_ch = (apu.channel_count as usize).clamp(1, 8);
+                    for (i, dst) in state.live_bars.iter_mut().enumerate() {
+                        let ch_idx = (i * n_ch) / 16;
+                        let mut src = apu.audible_volume(ch_idx);
+                        if apu.audible_onset(ch_idx) {
+                            src = (src + 0.35).min(1.0);
+                        }
+                        *dst = if src > *dst {
+                            *dst * 0.30 + src * 0.70
+                        } else {
+                            *dst * 0.80 + src * 0.20
+                        };
                     }
-                    *dst = if src > *dst {
-                        *dst * 0.30 + src * 0.70
-                    } else {
-                        *dst * 0.80 + src * 0.20
-                    };
+                } else {
+                    state.live_kick = (state.live_kick * 0.72).max(live.kick_impulse);
+                    for (i, dst) in state.live_bars.iter_mut().enumerate() {
+                        let b0 = i * 4;
+                        let pk = live.spectrum_64[b0]
+                            .max(live.spectrum_64[b0 + 1])
+                            .max(live.spectrum_64[b0 + 2])
+                            .max(live.spectrum_64[b0 + 3]);
+                        let src = (pk as f32) * (1.0 / 255.0);
+                        *dst = if src > *dst {
+                            *dst * 0.35 + src * 0.65
+                        } else {
+                            *dst * 0.82 + src * 0.18
+                        };
+                    }
                 }
-            } else if n_live >= 32 {
-                let lf = analyze_stereo_window(&pcm_live, n_live);
-                state.live_kick = (state.live_kick * 0.72).max((lf.low * 1.35).clamp(0.0, 1.0));
-                for (dst, &src) in state.live_bars.iter_mut().zip(lf.bars.iter()) {
-                    *dst = if src > *dst {
-                        *dst * 0.35 + src * 0.65
-                    } else {
-                        *dst * 0.82 + src * 0.18
-                    };
+                if live.has_analysis != 0 {
+                    state.intensity =
+                        (state.intensity * 0.90 + live.structural_energy * 0.10).clamp(0.05, 1.0);
                 }
             } else {
-                state.live_kick *= 0.85;
-                for dst in &mut state.live_bars {
-                    *dst *= 0.85;
+                let apu = ctx.audio_apu_telemetry();
+                let n_live = ctx.audio_read_pcm(0, &mut pcm_live);
+                if apu.is_available() {
+                    let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
+                    let lf_low = if n_live >= 32 {
+                        analyze_stereo_window(&pcm_live, n_live).low * 1.35
+                    } else {
+                        0.0
+                    };
+                    state.live_kick =
+                        (state.live_kick * 0.70).max(kick_hw.max(lf_low).clamp(0.0, 1.0));
+                    let n_ch = (apu.channel_count as usize).clamp(1, 8);
+                    for (i, dst) in state.live_bars.iter_mut().enumerate() {
+                        let ch_idx = (i * n_ch) / 16;
+                        let mut src = apu.audible_volume(ch_idx);
+                        if apu.audible_onset(ch_idx) {
+                            src = (src + 0.35).min(1.0);
+                        }
+                        *dst = if src > *dst {
+                            *dst * 0.30 + src * 0.70
+                        } else {
+                            *dst * 0.80 + src * 0.20
+                        };
+                    }
+                } else if n_live >= 32 {
+                    let lf = analyze_stereo_window(&pcm_live, n_live);
+                    state.live_kick =
+                        (state.live_kick * 0.72).max((lf.low * 1.35).clamp(0.0, 1.0));
+                    for (dst, &src) in state.live_bars.iter_mut().zip(lf.bars.iter()) {
+                        *dst = if src > *dst {
+                            *dst * 0.35 + src * 0.65
+                        } else {
+                            *dst * 0.82 + src * 0.18
+                        };
+                    }
+                } else {
+                    state.live_kick *= 0.85;
+                    for dst in &mut state.live_bars {
+                        *dst *= 0.85;
+                    }
                 }
             }
 
@@ -2098,7 +2153,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         if frame_start.saturating_sub(last_track_poll_ms) >= 250 {
             last_track_poll_ms = frame_start;
             if let Some(tr) = ctx.audio_track_info() {
-                let h = compute_track_hash(&tr);
+                let h = compute_track_hash_with_intel(ctx, &tr);
                 if h != state.map.hash {
                     // Song changed! Finalize previous track's Hi-Score & map, reset score to 0, load new track's map!
                     let carry_banner = state.callout.clone();

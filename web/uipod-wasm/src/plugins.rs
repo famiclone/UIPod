@@ -43,6 +43,7 @@ pub enum PluginAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginId {
+    BeatStack,
     MusicQuiz,
     SoundRacer,
     Tetris,
@@ -148,9 +149,11 @@ pub struct AudioSnapshot<'a> {
     pub track_title: &'a str,
     pub pos_ms: u32,
     pub dur_ms: u32,
+    pub sample_rate: u32,
 }
 
 pub enum ActivePlugin {
+    BeatStack(BeatStackPlugin),
     MusicQuiz(MusicQuizGame),
     SoundRacer(SoundRacerGame),
     Tetris(TetrisPlugin),
@@ -164,6 +167,7 @@ pub enum ActivePlugin {
 impl ActivePlugin {
     pub fn launch(id: PluginId, track_labels: &[(String, u32)], pos_ms: u32) -> Self {
         match id {
+            PluginId::BeatStack => Self::BeatStack(BeatStackPlugin::new(pos_ms as u64)),
             PluginId::MusicQuiz => Self::MusicQuiz(MusicQuizGame::new(track_labels)),
             PluginId::SoundRacer => Self::SoundRacer(SoundRacerGame::new(pos_ms)),
             PluginId::Tetris => Self::Tetris(TetrisPlugin::new()),
@@ -177,6 +181,7 @@ impl ActivePlugin {
 
     pub fn title(&self, uk: bool) -> &'static str {
         match self {
+            Self::BeatStack(_) => if uk { "Біт Стек" } else { "Beat Stack" },
             Self::MusicQuiz(_) => if uk { "Вгадай мелодію" } else { "Music Quiz" },
             Self::SoundRacer(_) => "Sound Racer",
             Self::Tetris(_) => if uk { "Тетріс" } else { "Tetris" },
@@ -186,6 +191,12 @@ impl ActivePlugin {
             Self::Stopwatch(s) => s.title(uk),
             Self::TextViewer(_) => if uk { "Про UIPod" } else { "About UIPod" },
         }
+    }
+
+    /// Returns `true` when the active plugin uses `B` directly as an immediate gameplay button
+    /// (suppressing `650 ms` Hold-`B` Home exit and `B`-on-release deferral outside Pause Menu).
+    pub fn captures_b_button(&self) -> bool {
+        matches!(self, Self::BeatStack(g) if !g.menu_open)
     }
 
     pub fn update(
@@ -198,6 +209,7 @@ impl ActivePlugin {
         uk: bool,
     ) -> PluginAction {
         match self {
+            Self::BeatStack(g) => g.update(dt, pressed, held, pcm, audio, uk),
             Self::MusicQuiz(g) => g.update(dt, pressed, pcm, audio, uk),
             Self::SoundRacer(g) => g.update(dt, pressed, pcm, audio, uk),
             Self::Tetris(g) => g.update(dt, pressed, held, uk),
@@ -215,8 +227,14 @@ impl ActivePlugin {
         theme: ThemeColors,
         header: &HeaderState<'_>,
         uk: bool,
+        win_w: u32,
+        win_h: u32,
     ) {
         match self {
+            Self::BeatStack(g) => {
+                flush_plugin_splash_to_hud(ui, &mut g.splash);
+                g.render(ui, theme, header, uk, win_w, win_h);
+            }
             Self::MusicQuiz(g) => g.render(ui, theme, header, uk),
             Self::SoundRacer(g) => {
                 flush_plugin_splash_to_hud(ui, &mut g.splash);
@@ -4430,6 +4448,23 @@ impl SoundRacerGame {
                     *dst * 0.82 + src * 0.18
                 };
             }
+            let live_intel = uipod_track_intel::read_live_frame();
+            if live_intel.status == 1 {
+                self.live_kick = self.live_kick.max(live_intel.kick_impulse);
+                for b in 0..16 {
+                    let k0 = b * 4;
+                    let sp = live_intel.spectrum_64[k0]
+                        .max(live_intel.spectrum_64[k0 + 1])
+                        .max(live_intel.spectrum_64[k0 + 2])
+                        .max(live_intel.spectrum_64[k0 + 3]);
+                    let sv = (sp as f32) * (1.0 / 255.0);
+                    self.live_bars[b] = self.live_bars[b].max(sv * 0.85);
+                }
+                if live_intel.has_analysis != 0 {
+                    self.intensity =
+                        (self.intensity * 0.90 + live_intel.structural_energy * 0.10).clamp(0.08, 1.0);
+                }
+            }
             let rms_l = (sum_l / frames as f32).sqrt();
             let rms_r = (sum_r / frames as f32).sqrt();
             let energy = 0.5 * (rms_l + rms_r);
@@ -4944,5 +4979,2901 @@ impl SoundRacerGame {
         );
 
         let _ = &self.splash;
+    }
+}
+
+
+/* ============================================================================
+ * 8. BEAT STACK — 1:1 with `plugins/beat-stack/src/{lib,rhythm}.rs`
+ * ========================================================================== */
+
+const BS_COLS: usize = 12;
+const BS_ROWS: usize = 7;
+const BS_MAX_CRANES: usize = 4;
+const BS_SYNC_OFFSETS_MS: [i32; 5] = [0, 25, 50, 100, 150];
+const BS_MIN_ARM_BEATS: f32 = 0.48;
+const BS_MIN_ARM_SEC: f32 = 0.15;
+const BS_ENV_RATE_HZ: f32 = 100.0;
+const BS_BIN_SEC: f32 = 1.0 / BS_ENV_RATE_HZ;
+const BS_RING_BINS: usize = 600;
+const BS_EST_WINDOW: usize = 520;
+
+struct BsLayoutSpec {
+    outer_pad_x: f32,
+    outer_top_offset: f32,
+    outer_bottom_pad: f32,
+    hud_gap_y: f32,
+    hud_bar_h: f32,
+    hud_radius: f32,
+    frame_radius: f32,
+    wall_stroke: f32,
+    thin_stroke: f32,
+    hint_card_h: f32,
+    hint_radius: f32,
+    crane_zone_ratio: f32,
+    floor_plate_ratio: f32,
+    rail_top_ratio: f32,
+    rail_h_ratio: f32,
+    crate_inset_ratio: f32,
+    crate_radius_ratio: f32,
+    min_tile: f32,
+    max_tile: f32,
+    font_banner_lg: f32,
+    font_banner_sm: f32,
+    font_hud_val: f32,
+    font_hud_lbl: f32,
+    font_callout: f32,
+    font_hint_main: f32,
+    font_hint_sub: f32,
+}
+
+const BS_SPEC: BsLayoutSpec = BsLayoutSpec {
+    outer_pad_x: 24.0,
+    outer_top_offset: 8.0,
+    outer_bottom_pad: 12.0,
+    hud_gap_y: 10.0,
+    hud_bar_h: 56.0,
+    hud_radius: 10.0,
+    frame_radius: 8.0,
+    wall_stroke: 3.5,
+    thin_stroke: 2.0,
+    hint_card_h: 48.0,
+    hint_radius: 8.0,
+    crane_zone_ratio: 1.50,
+    floor_plate_ratio: 0.28,
+    rail_top_ratio: 0.14,
+    rail_h_ratio: 0.16,
+    crate_inset_ratio: 0.04,
+    crate_radius_ratio: 0.08,
+    min_tile: 26.0,
+    max_tile: 70.0,
+    font_banner_lg: 32.0,
+    font_banner_sm: 18.0,
+    font_hud_val: 22.0,
+    font_hud_lbl: 13.0,
+    font_callout: 22.0,
+    font_hint_main: 13.5,
+    font_hint_sub: 12.5,
+};
+
+#[derive(Clone, Copy)]
+struct BsComputedLayout {
+    tile: f32,
+    shaft_x: f32,
+    shaft_y: f32,
+    shaft_w: f32,
+    shaft_h: f32,
+    floor_plate_h: f32,
+    grid_x: f32,
+    grid_y: f32,
+    grid_w: f32,
+    grid_h: f32,
+    hud_x: f32,
+    hud_y: f32,
+    hud_w: f32,
+    hud_h: f32,
+}
+
+impl BsComputedLayout {
+    fn compute(win_w: f32, win_h: f32) -> Self {
+        let top_y = CONTENT_TOP_Y + BS_SPEC.outer_top_offset;
+        let avail_w = (win_w - BS_SPEC.outer_pad_x * 2.0).max(280.0);
+        let avail_h = (win_h
+            - top_y
+            - BS_SPEC.outer_bottom_pad
+            - BS_SPEC.hud_gap_y
+            - BS_SPEC.hud_bar_h)
+            .max(220.0);
+        let total_w_tiles = (BS_COLS as f32) + 0.25;
+        let total_h_tiles =
+            (BS_ROWS as f32) + BS_SPEC.crane_zone_ratio + BS_SPEC.floor_plate_ratio;
+
+        let tile = (avail_w / total_w_tiles)
+            .min(avail_h / total_h_tiles)
+            .floor()
+            .clamp(BS_SPEC.min_tile, BS_SPEC.max_tile);
+
+        let crane_zone_h = (tile * BS_SPEC.crane_zone_ratio).round();
+        let floor_plate_h = (tile * BS_SPEC.floor_plate_ratio).round().max(10.0);
+        let grid_w = tile * (BS_COLS as f32);
+        let grid_h = tile * (BS_ROWS as f32);
+        let wall_pad = BS_SPEC.wall_stroke;
+
+        let shaft_w = grid_w + wall_pad * 2.0;
+        let shaft_h = crane_zone_h + grid_h + floor_plate_h;
+        let total_block_h = shaft_h + BS_SPEC.hud_gap_y + BS_SPEC.hud_bar_h;
+
+        let shaft_x = ((win_w - shaft_w) * 0.5).floor();
+        let extra_y = ((win_h - top_y - BS_SPEC.outer_bottom_pad - total_block_h) * 0.5).max(0.0);
+        let shaft_y = (top_y + extra_y).floor();
+        let grid_x = shaft_x + wall_pad;
+        let grid_y = shaft_y + crane_zone_h;
+        let hud_y = shaft_y + shaft_h + BS_SPEC.hud_gap_y;
+
+        Self {
+            tile,
+            shaft_x,
+            shaft_y,
+            shaft_w,
+            shaft_h,
+            floor_plate_h,
+            grid_x,
+            grid_y,
+            grid_w,
+            grid_h,
+            hud_x: shaft_x,
+            hud_y,
+            hud_w: shaft_w,
+            hud_h: BS_SPEC.hud_bar_h,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BsCrateKind {
+    Light = 1,
+    Checker = 2,
+    Medium = 3,
+    Heavy = 4,
+}
+
+#[derive(Clone, Copy)]
+struct BsGroundedCrate {
+    kind: BsCrateKind,
+    armed_square: bool,
+    armed_row: bool,
+    armed_sec: f32,
+    armed_beats: f32,
+    settle_px_frac: u8,
+}
+
+impl BsGroundedCrate {
+    const fn new(kind: BsCrateKind) -> Self {
+        Self {
+            kind,
+            armed_square: false,
+            armed_row: false,
+            armed_sec: 0.0,
+            armed_beats: 0.0,
+            settle_px_frac: 0,
+        }
+    }
+    const fn is_armed(self) -> bool {
+        self.armed_square || self.armed_row
+    }
+    fn ready_to_detonate(self) -> bool {
+        self.is_armed()
+            && self.armed_beats >= BS_MIN_ARM_BEATS
+            && self.armed_sec >= BS_MIN_ARM_SEC
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BsFallingCrate {
+    col: usize,
+    row: usize,
+    kind: BsCrateKind,
+    snap_anim: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BsCraneMode {
+    Carrying,
+    Telegraph,
+    EmptyReturn,
+}
+
+#[derive(Clone, Copy)]
+struct BsCrane {
+    active: bool,
+    col: i32,
+    vis_col: f32,
+    dir: i32,
+    target_col: usize,
+    cargo: Option<BsCrateKind>,
+    mode: BsCraneMode,
+    telegraph_beats: f32,
+    rail_steps_loaded: u8,
+    open_flash: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BsLoseReason {
+    Crushed,
+    ShaftJammed,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BsWorkerAction {
+    Idle,
+    Walking { from_col: i32, progress: f32 },
+    Pushing { dir: i32, progress: f32 },
+    Jumping {
+        from_col: f32,
+        from_row: f32,
+        to_col: i32,
+        to_row: i32,
+        progress: f32,
+        blocked_wall: bool,
+        steered_apex: bool,
+    },
+    Falling { vis_row: f32 },
+}
+
+#[derive(Clone, Copy)]
+struct BsBurst {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    life: f32,
+    shade: u8,
+}
+
+struct BsBeatClock {
+    raw_beats: f64,
+    comp_beats: f64,
+    audio_latency_sec: f64,
+    live_bpm: f32,
+    tempo_locked: bool,
+    parity_shift: u64,
+
+    hp40: f32,
+    lp140_a: f32,
+    lp140_b: f32,
+    kick_env: f32,
+    prev_kick_env: f32,
+    flux_ema: f32,
+    since_onset: f32,
+
+    bin_accum_sec: f32,
+    onset_ring: [f32; BS_RING_BINS],
+    kick_ring: [f32; BS_RING_BINS],
+    ring_pos: usize,
+    ring_len: usize,
+    bins_since_est: usize,
+
+    silence_sec: f32,
+    pll_trim: f32,
+    pending_jumps: u8,
+    last_jump_cand: f32,
+    initialized: bool,
+}
+
+impl BsBeatClock {
+    fn new(latency_sec: f64) -> Self {
+        Self {
+            raw_beats: 0.0,
+            comp_beats: 0.0,
+            audio_latency_sec: latency_sec.clamp(0.0, 0.30),
+            live_bpm: 120.0,
+            tempo_locked: false,
+            parity_shift: 0,
+            hp40: 0.0,
+            lp140_a: 0.0,
+            lp140_b: 0.0,
+            kick_env: 0.0,
+            prev_kick_env: 0.0,
+            flux_ema: 0.02,
+            since_onset: 1.0,
+            bin_accum_sec: 0.0,
+            onset_ring: [0.0; BS_RING_BINS],
+            kick_ring: [0.0; BS_RING_BINS],
+            ring_pos: 0,
+            ring_len: 0,
+            bins_since_est: 0,
+            silence_sec: 2.0,
+            pll_trim: 0.0,
+            pending_jumps: 0,
+            last_jump_cand: 120.0,
+            initialized: false,
+        }
+    }
+
+    fn reset_full(&mut self) {
+        self.raw_beats = 0.0;
+        self.comp_beats = 0.0;
+        self.live_bpm = 120.0;
+        self.parity_shift = 0;
+        self.silence_sec = 2.0;
+        self.initialized = false;
+        self.on_track_change();
+    }
+
+    fn on_track_change(&mut self) {
+        self.tempo_locked = false;
+        self.hp40 = 0.0;
+        self.lp140_a = 0.0;
+        self.lp140_b = 0.0;
+        self.kick_env = 0.0;
+        self.prev_kick_env = 0.0;
+        self.flux_ema = 0.02;
+        self.since_onset = 1.0;
+        self.bin_accum_sec = 0.0;
+        self.ring_pos = 0;
+        self.ring_len = 0;
+        self.bins_since_est = 0;
+        self.pll_trim = 0.0;
+        self.pending_jumps = 0;
+    }
+
+    fn fold_bpm(mut bpm: f32) -> f32 {
+        if !bpm.is_finite() || bpm <= 0.0 {
+            return 120.0;
+        }
+        bpm = bpm.clamp(30.0, 360.0);
+        while bpm < 75.0 {
+            bpm *= 2.0;
+        }
+        while bpm > 180.0 {
+            bpm *= 0.5;
+        }
+        bpm.clamp(75.0, 180.0)
+    }
+
+    fn ingest_audio(&mut self, dt: f32, pcm: &[i16], sample_rate: u32, apu_pulse: f32) -> bool {
+        self.since_onset += dt;
+        let n_frames = pcm.len() / 2;
+        let sr = sample_rate.clamp(16_000, 96_000) as f32;
+        const INV_I16: f32 = 1.0 / 32768.0;
+
+        let mut full_sq = 0.0f32;
+        if n_frames > 0 {
+            let st = (n_frames / 128).max(1);
+            let mut cnt = 0usize;
+            let mut i = 0usize;
+            while i < n_frames {
+                let m = ((pcm[i * 2] as f32) + (pcm[i * 2 + 1] as f32)) * (0.5 * INV_I16);
+                full_sq += m * m;
+                cnt += 1;
+                i += st;
+            }
+            full_sq /= cnt.max(1) as f32;
+        }
+        if full_sq.sqrt() < 0.004 && apu_pulse < 0.03 {
+            self.silence_sec = (self.silence_sec + dt).min(10.0);
+        } else {
+            self.silence_sec = 0.0;
+        }
+
+        self.bin_accum_sec += dt;
+        let bins_due = (self.bin_accum_sec / BS_BIN_SEC).floor() as usize;
+        if bins_due == 0 {
+            return false;
+        }
+        let k = bins_due.min(8);
+        self.bin_accum_sec =
+            (self.bin_accum_sec - (bins_due as f32) * BS_BIN_SEC).clamp(0.0, BS_BIN_SEC);
+
+        let a_hp40 = (1.0 - (-2.0 * core::f32::consts::PI * 40.0 / sr).exp()).clamp(0.001, 0.25);
+        let a_lp140 =
+            (1.0 - (-2.0 * core::f32::consts::PI * 140.0 / sr).exp()).clamp(0.003, 0.45);
+
+        let hop_frames = ((sr * BS_BIN_SEC).round() as usize).max(32);
+        let tail_frames = (k * hop_frames).min(n_frames);
+        let start_frame = n_frames.saturating_sub(tail_frames);
+        let apu_clamped = apu_pulse.clamp(0.0, 1.0);
+
+        let mut onset = false;
+        for b in 0..k {
+            let k_rms = if tail_frames >= k && n_frames > 0 {
+                let f0 = start_frame + (b * tail_frames) / k;
+                let f1 = start_frame + ((b + 1) * tail_frames) / k;
+                let mut sq = 0.0f32;
+                let cnt = f1.saturating_sub(f0).max(1);
+                for f in f0..f1 {
+                    let m = ((pcm[f * 2] as f32) + (pcm[f * 2 + 1] as f32)) * (0.5 * INV_I16);
+                    self.hp40 += a_hp40 * (m - self.hp40);
+                    let hp = m - self.hp40;
+                    self.lp140_a += a_lp140 * (hp - self.lp140_a);
+                    self.lp140_b += a_lp140 * (self.lp140_a - self.lp140_b);
+                    sq += self.lp140_b * self.lp140_b;
+                }
+                (sq / (cnt as f32)).sqrt()
+            } else {
+                0.0
+            };
+
+            let comb_k = k_rms.max(apu_clamped * 0.25);
+            self.kick_env = self.kick_env * 0.35 + comb_k * 0.65;
+            let k_flux = (self.kick_env - self.prev_kick_env).max(0.0);
+            self.prev_kick_env = self.kick_env;
+
+            self.onset_ring[self.ring_pos] = k_flux;
+            self.kick_ring[self.ring_pos] = self.kick_env;
+            self.ring_pos = (self.ring_pos + 1) % BS_RING_BINS;
+            if self.ring_len < BS_RING_BINS {
+                self.ring_len += 1;
+            }
+            self.bins_since_est += 1;
+
+            let thr = (self.flux_ema * 1.65).max(0.006);
+            if k_flux > thr && self.since_onset >= 0.24 {
+                onset = true;
+                self.since_onset = 0.0;
+            }
+            self.flux_ema += (k_flux - self.flux_ema) * 0.08;
+        }
+
+        if self.silence_sec < 1.0 && self.ring_len >= 160 && self.bins_since_est >= 20 {
+            self.bins_since_est = 0;
+            self.estimate_tempo_and_phase();
+        }
+        onset
+    }
+
+    fn estimate_tempo_and_phase(&mut self) {
+        let w = self.ring_len.min(BS_EST_WINDOW);
+        if w < 160 {
+            return;
+        }
+        let mut onset_win = [0.0f32; BS_EST_WINDOW];
+        let mut kick_win = [0.0f32; BS_EST_WINDOW];
+        let oldest = (self.ring_pos + BS_RING_BINS - w) % BS_RING_BINS;
+        let mut sum = 0.0f32;
+        let mut max_v = 0.0f32;
+        for i in 0..w {
+            let idx = (oldest + i) % BS_RING_BINS;
+            let v = self.onset_ring[idx];
+            onset_win[i] = v;
+            kick_win[i] = self.kick_ring[idx];
+            sum += v;
+            if v > max_v {
+                max_v = v;
+            }
+        }
+        let mean = sum / (w as f32);
+        if max_v < 1e-4 || max_v / (mean + 1e-6) < 1.75 {
+            return;
+        }
+
+        let mut centered = [0.0f32; BS_EST_WINDOW];
+        let mut var_sum = 1e-12f32;
+        for i in 0..w {
+            let sm = if i > 0 && i + 1 < w {
+                0.25 * onset_win[i - 1] + 0.50 * onset_win[i] + 0.25 * onset_win[i + 1]
+            } else {
+                onset_win[i]
+            };
+            let c = sm - mean;
+            centered[i] = c;
+            var_sum += c * c;
+        }
+
+        let min_lag = 33usize;
+        let max_lag = 80usize;
+        let corr_max = (max_lag * 2 + 4).min(w - 1);
+        if min_lag >= corr_max {
+            return;
+        }
+
+        let mut acf = [0.0f32; 170];
+        let acf_top = corr_max.min(acf.len() - 1);
+        for lag in (min_lag / 2)..=acf_top {
+            let cnt = w - lag;
+            let mut dot = 0.0f32;
+            for i in 0..cnt {
+                dot += centered[i] * centered[i + lag];
+            }
+            let sc = (w as f32) / ((cnt as f32) * var_sum);
+            acf[lag] = (dot * sc).clamp(-1.0, 1.0);
+        }
+
+        let mut best_lag = 50usize;
+        let mut best_sc = f32::NEG_INFINITY;
+        for lag in min_lag..=max_lag.min(acf_top) {
+            let r1 = acf[lag].max(0.0);
+            let r2 = if lag * 2 <= acf_top {
+                acf[lag * 2].max(0.0)
+            } else {
+                r1
+            };
+            let r4 = if lag * 4 < w && lag * 4 <= acf_top {
+                acf[lag * 4].max(0.0)
+            } else {
+                r2
+            };
+            let sc = 0.58 * r1 + 0.34 * r2 + 0.08 * r4;
+            if sc > best_sc {
+                best_sc = sc;
+                best_lag = lag;
+            }
+        }
+        if best_sc < 0.08 {
+            return;
+        }
+
+        if best_lag >= 66 && best_lag / 2 >= min_lag {
+            let half = best_lag / 2;
+            let r_half = acf[half].max(acf[(half + 1).min(acf_top)]);
+            if r_half >= 0.72 * acf[best_lag].max(0.05) {
+                best_lag = if acf[(half + 1).min(acf_top)] > acf[half] {
+                    half + 1
+                } else {
+                    half
+                };
+            }
+        }
+
+        let interp_pk = |idx: usize| -> f32 {
+            if idx > 1 && idx + 1 <= acf_top {
+                let ym = acf[idx - 1];
+                let y0 = acf[idx];
+                let yp = acf[idx + 1];
+                let den = ym - 2.0 * y0 + yp;
+                if den.abs() > 1e-6 {
+                    (idx as f32) + (0.5 * (ym - yp) / den).clamp(-0.5, 0.5)
+                } else {
+                    idx as f32
+                }
+            } else {
+                idx as f32
+            }
+        };
+
+        let lag1 = interp_pk(best_lag);
+        let mut l2 = (best_lag * 2).min(acf_top);
+        if l2 > 2 && l2 + 1 <= acf_top {
+            if acf[l2 - 1] > acf[l2] && acf[l2 - 1] >= acf[l2 + 1] {
+                l2 -= 1;
+            } else if acf[l2 + 1] > acf[l2] {
+                l2 += 1;
+            }
+        }
+        let exact_lag = if acf[best_lag] < 0.12 && l2 <= acf_top && acf[l2] > 0.18 {
+            interp_pk(l2) * 0.5
+        } else if l2 <= acf_top && acf[l2] > 0.25 {
+            let l2h = interp_pk(l2) * 0.5;
+            if (lag1 - l2h).abs() < 0.85 {
+                0.40 * lag1 + 0.60 * l2h
+            } else {
+                lag1
+            }
+        } else {
+            lag1
+        };
+
+        let det_bpm = Self::fold_bpm(BS_ENV_RATE_HZ * 60.0 / exact_lag.max(20.0));
+        if !self.tempo_locked {
+            self.live_bpm = det_bpm;
+            self.tempo_locked = true;
+        } else {
+            let diff = (det_bpm - self.live_bpm).abs();
+            if diff > 5.0 {
+                if (det_bpm - self.last_jump_cand).abs() < 3.0 {
+                    self.pending_jumps = self.pending_jumps.saturating_add(1);
+                } else {
+                    self.pending_jumps = 1;
+                    self.last_jump_cand = det_bpm;
+                }
+                if self.pending_jumps >= 2 {
+                    self.live_bpm += (det_bpm - self.live_bpm) * 0.70;
+                    self.pending_jumps = 0;
+                }
+            } else {
+                self.pending_jumps = 0;
+                self.live_bpm += (det_bpm - self.live_bpm) * 0.28;
+            }
+        }
+
+        let period_bins = (BS_ENV_RATE_HZ * 60.0 / self.live_bpm).clamp(30.0, 90.0);
+        let two_beat = (period_bins * 2.0).round() as usize;
+        let newest = w - 1;
+        let mut best_age = 0usize;
+        let mut best_pe = f32::NEG_INFINITY;
+        for age in 0..two_beat.max(1) {
+            let mut sc = 0.0f32;
+            let mut k = 0usize;
+            loop {
+                let back = age + ((k as f32) * period_bins * 2.0).round() as usize;
+                if back >= w {
+                    break;
+                }
+                let idx = newest - back;
+                let mut es = onset_win[idx] + kick_win[idx] * 0.45;
+                if idx > 0 {
+                    es += 0.45 * onset_win[idx - 1];
+                }
+                if idx + 1 < w {
+                    es += 0.45 * onset_win[idx + 1];
+                }
+                let wb = back + (period_bins.round() as usize);
+                let ew = if wb < w {
+                    onset_win[newest - wb] * 0.35
+                } else {
+                    0.0
+                };
+                sc += es + ew;
+                k += 1;
+            }
+            if sc > best_pe {
+                best_pe = sc;
+                best_age = age;
+            }
+        }
+
+        let lat_bins = (self.audio_latency_sec as f32) * BS_ENV_RATE_HZ;
+        let target_2b = (((best_age as f32) - lat_bins) / period_bins).rem_euclid(2.0);
+        let cur_floor = self.comp_beats.floor().max(0.0) as u64;
+        let cur_par = ((cur_floor.wrapping_add(self.parity_shift)) & 1) as f32;
+        let cur_frac = (self.comp_beats - self.comp_beats.floor()) as f32;
+        let cur_2b = cur_par + cur_frac;
+
+        let mut q_err = target_2b.rem_euclid(1.0) - cur_frac;
+        if q_err > 0.5 {
+            q_err -= 1.0;
+        } else if q_err < -0.5 {
+            q_err += 1.0;
+        }
+        self.pll_trim = (q_err * 0.36).clamp(-0.14, 0.14);
+
+        let two_err = (target_2b - cur_2b).rem_euclid(2.0);
+        if (0.65..=1.35).contains(&two_err) {
+            self.parity_shift ^= 1;
+        }
+    }
+
+    fn step(
+        &mut self,
+        dt: f32,
+        playing: bool,
+        pcm: &[i16],
+        sample_rate: u32,
+        apu_pulse: f32,
+    ) -> (f32, f32, f32, bool, bool, bool, bool) {
+        let dt = dt.clamp(0.0, 0.1);
+        let prev_comp = self.comp_beats;
+
+        if playing {
+            let live_intel = uipod_track_intel::read_live_frame();
+            if live_intel.status == 1 && live_intel.has_analysis != 0 {
+                if let Some(rec) = uipod_track_intel::read_active_analysis() {
+                    if rec.key_hash == live_intel.track_key_hash {
+                        let folded = Self::fold_bpm(rec.bpm);
+                        self.live_bpm = folded;
+                        self.tempo_locked = true;
+                        self.silence_sec = 0.0;
+                        self.since_onset += dt;
+                        let raw_onset =
+                            if live_intel.kick_impulse.max(apu_pulse) >= 0.56 && self.since_onset >= 0.18
+                            {
+                                self.since_onset = 0.0;
+                                true
+                            } else {
+                                false
+                            };
+                        let trim_ms = (self.audio_latency_sec * 1000.0).clamp(0.0, 300.0);
+                        let target_b = (((live_intel.playhead_ms as f64)
+                            - trim_ms
+                            - (rec.first_beat_offset_ms as f64))
+                            * (folded as f64 / 60_000.0))
+                            .max(0.0);
+                        let nom_step = (dt as f64) * (folded as f64 / 60.0);
+                        if !self.initialized {
+                            self.comp_beats = target_b;
+                            self.raw_beats = target_b;
+                            self.parity_shift = 0;
+                        } else {
+                            let err = target_b - self.comp_beats;
+                            if err.abs() > 3.0 {
+                                let tf = target_b.rem_euclid(2.0);
+                                let cb = (self.comp_beats * 0.5).floor() * 2.0;
+                                let mut nb = cb + tf;
+                                if nb < self.comp_beats {
+                                    nb += 2.0;
+                                }
+                                self.comp_beats = nb;
+                                self.parity_shift = 0;
+                            } else {
+                                let rm = (1.0 + err * 1.8).clamp(0.84, 1.18);
+                                self.comp_beats += nom_step * rm;
+                            }
+                            self.raw_beats = self.comp_beats;
+                        }
+                        let (fire_beat, fire_half) = if !self.initialized {
+                            self.initialized = true;
+                            (false, false)
+                        } else {
+                            (
+                                (self.comp_beats.floor() as i64) > (prev_comp.floor() as i64),
+                                ((self.comp_beats * 2.0).floor() as i64)
+                                    > ((prev_comp * 2.0).floor() as i64),
+                            )
+                        };
+                        let bf_floor = self.comp_beats.floor().max(0.0) as u64;
+                        let beat_index = bf_floor.wrapping_add(self.parity_shift);
+                        let fire_strong = fire_beat && (beat_index & 1) == 0;
+                        let bf =
+                            ((self.comp_beats - (bf_floor as f64)) as f32).clamp(0.0, 0.999_99);
+                        let actual_step = (self.comp_beats - prev_comp).max(0.0) as f32;
+                        return (
+                            folded,
+                            bf,
+                            actual_step,
+                            fire_beat,
+                            fire_strong,
+                            fire_half,
+                            raw_onset,
+                        );
+                    }
+                }
+            }
+        }
+
+        let raw_onset = if playing {
+            self.ingest_audio(dt, pcm, sample_rate, apu_pulse)
+        } else {
+            self.silence_sec = (self.silence_sec + dt).min(10.0);
+            self.pll_trim *= (1.0 - dt * 6.0).clamp(0.0, 1.0);
+            false
+        };
+
+        let fallback = !playing || self.silence_sec >= 1.8;
+        if fallback {
+            self.tempo_locked = false;
+            self.live_bpm += (120.0 - self.live_bpm) * (dt * 3.0).clamp(0.0, 1.0);
+        }
+        let bpm = self.live_bpm.clamp(75.0, 180.0);
+        self.pll_trim *= (1.0 - dt * 4.5).clamp(0.0, 1.0);
+        let rate = if fallback {
+            1.0
+        } else {
+            (1.0 + self.pll_trim).clamp(0.86, 1.14)
+        };
+        let step_b = (dt * bpm * rate / 60.0) as f64;
+        self.raw_beats += step_b;
+
+        let lat_b = if fallback {
+            0.0
+        } else {
+            self.audio_latency_sec * (bpm as f64 / 60.0)
+        };
+        let desired = (self.raw_beats - lat_b).max(0.0);
+        if !self.initialized {
+            self.comp_beats = desired;
+        } else if desired > self.comp_beats {
+            self.comp_beats = desired;
+        } else {
+            self.comp_beats += step_b * 0.15;
+        }
+
+        let (fire_beat, fire_half) = if !self.initialized {
+            self.initialized = true;
+            (false, false)
+        } else {
+            (
+                (self.comp_beats.floor() as i64) > (prev_comp.floor() as i64),
+                ((self.comp_beats * 2.0).floor() as i64) > ((prev_comp * 2.0).floor() as i64),
+            )
+        };
+
+        let bf_floor = self.comp_beats.floor().max(0.0) as u64;
+        let beat_index = bf_floor.wrapping_add(self.parity_shift);
+        let fire_strong = fire_beat && (beat_index & 1) == 0;
+        let bf = ((self.comp_beats - (bf_floor as f64)) as f32).clamp(0.0, 0.999_99);
+        let actual_step = (self.comp_beats - prev_comp).max(0.0) as f32;
+        (bpm, bf, actual_step, fire_beat, fire_strong, fire_half, raw_onset)
+    }
+}
+
+pub struct BeatStackPlugin {
+    grid: [[Option<BsGroundedCrate>; BS_COLS]; BS_ROWS],
+    falling: Vec<BsFallingCrate>,
+    cranes: [BsCrane; BS_MAX_CRANES],
+    worker_col: i32,
+    worker_row: i32,
+    worker_facing: i32,
+    worker_action: BsWorkerAction,
+    worker_walk_phase: u8,
+    worker_danger: bool,
+
+    score: u32,
+    hi_score: u32,
+    chain: u32,
+    max_chain: u32,
+    chain_active: bool,
+    cleared_crates: u32,
+    wave: u32,
+    drops_done: u32,
+
+    difficulty: u8, // 0 Chill, 1 Normal, 2 Overtime
+    latency_idx: usize,
+    clock: BsBeatClock,
+    effective_bpm: f32,
+    beat_frac: f32,
+    bpm_pulse: f32,
+    strong_pulse: f32,
+    show_hint: bool,
+    hint_pinned: bool,
+    music_playing: bool,
+    track_title: String,
+
+    lose_reason: Option<BsLoseReason>,
+    pub(crate) menu_open: bool,
+    menu_sel: usize,
+
+    bag: [BsCrateKind; 8],
+    bag_pos: usize,
+    rng: Rng64,
+    gravity_accum: f32,
+    move_cooldown: f32,
+    particles: Vec<BsBurst>,
+    callout: Option<(String, f32, f32, f32)>,
+    pub splash: Option<(String, f32)>,
+}
+
+impl BeatStackPlugin {
+    pub fn new(seed: u64) -> Self {
+        let mut p = Self {
+            grid: [[None; BS_COLS]; BS_ROWS],
+            falling: Vec::with_capacity(8),
+            cranes: [BsCrane {
+                active: false,
+                col: 0,
+                vis_col: 0.0,
+                dir: 1,
+                target_col: 4,
+                cargo: None,
+                mode: BsCraneMode::EmptyReturn,
+                telegraph_beats: 0.0,
+                rail_steps_loaded: 0,
+                open_flash: 0.0,
+            }; BS_MAX_CRANES],
+            worker_col: 5,
+            worker_row: (BS_ROWS - 1) as i32,
+            worker_facing: 1,
+            worker_action: BsWorkerAction::Idle,
+            worker_walk_phase: 0,
+            worker_danger: false,
+            score: 0,
+            hi_score: 0,
+            chain: 1,
+            max_chain: 1,
+            chain_active: false,
+            cleared_crates: 0,
+            wave: 1,
+            drops_done: 0,
+            difficulty: 1,
+            latency_idx: 1,
+            clock: BsBeatClock::new(0.025),
+            effective_bpm: 120.0,
+            beat_frac: 0.0,
+            bpm_pulse: 0.0,
+            strong_pulse: 0.0,
+            show_hint: true,
+            hint_pinned: false,
+            music_playing: false,
+            track_title: String::new(),
+            lose_reason: None,
+            menu_open: false,
+            menu_sel: 0,
+            bag: [
+                BsCrateKind::Light,
+                BsCrateKind::Light,
+                BsCrateKind::Checker,
+                BsCrateKind::Checker,
+                BsCrateKind::Medium,
+                BsCrateKind::Medium,
+                BsCrateKind::Heavy,
+                BsCrateKind::Heavy,
+            ],
+            bag_pos: 8,
+            rng: Rng64::new(seed ^ 0x57AC_CA7E),
+            gravity_accum: 0.0,
+            move_cooldown: 0.0,
+            particles: Vec::with_capacity(64),
+            callout: None,
+            splash: None,
+        };
+        p.reset_round();
+        p
+    }
+
+    fn reset_round(&mut self) {
+        self.grid = [[None; BS_COLS]; BS_ROWS];
+        self.falling.clear();
+        for c in &mut self.cranes {
+            c.active = false;
+        }
+        self.worker_col = 5;
+        self.worker_row = (BS_ROWS - 1) as i32;
+        self.worker_facing = 1;
+        self.worker_action = BsWorkerAction::Idle;
+        self.worker_walk_phase = 0;
+        self.worker_danger = false;
+        self.score = 0;
+        self.chain = 1;
+        self.max_chain = 1;
+        self.chain_active = false;
+        self.cleared_crates = 0;
+        self.wave = 1;
+        self.drops_done = 0;
+        self.show_hint = true;
+        self.hint_pinned = false;
+        self.lose_reason = None;
+        self.gravity_accum = 0.0;
+        self.move_cooldown = 0.0;
+        self.particles.clear();
+        self.callout = None;
+        self.clock.reset_full();
+
+        let bottom = BS_ROWS - 1;
+        for col in [0usize, 1, 3, 8, 10, 11] {
+            let k = self.draw_kind();
+            self.grid[bottom][col] = Some(BsGroundedCrate::new(k));
+        }
+        self.recompute_armed();
+        self.ensure_cranes();
+    }
+
+    fn draw_kind(&mut self) -> BsCrateKind {
+        if self.bag_pos >= 8 {
+            self.bag = [
+                BsCrateKind::Light,
+                BsCrateKind::Light,
+                BsCrateKind::Checker,
+                BsCrateKind::Checker,
+                BsCrateKind::Medium,
+                BsCrateKind::Medium,
+                BsCrateKind::Heavy,
+                BsCrateKind::Heavy,
+            ];
+            for i in (1..8).rev() {
+                let j = self.rng.range(i + 1);
+                self.bag.swap(i, j);
+            }
+            self.bag_pos = 0;
+        }
+        let k = self.bag[self.bag_pos];
+        self.bag_pos += 1;
+        k
+    }
+
+    fn max_cranes(&self) -> usize {
+        if self.drops_done < 2 && self.difficulty != 2 {
+            return 1;
+        }
+        let base = match self.wave {
+            1..=2 => 2,
+            3..=5 => 3,
+            _ => 4,
+        };
+        match self.difficulty {
+            0 => base.min(3),
+            1 => base.min(BS_MAX_CRANES),
+            _ => (base + 1).min(BS_MAX_CRANES),
+        }
+    }
+
+    fn col_height(&self, col: usize) -> usize {
+        let mut h = 0;
+        for r in (0..BS_ROWS).rev() {
+            if self.grid[r][col].is_some() {
+                h = BS_ROWS - r;
+            }
+        }
+        h
+    }
+
+    fn col_has_telegraph_other(&self, col: usize, self_idx: Option<usize>) -> bool {
+        self.cranes.iter().enumerate().any(|(j, c)| {
+            Some(j) != self_idx
+                && c.active
+                && c.mode == BsCraneMode::Telegraph
+                && c.col.clamp(0, (BS_COLS - 1) as i32) as usize == col
+        })
+    }
+
+    fn col_targeted_by_other(&self, col: usize, self_idx: Option<usize>) -> bool {
+        self.cranes.iter().enumerate().any(|(j, c)| {
+            Some(j) != self_idx
+                && c.active
+                && c.mode != BsCraneMode::EmptyReturn
+                && c.target_col == col
+        })
+    }
+
+    fn pick_drop_col(&mut self, from: i32, self_idx: Option<usize>) -> usize {
+        let seed_off = self.rng.range(BS_COLS);
+        let mut best = None;
+        let mut best_s = i32::MIN;
+        for step in 0..BS_COLS {
+            let cand = (seed_off + step * 5) % BS_COLS;
+            if self.grid[0][cand].is_some() {
+                continue;
+            }
+            let h = self.col_height(cand) as i32;
+            let dist = ((cand as i32) - from).abs();
+            let high_drop = self.falling.iter().any(|f| f.col == cand && f.row <= 2);
+            let pen = (if self.col_has_telegraph_other(cand, self_idx) { 50 } else { 0 })
+                + (if high_drop { 28 } else { 0 })
+                + (if self.col_targeted_by_other(cand, self_idx) { 22 } else { 0 });
+            let jit = (self.rng.range(7) as i32) - 3;
+            let s = (dist.min(6) * 3) - (h * 6) - pen + jit;
+            if s > best_s {
+                best_s = s;
+                best = Some(cand);
+            }
+        }
+        best.unwrap_or_else(|| from.clamp(0, (BS_COLS - 1) as i32) as usize)
+    }
+
+    fn resolve_free_drop_col(&self, preferred: usize, self_idx: usize) -> usize {
+        let pref = preferred.min(BS_COLS - 1);
+        if self.grid[0][pref].is_none() && !self.col_has_telegraph_other(pref, Some(self_idx)) {
+            return pref;
+        }
+        for d in 1..BS_COLS {
+            for sign in [-1i32, 1i32] {
+                let c = (pref as i32) + sign * (d as i32);
+                if (0..BS_COLS as i32).contains(&c) {
+                    let cu = c as usize;
+                    if self.grid[0][cu].is_none()
+                        && !self.col_has_telegraph_other(cu, Some(self_idx))
+                    {
+                        return cu;
+                    }
+                }
+            }
+        }
+        for cu in 0..BS_COLS {
+            if self.grid[0][cu].is_none() {
+                return cu;
+            }
+        }
+        pref
+    }
+
+    fn ensure_cranes(&mut self) {
+        let wanted = self.max_cranes();
+        if self.cranes.iter().filter(|c| c.active).count() >= wanted {
+            return;
+        }
+        for i in 0..wanted {
+            if !self.cranes[i].active {
+                let left = i % 2 == 0;
+                let sc = if left { 0 } else { (BS_COLS - 1) as i32 };
+                let cargo = self.draw_kind();
+                let tgt = self.pick_drop_col(sc, Some(i));
+                let dir = if (tgt as i32) >= sc { 1 } else { -1 };
+                self.cranes[i] = BsCrane {
+                    active: true,
+                    col: sc,
+                    vis_col: sc as f32,
+                    dir,
+                    target_col: tgt,
+                    cargo: Some(cargo),
+                    mode: BsCraneMode::Carrying,
+                    telegraph_beats: 0.0,
+                    rail_steps_loaded: 0,
+                    open_flash: 0.0,
+                };
+                break;
+            }
+        }
+    }
+
+    fn is_solid(&self, c: i32, r: i32) -> bool {
+        if c < 0 || c >= (BS_COLS as i32) || r >= (BS_ROWS as i32) {
+            return true;
+        }
+        if r < 0 {
+            return false;
+        }
+        self.grid[r as usize][c as usize].is_some()
+    }
+
+    fn has_falling_at(&self, c: i32, r: i32) -> bool {
+        if c < 0 || c >= (BS_COLS as i32) || r < 0 || r >= (BS_ROWS as i32) {
+            return false;
+        }
+        self.falling
+            .iter()
+            .any(|f| f.col == c as usize && f.row == r as usize)
+    }
+
+    fn has_unsupported_crates(&self) -> bool {
+        for c in 0..BS_COLS {
+            let mut seen_empty = false;
+            for r in (0..BS_ROWS).rev() {
+                if self.grid[r][c].is_none() {
+                    seen_empty = true;
+                } else if seen_empty {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn any_crate_armed(&self) -> bool {
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if let Some(cell) = self.grid[r][c] {
+                    if cell.is_armed() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn trigger_lose(&mut self, reason: BsLoseReason) {
+        self.lose_reason = Some(reason);
+        self.hi_score = self.hi_score.max(self.score);
+        let cx = self.worker_col as f32 + 0.5;
+        let cy = self.worker_row as f32 + 0.5;
+        self.spawn_burst(cx, cy, 12);
+    }
+
+    fn spawn_burst(&mut self, cx: f32, cy: f32, count: usize) {
+        for i in 0..count {
+            if self.particles.len() >= 64 {
+                break;
+            }
+            let ang = (i as f32 / count.max(1) as f32) * core::f32::consts::TAU;
+            let spd = 2.8 + (self.rng.range(100) as f32) * 0.035;
+            self.particles.push(BsBurst {
+                x: cx,
+                y: cy,
+                vx: ang.cos() * spd,
+                vy: ang.sin() * spd - 2.4,
+                life: 1.0,
+                shade: ((i % 2) + 2) as u8,
+            });
+        }
+    }
+
+    fn drop_unsupported_once(&mut self) -> bool {
+        let mut moved = false;
+        for c in 0..BS_COLS {
+            for r in (0..BS_ROWS - 1).rev() {
+                if self.grid[r][c].is_some() && self.grid[r + 1][c].is_none() {
+                    let mut cell = self.grid[r][c].take().unwrap();
+                    cell.settle_px_frac = 100;
+                    self.grid[r + 1][c] = Some(cell);
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            self.recompute_armed();
+        }
+        moved
+    }
+
+    fn recompute_armed(&mut self) {
+        let mut sq = [[false; BS_COLS]; BS_ROWS];
+        for r in 0..(BS_ROWS - 1) {
+            for c in 0..(BS_COLS - 1) {
+                if let (Some(a), Some(b), Some(d), Some(e)) = (
+                    self.grid[r][c],
+                    self.grid[r][c + 1],
+                    self.grid[r + 1][c],
+                    self.grid[r + 1][c + 1],
+                ) {
+                    if a.kind == b.kind && a.kind == d.kind && a.kind == e.kind {
+                        sq[r][c] = true;
+                        sq[r][c + 1] = true;
+                        sq[r + 1][c] = true;
+                        sq[r + 1][c + 1] = true;
+                    }
+                }
+            }
+        }
+        let fr = BS_ROWS - 1;
+        let full_row = (0..BS_COLS).all(|c| self.grid[fr][c].is_some());
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if let Some(ref mut cell) = self.grid[r][c] {
+                    let was_armed = cell.is_armed();
+                    cell.armed_square = sq[r][c];
+                    cell.armed_row = r == fr && full_row;
+                    if !cell.is_armed() || !was_armed {
+                        cell.armed_sec = 0.0;
+                        cell.armed_beats = 0.0;
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_walk_or_push(&mut self, dir: i32) -> bool {
+        self.worker_facing = dir;
+        let c = self.worker_col;
+        let r = self.worker_row;
+        let nx = c + dir;
+        if !(0..BS_COLS as i32).contains(&nx) {
+            return false;
+        }
+        if !self.is_solid(nx, r) {
+            if self.has_falling_at(nx, r) {
+                self.worker_col = nx;
+                self.trigger_lose(BsLoseReason::Crushed);
+                return true;
+            }
+            self.worker_col = nx;
+            self.worker_action = BsWorkerAction::Walking {
+                from_col: c,
+                progress: 0.0,
+            };
+            self.move_cooldown = 0.11;
+            return true;
+        }
+        let nnx = nx + dir;
+        if !(0..BS_COLS as i32).contains(&nnx)
+            || self.is_solid(nnx, r)
+            || self.has_falling_at(nnx, r)
+        {
+            return false;
+        }
+        if r > 0 && (self.is_solid(nx, r - 1) || self.has_falling_at(nx, r - 1)) {
+            return false;
+        }
+        let mut moved = self.grid[r as usize][nx as usize].take().unwrap();
+        moved.armed_sec = 0.0;
+        moved.armed_beats = 0.0;
+        self.grid[r as usize][nnx as usize] = Some(moved);
+        self.worker_col = nx;
+        self.worker_action = BsWorkerAction::Pushing { dir, progress: 0.0 };
+        self.move_cooldown = 0.135;
+        if (r as usize) + 1 < BS_ROWS && self.grid[(r as usize) + 1][nnx as usize].is_none() {
+            let _ = self.drop_unsupported_once();
+        } else {
+            self.recompute_armed();
+        }
+        true
+    }
+
+    fn try_vertical_jump(&mut self) -> bool {
+        let c = self.worker_col;
+        let r = self.worker_row;
+        if r <= 0 || self.is_solid(c, r - 1) {
+            return false;
+        }
+        if self.has_falling_at(c, r - 1) {
+            self.worker_row = r - 1;
+            self.trigger_lose(BsLoseReason::Crushed);
+            return true;
+        }
+        self.worker_action = BsWorkerAction::Jumping {
+            from_col: c as f32,
+            from_row: r as f32,
+            to_col: c,
+            to_row: r - 1,
+            progress: 0.0,
+            blocked_wall: false,
+            steered_apex: false,
+        };
+        true
+    }
+
+    fn try_diagonal_jump(&mut self, dir: i32) -> bool {
+        self.worker_facing = dir;
+        let c = self.worker_col;
+        let r = self.worker_row;
+        if r <= 0 || self.is_solid(c, r - 1) {
+            return false;
+        }
+        let nx = c + dir;
+        if !(0..BS_COLS as i32).contains(&nx) {
+            return self.try_vertical_jump();
+        }
+        if self.has_falling_at(c, r - 1) {
+            self.worker_row = r - 1;
+            self.trigger_lose(BsLoseReason::Crushed);
+            return true;
+        }
+        let blocked = self.is_solid(nx, r - 1);
+        if !blocked && self.has_falling_at(nx, r - 1) {
+            self.worker_col = nx;
+            self.worker_row = r - 1;
+            self.trigger_lose(BsLoseReason::Crushed);
+            return true;
+        }
+        self.worker_action = BsWorkerAction::Jumping {
+            from_col: c as f32,
+            from_row: r as f32,
+            to_col: if blocked { c } else { nx },
+            to_row: if blocked { r } else { r - 1 },
+            progress: 0.0,
+            blocked_wall: blocked,
+            steered_apex: true,
+        };
+        true
+    }
+
+    fn step_strong_beat_detonation(&mut self, uk: bool) -> u32 {
+        let mut visited = [[false; BS_COLS]; BS_ROWS];
+        let mut clear = [[false; BS_COLS]; BS_ROWS];
+        let mut groups = 0u32;
+        let mut mono_row = false;
+        let mut center = (6.0f32, 4.0f32);
+
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if visited[r][c] {
+                    continue;
+                }
+                let Some(seed) = self.grid[r][c] else {
+                    continue;
+                };
+                if !seed.armed_square {
+                    continue;
+                }
+                let mut st = vec![(c, r)];
+                let mut mem = Vec::with_capacity(8);
+                let mut min_c = c;
+                let mut max_c = c;
+                let mut ready = false;
+                visited[r][c] = true;
+                while let Some((cx, cy)) = st.pop() {
+                    mem.push((cx, cy));
+                    min_c = min_c.min(cx);
+                    max_c = max_c.max(cx);
+                    if let Some(cell) = self.grid[cy][cx] {
+                        if cell.ready_to_detonate() {
+                            ready = true;
+                        }
+                    }
+                    for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                        let nx = cx as i32 + dx;
+                        let ny = cy as i32 + dy;
+                        if (0..BS_COLS as i32).contains(&nx) && (0..BS_ROWS as i32).contains(&ny) {
+                            let ux = nx as usize;
+                            let uy = ny as usize;
+                            if !visited[uy][ux] {
+                                if let Some(nb) = self.grid[uy][ux] {
+                                    if nb.armed_square && nb.kind == seed.kind {
+                                        visited[uy][ux] = true;
+                                        st.push((ux, uy));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if ready {
+                    for &(mx, my) in &mem {
+                        clear[my][mx] = true;
+                    }
+                    groups += 1;
+                    center = ((min_c + max_c) as f32 * 0.5 + 0.5, mem[0].1 as f32);
+                }
+            }
+        }
+
+        let fr = BS_ROWS - 1;
+        let floor_armed =
+            (0..BS_COLS).all(|c| self.grid[fr][c].map(|x| x.armed_row).unwrap_or(false));
+        if floor_armed {
+            let row_ready = (0..BS_COLS).any(|c| {
+                self.grid[fr][c]
+                    .map(|x| x.ready_to_detonate())
+                    .unwrap_or(false)
+            });
+            if row_ready {
+                let fk = self.grid[fr][0].map(|x| x.kind);
+                let is_mono =
+                    fk.is_some() && (0..BS_COLS).all(|c| self.grid[fr][c].map(|x| x.kind) == fk);
+                for c in 0..BS_COLS {
+                    clear[fr][c] = true;
+                }
+                groups += 1;
+                mono_row = is_mono;
+                center = (6.0, fr as f32);
+            }
+        }
+
+        if groups > 0 {
+            let mut crates = 0u32;
+            for r in 0..BS_ROWS {
+                for c in 0..BS_COLS {
+                    if clear[r][c] && self.grid[r][c].take().is_some() {
+                        crates += 1;
+                        self.spawn_burst(c as f32 + 0.5, r as f32 + 0.5, 6);
+                    }
+                }
+            }
+            if crates > 0 {
+                if self.chain_active {
+                    self.chain = (self.chain + 1).min(16);
+                } else {
+                    self.chain = 1;
+                    self.chain_active = true;
+                }
+                self.max_chain = self.max_chain.max(self.chain);
+                let mono_mult = if mono_row { 3 } else { 1 };
+                let gained =
+                    (crates * 50 + groups.saturating_sub(1) * 100) * mono_mult * self.chain;
+                self.score = self.score.saturating_add(gained);
+                self.hi_score = self.hi_score.max(self.score);
+                self.cleared_crates += crates;
+                self.wave = 1 + (self.cleared_crates / 12);
+                if !self.hint_pinned {
+                    self.show_hint = false;
+                }
+                let txt = if mono_row && self.chain > 1 {
+                    format!(
+                        "+{}  MONO ×3 · {} ×{}",
+                        gained,
+                        tr(uk, "CHAIN", "ЛАНЦЮГ"),
+                        self.chain
+                    )
+                } else if mono_row {
+                    format!("+{}  {}", gained, tr(uk, "MONO ROW ×3", "МОНО РЯД ×3"))
+                } else if self.chain > 1 {
+                    format!(
+                        "+{}  {} ×{}",
+                        gained,
+                        tr(uk, "CHAIN", "ЛАНЦЮГ"),
+                        self.chain
+                    )
+                } else {
+                    format!("+{}", gained)
+                };
+                self.callout = Some((
+                    txt,
+                    center.0.clamp(2.4, 9.6),
+                    center.1.clamp(1.2, 5.8),
+                    1.10,
+                ));
+                let _ = self.drop_unsupported_once();
+                self.recompute_armed();
+                return crates;
+            }
+        }
+
+        if !self.any_crate_armed() && !self.has_unsupported_crates() {
+            self.chain_active = false;
+            self.chain = 1;
+        }
+        0
+    }
+
+    fn step_cranes(&mut self, step_beats: f32, fire_beat: bool, fire_half: bool) {
+        self.ensure_cranes();
+        for i in 0..BS_MAX_CRANES {
+            if !self.cranes[i].active {
+                continue;
+            }
+            if self.cranes[i].mode != BsCraneMode::EmptyReturn && self.cranes[i].cargo.is_none() {
+                self.cranes[i].mode = BsCraneMode::EmptyReturn;
+            }
+            match self.cranes[i].mode {
+                BsCraneMode::Telegraph => {
+                    self.cranes[i].telegraph_beats += step_beats;
+                    if (fire_beat && self.cranes[i].telegraph_beats >= 0.72)
+                        || self.cranes[i].telegraph_beats >= 1.25
+                    {
+                        let dc = (self.cranes[i].col.clamp(0, (BS_COLS - 1) as i32)) as usize;
+                        if let Some(kind) = self.cranes[i].cargo.take() {
+                            if self.grid[0][dc].is_some() {
+                                self.trigger_lose(BsLoseReason::ShaftJammed);
+                                return;
+                            }
+                            if self.worker_col == dc as i32 && self.worker_row == 0 {
+                                self.trigger_lose(BsLoseReason::Crushed);
+                                return;
+                            }
+                            self.falling.push(BsFallingCrate {
+                                col: dc,
+                                row: 0,
+                                kind,
+                                snap_anim: -0.65,
+                            });
+                            self.drops_done += 1;
+                        }
+                        self.cranes[i].mode = BsCraneMode::EmptyReturn;
+                        self.cranes[i].telegraph_beats = 0.0;
+                        self.cranes[i].rail_steps_loaded = 0;
+                        self.cranes[i].open_flash = 1.0;
+                        self.cranes[i].dir = if dc < BS_COLS / 2 { -1 } else { 1 };
+                    }
+                }
+                BsCraneMode::Carrying => {
+                    let tgt = self.cranes[i].target_col as i32;
+                    let reached = if self.cranes[i].dir >= 0 {
+                        self.cranes[i].col >= tgt
+                    } else {
+                        self.cranes[i].col <= tgt
+                    };
+                    let watchdog = self.cranes[i].rail_steps_loaded >= (BS_COLS as u8 + 2);
+                    if (reached && (fire_beat || fire_half)) || watchdog {
+                        let vc = self.resolve_free_drop_col(self.cranes[i].target_col, i);
+                        if vc == self.cranes[i].target_col
+                            || watchdog
+                            || self.cranes[i].col == vc as i32
+                        {
+                            self.cranes[i].col = vc as i32;
+                            self.cranes[i].target_col = vc;
+                            self.cranes[i].mode = BsCraneMode::Telegraph;
+                            self.cranes[i].telegraph_beats = 0.0;
+                            self.cranes[i].rail_steps_loaded = 0;
+                        } else {
+                            self.cranes[i].target_col = vc;
+                            self.cranes[i].dir =
+                                if (vc as i32) >= self.cranes[i].col { 1 } else { -1 };
+                        }
+                    } else if fire_half {
+                        let dir = if tgt >= self.cranes[i].col { 1 } else { -1 };
+                        self.cranes[i].dir = dir;
+                        self.cranes[i].col =
+                            (self.cranes[i].col + dir).clamp(0, (BS_COLS - 1) as i32);
+                        self.cranes[i].rail_steps_loaded =
+                            self.cranes[i].rail_steps_loaded.saturating_add(1);
+                    }
+                }
+                BsCraneMode::EmptyReturn => {
+                    if fire_half {
+                        let dir = if self.cranes[i].dir >= 0 { 1 } else { -1 };
+                        let next_c = (self.cranes[i].col + dir).clamp(0, (BS_COLS - 1) as i32);
+                        if next_c <= 0 || next_c >= (BS_COLS as i32 - 1) {
+                            let bay = if next_c <= 0 { 0 } else { (BS_COLS - 1) as i32 };
+                            let nk = self.draw_kind();
+                            let tgt = self.pick_drop_col(bay, Some(i));
+                            let nd = if (tgt as i32) >= bay { 1 } else { -1 };
+                            self.cranes[i].col = bay;
+                            self.cranes[i].cargo = Some(nk);
+                            self.cranes[i].target_col = tgt;
+                            self.cranes[i].dir = nd;
+                            self.cranes[i].telegraph_beats = 0.0;
+                            self.cranes[i].rail_steps_loaded = 0;
+                            self.cranes[i].mode = BsCraneMode::Carrying;
+                        } else {
+                            self.cranes[i].col = next_c;
+                        }
+                    }
+                }
+            }
+        }
+        self.ensure_cranes();
+    }
+
+    pub fn update(
+        &mut self,
+        dt: f32,
+        pressed: u32,
+        held: u32,
+        pcm: &[i16],
+        audio: AudioSnapshot<'_>,
+        uk: bool,
+    ) -> PluginAction {
+        let dt = dt.clamp(1.0 / 240.0, 0.05);
+        self.music_playing = audio.playing;
+
+        if self.track_title != audio.track_title {
+            let had_prev = !self.track_title.is_empty();
+            self.track_title = audio.track_title.to_string();
+            self.clock.on_track_change();
+            if had_prev && !self.track_title.is_empty() {
+                self.splash = Some((format!("♪ {}", self.track_title), 1.4));
+            }
+        }
+
+        if self.menu_open {
+            let (back, act, dir) = nav_menu_input(pressed, &mut self.menu_sel, 7);
+            if back || (pressed & btn::START) != 0 {
+                self.menu_open = false;
+                return PluginAction::Click;
+            }
+            if act {
+                match self.menu_sel {
+                    0 if dir > 0 && (pressed & btn::A) != 0 => {
+                        self.menu_open = false;
+                    }
+                    1 if (pressed & btn::A) != 0 => {
+                        self.reset_round();
+                        self.menu_open = false;
+                    }
+                    2 if (pressed & btn::A) != 0 => {
+                        return PluginAction::TogglePlayPause;
+                    }
+                    3 => {
+                        self.difficulty = if dir < 0 {
+                            (self.difficulty + 2) % 3
+                        } else {
+                            (self.difficulty + 1) % 3
+                        };
+                    }
+                    4 => {
+                        let n = BS_SYNC_OFFSETS_MS.len();
+                        self.latency_idx = if dir < 0 {
+                            (self.latency_idx + n - 1) % n
+                        } else {
+                            (self.latency_idx + 1) % n
+                        };
+                        self.clock.audio_latency_sec =
+                            (BS_SYNC_OFFSETS_MS[self.latency_idx] as f64) * 0.001;
+                    }
+                    5 => {
+                        self.show_hint = !self.show_hint;
+                        self.hint_pinned = self.show_hint;
+                    }
+                    6 if (pressed & btn::A) != 0 => {
+                        return PluginAction::Exit;
+                    }
+                    _ => {}
+                }
+                return PluginAction::Click;
+            }
+            return PluginAction::Continue;
+        }
+
+        // `START` / `MENU` opens Pause Menu (`B` & `Hold B` NEVER exit gameplay!)
+        if (pressed & (btn::START | btn::MENU)) != 0 {
+            self.menu_open = true;
+            self.menu_sel = 0;
+            return PluginAction::Click;
+        }
+        if (pressed & btn::L2) != 0 {
+            return PluginAction::PrevTrack;
+        }
+        if (pressed & btn::R2) != 0 {
+            return PluginAction::NextTrack;
+        }
+        if (pressed & btn::X) != 0 {
+            self.show_hint = !self.show_hint;
+            self.hint_pinned = self.show_hint;
+        }
+
+        if self.lose_reason.is_some() && (pressed & btn::A) != 0 {
+            self.reset_round();
+            return PluginAction::Click;
+        }
+
+        let apu = uipod_codecs::get_nsf_apu_telemetry();
+        let apu_pulse = if audio.playing
+            && uipod_codecs::get_nsf_active_chip_flags().is_some()
+            && apu.channel_count > 0
+        {
+            let ch_trig = |idx: usize, boost: f32| -> f32 {
+                let c = &apu.channels[idx];
+                if c.active != 0 && c.muted == 0 {
+                    let mut v = c.volume.clamp(0.0, 1.0);
+                    if c.onset_trigger != 0 {
+                        v = (v + boost).min(1.0);
+                    }
+                    v
+                } else {
+                    0.0
+                }
+            };
+            ch_trig(3, 0.45)
+                .max(ch_trig(4, 0.50))
+                .max(ch_trig(2, 0.35) * 0.85)
+        } else {
+            0.0
+        };
+
+        let (bpm, bf, step_beats, fire_beat, fire_strong, fire_half, raw_onset) =
+            self.clock
+                .step(dt, audio.playing, pcm, audio.sample_rate.max(44_100), apu_pulse);
+        self.effective_bpm = bpm;
+        self.beat_frac = bf;
+        if fire_strong {
+            self.strong_pulse = 1.0;
+            self.bpm_pulse = 1.0;
+        } else if fire_beat || raw_onset {
+            self.bpm_pulse = self.bpm_pulse.max(0.75);
+            self.strong_pulse = (self.strong_pulse - dt * 3.4).max(0.0);
+        } else {
+            self.bpm_pulse = (self.bpm_pulse - dt * 4.5).max(0.0);
+            self.strong_pulse = (self.strong_pulse - dt * 3.4).max(0.0);
+        }
+
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if let Some(ref mut cell) = self.grid[r][c] {
+                    if cell.settle_px_frac > 0 {
+                        cell.settle_px_frac =
+                            cell.settle_px_frac.saturating_sub(((dt * 1200.0) as u8).max(1));
+                    }
+                }
+            }
+        }
+        self.particles.retain_mut(|p| {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 18.0 * dt;
+            p.life -= dt * 2.4;
+            p.life > 0.0
+        });
+        if let Some((_, _, ref mut ry, ref mut rem)) = self.callout {
+            *ry -= dt * 0.9;
+            *rem -= dt;
+            if *rem <= 0.0 {
+                self.callout = None;
+            }
+        }
+
+        if self.lose_reason.is_some() {
+            return PluginAction::Continue;
+        }
+
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if let Some(ref mut cell) = self.grid[r][c] {
+                    if cell.is_armed() {
+                        cell.armed_sec += dt;
+                        cell.armed_beats += step_beats;
+                    }
+                }
+            }
+        }
+
+        // Settled / beat cascade gravity
+        if fire_half && self.has_unsupported_crates() {
+            let _ = self.drop_unsupported_once();
+            self.gravity_accum = 0.0;
+        } else {
+            self.gravity_accum += dt;
+            while self.gravity_accum >= 0.085 {
+                self.gravity_accum -= 0.085;
+                if !self.drop_unsupported_once() {
+                    self.gravity_accum = 0.0;
+                    break;
+                }
+            }
+        }
+
+        // Worker input & physics (`B` = Jump, `B + Left/Right` & `L1/R1` = Diag Jump, ZERO `X`/`Y` jump)
+        let mut move_dir = 0;
+        if (held & btn::LEFT) != 0 {
+            move_dir -= 1;
+        }
+        if (held & btn::RIGHT) != 0 {
+            move_dir += 1;
+        }
+        if self.move_cooldown > 0.0 {
+            self.move_cooldown = (self.move_cooldown - dt).max(0.0);
+        }
+
+        if matches!(self.worker_action, BsWorkerAction::Idle)
+            && self.worker_row < (BS_ROWS as i32 - 1)
+            && !self.is_solid(self.worker_col, self.worker_row + 1)
+        {
+            self.worker_action = BsWorkerAction::Falling {
+                vis_row: self.worker_row as f32,
+            };
+        }
+
+        match self.worker_action {
+            BsWorkerAction::Walking {
+                from_col,
+                mut progress,
+            } => {
+                progress += dt / 0.090;
+                if progress >= 1.0 {
+                    self.worker_walk_phase = self.worker_walk_phase.wrapping_add(1);
+                    if self.worker_row < (BS_ROWS as i32 - 1)
+                        && !self.is_solid(self.worker_col, self.worker_row + 1)
+                    {
+                        self.worker_action = BsWorkerAction::Falling {
+                            vis_row: self.worker_row as f32,
+                        };
+                    } else {
+                        self.worker_action = BsWorkerAction::Idle;
+                    }
+                } else {
+                    self.worker_action = BsWorkerAction::Walking { from_col, progress };
+                }
+            }
+            BsWorkerAction::Pushing { dir, mut progress } => {
+                progress += dt / 0.115;
+                if progress >= 1.0 {
+                    self.worker_walk_phase = self.worker_walk_phase.wrapping_add(1);
+                    if self.worker_row < (BS_ROWS as i32 - 1)
+                        && !self.is_solid(self.worker_col, self.worker_row + 1)
+                    {
+                        self.worker_action = BsWorkerAction::Falling {
+                            vis_row: self.worker_row as f32,
+                        };
+                    } else {
+                        self.worker_action = BsWorkerAction::Idle;
+                    }
+                } else {
+                    self.worker_action = BsWorkerAction::Pushing { dir, progress };
+                }
+            }
+            BsWorkerAction::Jumping {
+                from_col,
+                from_row,
+                mut to_col,
+                to_row,
+                mut progress,
+                blocked_wall,
+                mut steered_apex,
+            } => {
+                if !steered_apex
+                    && !blocked_wall
+                    && (to_col as f32 - from_col).abs() < 0.01
+                    && (0.20..=0.78).contains(&progress)
+                    && move_dir != 0
+                {
+                    let cand = self.worker_col + move_dir;
+                    if (0..BS_COLS as i32).contains(&cand)
+                        && !self.is_solid(cand, to_row)
+                        && !self.has_falling_at(cand, to_row)
+                    {
+                        self.worker_facing = move_dir;
+                        to_col = cand;
+                        steered_apex = true;
+                    }
+                }
+                progress += dt / 0.195;
+                if progress >= 1.0 {
+                    if !blocked_wall {
+                        self.worker_col = to_col;
+                        self.worker_row = to_row;
+                    }
+                    if self.has_falling_at(self.worker_col, self.worker_row) {
+                        self.trigger_lose(BsLoseReason::Crushed);
+                        return PluginAction::Continue;
+                    }
+                    if self.worker_row < (BS_ROWS as i32 - 1)
+                        && !self.is_solid(self.worker_col, self.worker_row + 1)
+                    {
+                        self.worker_action = BsWorkerAction::Falling {
+                            vis_row: self.worker_row as f32,
+                        };
+                    } else {
+                        self.worker_action = BsWorkerAction::Idle;
+                    }
+                } else {
+                    self.worker_action = BsWorkerAction::Jumping {
+                        from_col,
+                        from_row,
+                        to_col,
+                        to_row,
+                        progress,
+                        blocked_wall,
+                        steered_apex,
+                    };
+                }
+            }
+            BsWorkerAction::Falling { mut vis_row } => {
+                vis_row += dt * 10.5;
+                let nr = vis_row.floor() as i32;
+                while self.worker_row < nr && self.worker_row < (BS_ROWS as i32 - 1) {
+                    if self.is_solid(self.worker_col, self.worker_row + 1) {
+                        self.worker_action = BsWorkerAction::Idle;
+                        break;
+                    }
+                    self.worker_row += 1;
+                    if self.has_falling_at(self.worker_col, self.worker_row) {
+                        self.trigger_lose(BsLoseReason::Crushed);
+                        return PluginAction::Continue;
+                    }
+                }
+                if self.worker_row >= (BS_ROWS as i32 - 1)
+                    || self.is_solid(self.worker_col, self.worker_row + 1)
+                {
+                    self.worker_row = self.worker_row.min(BS_ROWS as i32 - 1);
+                    self.worker_action = BsWorkerAction::Idle;
+                } else if matches!(self.worker_action, BsWorkerAction::Falling { .. }) {
+                    self.worker_action = BsWorkerAction::Falling { vis_row };
+                }
+            }
+            BsWorkerAction::Idle => {
+                let jump_b = (pressed & btn::B) != 0;
+                let held_b = (held & btn::B) != 0;
+                let press_l = (pressed & btn::LEFT) != 0;
+                let press_r = (pressed & btn::RIGHT) != 0;
+                let diag_l = (pressed & btn::L1) != 0
+                    || (jump_b && move_dir < 0)
+                    || (held_b && press_l);
+                let diag_r = (pressed & btn::R1) != 0
+                    || (jump_b && move_dir > 0)
+                    || (held_b && press_r);
+                if diag_l {
+                    self.try_diagonal_jump(-1);
+                } else if diag_r {
+                    self.try_diagonal_jump(1);
+                } else if jump_b {
+                    self.try_vertical_jump();
+                } else {
+                    let dir = if press_l {
+                        -1
+                    } else if press_r {
+                        1
+                    } else if self.move_cooldown <= 0.0 {
+                        move_dir
+                    } else {
+                        0
+                    };
+                    if dir != 0 {
+                        self.try_walk_or_push(dir);
+                    }
+                }
+            }
+        }
+        if self.lose_reason.is_some() {
+            return PluginAction::Continue;
+        }
+
+        // Strong-Beat Detonation (`Beats 1 & 3`)
+        if fire_strong {
+            self.step_strong_beat_detonation(uk);
+        }
+
+        // Falling crates on beat / half-beat
+        let fast_fall =
+            (self.difficulty == 1 && self.wave >= 8) || (self.difficulty == 2 && self.wave >= 4);
+        if if fast_fall { fire_half } else { fire_beat } {
+            self.falling.sort_by(|a, b| b.row.cmp(&a.row));
+            let mut i = 0;
+            while i < self.falling.len() {
+                let col = self.falling[i].col;
+                let row = self.falling[i].row;
+                let kind = self.falling[i].kind;
+                if self.worker_col == col as i32 && self.worker_row == row as i32 {
+                    self.trigger_lose(BsLoseReason::Crushed);
+                    return PluginAction::Continue;
+                }
+                if row + 1 >= BS_ROWS || self.grid[row + 1][col].is_some() {
+                    self.falling.remove(i);
+                    self.grid[row][col] = Some(BsGroundedCrate::new(kind));
+                    self.recompute_armed();
+                    continue;
+                }
+                let next_r = row + 1;
+                if self.worker_col == col as i32 && self.worker_row == next_r as i32 {
+                    self.falling[i].row = next_r;
+                    self.trigger_lose(BsLoseReason::Crushed);
+                    return PluginAction::Continue;
+                }
+                if next_r + 1 >= BS_ROWS || self.grid[next_r + 1][col].is_some() {
+                    self.falling.remove(i);
+                    let mut landed = BsGroundedCrate::new(kind);
+                    landed.settle_px_frac = 65;
+                    self.grid[next_r][col] = Some(landed);
+                    self.recompute_armed();
+                } else {
+                    self.falling[i].row = next_r;
+                    self.falling[i].snap_anim = -1.0;
+                    i += 1;
+                }
+            }
+        }
+
+        for fc in &mut self.falling {
+            fc.snap_anim = (fc.snap_anim + dt * 13.0).min(0.0);
+        }
+        for cr in &mut self.cranes {
+            if cr.active {
+                cr.vis_col += ((cr.col as f32) - cr.vis_col) * (dt * 18.0).min(1.0);
+                cr.open_flash = (cr.open_flash - dt * 3.2).max(0.0);
+            }
+        }
+
+        self.step_cranes(step_beats, fire_beat, fire_half);
+        if self.lose_reason.is_some() {
+            return PluginAction::Continue;
+        }
+
+        let wc = self.worker_col as usize;
+        let wr = self.worker_row as usize;
+        self.worker_danger = self.falling.iter().any(|f| f.col == wc && f.row <= wr)
+            || self
+                .cranes
+                .iter()
+                .any(|c| c.active && c.mode == BsCraneMode::Telegraph && c.col as usize == wc);
+
+        PluginAction::Continue
+    }
+
+    fn worker_vis(&self) -> (f32, f32, bool, i32) {
+        match self.worker_action {
+            BsWorkerAction::Idle => (self.worker_col as f32, self.worker_row as f32, false, 0),
+            BsWorkerAction::Walking { from_col, progress } => {
+                let x = from_col as f32 + (self.worker_col as f32 - from_col as f32) * progress;
+                let hop = (progress * core::f32::consts::PI).sin() * 0.08;
+                (x, self.worker_row as f32 - hop, false, 0)
+            }
+            BsWorkerAction::Pushing { dir, progress } => {
+                let fc = (self.worker_col - dir) as f32;
+                (fc + (dir as f32) * progress, self.worker_row as f32, false, dir)
+            }
+            BsWorkerAction::Jumping {
+                from_col,
+                from_row,
+                to_col,
+                to_row,
+                progress,
+                blocked_wall,
+                ..
+            } => {
+                let x = if blocked_wall {
+                    from_col
+                        + (progress * core::f32::consts::PI).sin()
+                            * (self.worker_facing as f32)
+                            * 0.28
+                } else {
+                    from_col + (to_col as f32 - from_col) * progress
+                };
+                let ly = from_row + (to_row as f32 - from_row) * progress;
+                let arc = 4.0 * progress * (1.0 - progress) * 0.85;
+                (x, ly - arc, true, 0)
+            }
+            BsWorkerAction::Falling { vis_row } => (self.worker_col as f32, vis_row, true, 0),
+        }
+    }
+
+    fn draw_crate_wasm(
+        ui: &mut UiEngine,
+        t: ThemeColors,
+        x: f32,
+        y: f32,
+        tile: f32,
+        kind: BsCrateKind,
+        armed: bool,
+        telegraph_flash: bool,
+        beat_frac: f32,
+    ) {
+        let inset = (tile * BS_SPEC.crate_inset_ratio).round().max(1.5);
+        let bx = x + inset;
+        let by = y + inset;
+        let bw = (tile - inset * 2.0).max(8.0);
+        let bh = bw;
+        let rad = (tile * BS_SPEC.crate_radius_ratio).round().max(2.0);
+        let border = (tile * 0.065).clamp(2.0, 4.0);
+
+        match kind {
+            BsCrateKind::Light => {
+                ui.plugin_fill_rect(bx, by, bw, bh, rad, t.bg_rgb);
+                ui.plugin_stroke_rect(bx, by, bw, bh, rad, border, t.fg_rgb);
+                let in_pad = border + 2.0;
+                ui.plugin_stroke_rect(
+                    bx + in_pad,
+                    by + in_pad,
+                    bw - in_pad * 2.0,
+                    bh - in_pad * 2.0,
+                    1.5,
+                    border,
+                    t.fg2_rgb,
+                );
+                let rv = (tile * 0.11).clamp(3.0, 6.5);
+                let roff = in_pad + border + 2.0;
+                for (rx, ry) in [
+                    (bx + roff, by + roff),
+                    (bx + bw - roff - rv, by + roff),
+                    (bx + roff, by + bh - roff - rv),
+                    (bx + bw - roff - rv, by + bh - roff - rv),
+                ] {
+                    ui.plugin_fill_rect(rx, ry, rv, rv, 1.0, t.fg2_rgb);
+                }
+            }
+            BsCrateKind::Checker => {
+                ui.plugin_fill_rect(bx, by, bw, bh, rad, t.fg1_rgb);
+                let inner = border;
+                let iw = (bw - inner * 2.0).max(4.0);
+                let cell = iw / 4.0;
+                for sr in 0..4 {
+                    for sc in 0..4 {
+                        if (sr + sc) % 2 == 1 {
+                            ui.plugin_fill_rect(
+                                bx + inner + (sc as f32) * cell,
+                                by + inner + (sr as f32) * cell,
+                                cell.ceil(),
+                                cell.ceil(),
+                                0.0,
+                                t.fg2_rgb,
+                            );
+                        }
+                    }
+                }
+                ui.plugin_draw_line(
+                    bx + inner + 2.0,
+                    by + bh - inner - 2.0,
+                    bx + bw - inner - 2.0,
+                    by + inner + 2.0,
+                    border * 1.15,
+                    t.fg_rgb,
+                );
+                ui.plugin_stroke_rect(bx, by, bw, bh, rad, border, t.fg_rgb);
+            }
+            BsCrateKind::Medium => {
+                ui.plugin_fill_rect(bx, by, bw, bh, rad, t.fg2_rgb);
+                let sh = (bh * 0.13).clamp(3.0, 7.0);
+                let px = (bw * 0.18).round();
+                let sw = (bw - px * 2.0).max(4.0);
+                ui.plugin_fill_rect(bx + px, by + bh * 0.28, sw, sh, 1.0, t.bg_rgb);
+                ui.plugin_fill_rect(bx + px, by + bh - bh * 0.28 - sh, sw, sh, 1.0, t.bg_rgb);
+                ui.plugin_stroke_rect(bx, by, bw, bh, rad, border, t.fg_rgb);
+            }
+            BsCrateKind::Heavy => {
+                ui.plugin_fill_rect(bx, by, bw, bh, rad, t.fg_rgb);
+                let pad = (bw * 0.22).round();
+                ui.plugin_draw_line(
+                    bx + pad,
+                    by + pad,
+                    bx + bw - pad,
+                    by + bh - pad,
+                    border * 1.1,
+                    t.bg_rgb,
+                );
+                ui.plugin_draw_line(
+                    bx + bw - pad,
+                    by + pad,
+                    bx + pad,
+                    by + bh - pad,
+                    border * 1.1,
+                    t.bg_rgb,
+                );
+                ui.plugin_stroke_rect(
+                    bx + border,
+                    by + border,
+                    bw - border * 2.0,
+                    bh - border * 2.0,
+                    1.5,
+                    1.5,
+                    t.fg2_rgb,
+                );
+            }
+        }
+
+        if telegraph_flash {
+            ui.plugin_stroke_rect(bx - 1.0, by - 1.0, bw + 2.0, bh + 2.0, rad, border + 1.5, t.fg_rgb);
+            ui.plugin_stroke_rect(
+                bx + border,
+                by + border,
+                bw - border * 2.0,
+                bh - border * 2.0,
+                2.0,
+                border,
+                t.bg_rgb,
+            );
+        } else if armed {
+            let pulse = beat_frac < 0.52;
+            ui.plugin_stroke_rect(
+                bx + border * 0.8,
+                by + border * 0.8,
+                bw - border * 1.6,
+                bh - border * 1.6,
+                2.0,
+                border,
+                if pulse { t.bg_rgb } else { t.fg1_rgb },
+            );
+            let core = if pulse {
+                (bw * 0.26).max(6.0)
+            } else {
+                (bw * 0.18).max(4.5)
+            };
+            ui.plugin_fill_rect(
+                bx + (bw - core) * 0.5,
+                by + (bh - core) * 0.5,
+                core,
+                core,
+                2.0,
+                t.bg_rgb,
+            );
+            ui.plugin_stroke_rect(
+                bx + (bw - core) * 0.5,
+                by + (bh - core) * 0.5,
+                core,
+                core,
+                2.0,
+                2.0,
+                t.fg_rgb,
+            );
+        }
+    }
+
+    fn draw_armed_highlights(&self, ui: &mut UiEngine, t: ThemeColors, lay: &BsComputedLayout) {
+        let tile = lay.tile;
+        let pulse_bright = self.beat_frac < 0.52;
+        let outer_col = if pulse_bright { t.fg_rgb } else { t.fg2_rgb };
+        let inner_col = if pulse_bright { t.bg_rgb } else { t.fg_rgb };
+        let w_outer = 5.0;
+        let w_inner = 2.2;
+
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                let Some(cell) = self.grid[r][c] else {
+                    continue;
+                };
+                if !cell.armed_square {
+                    continue;
+                }
+                let x0 = lay.grid_x + (c as f32) * tile;
+                let y0 = lay.grid_y + (r as f32) * tile;
+                let x1 = x0 + tile;
+                let y1 = y0 + tile;
+
+                let same_at = |nc: i32, nr: i32| -> bool {
+                    if !(0..BS_COLS as i32).contains(&nc) || !(0..BS_ROWS as i32).contains(&nr) {
+                        return false;
+                    }
+                    self.grid[nr as usize][nc as usize]
+                        .map(|nb| nb.armed_square && nb.kind == cell.kind)
+                        .unwrap_or(false)
+                };
+
+                if !same_at(c as i32, r as i32 - 1) {
+                    ui.plugin_draw_line(x0, y0, x1, y0, w_outer, outer_col);
+                    ui.plugin_draw_line(x0, y0, x1, y0, w_inner, inner_col);
+                }
+                if !same_at(c as i32, r as i32 + 1) {
+                    ui.plugin_draw_line(x0, y1, x1, y1, w_outer, outer_col);
+                    ui.plugin_draw_line(x0, y1, x1, y1, w_inner, inner_col);
+                }
+                if !same_at(c as i32 - 1, r as i32) {
+                    ui.plugin_draw_line(x0, y0, x0, y1, w_outer, outer_col);
+                    ui.plugin_draw_line(x0, y0, x0, y1, w_inner, inner_col);
+                }
+                if !same_at(c as i32 + 1, r as i32) {
+                    ui.plugin_draw_line(x1, y0, x1, y1, w_outer, outer_col);
+                    ui.plugin_draw_line(x1, y0, x1, y1, w_inner, inner_col);
+                }
+            }
+        }
+
+        let fr = BS_ROWS - 1;
+        let floor_armed =
+            (0..BS_COLS).all(|c| self.grid[fr][c].map(|x| x.armed_row).unwrap_or(false));
+        if floor_armed {
+            let rx = lay.grid_x + 1.0;
+            let ry = lay.grid_y + (fr as f32) * tile + 1.0;
+            let rw = lay.grid_w - 2.0;
+            let rh = tile - 2.0;
+            ui.plugin_stroke_rect(rx, ry, rw, rh, 4.0, w_outer, outer_col);
+            ui.plugin_stroke_rect(rx + 2.0, ry + 2.0, rw - 4.0, rh - 4.0, 3.0, w_inner, inner_col);
+        }
+    }
+
+    pub fn render(
+        &self,
+        ui: &mut UiEngine,
+        t: ThemeColors,
+        header: &HeaderState<'_>,
+        uk: bool,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        if self.menu_open {
+            let music_lbl = if self.music_playing {
+                tr(uk, "Pause Music", "Пауза музики")
+            } else {
+                tr(uk, "Play Music", "Увімкнути музику")
+            };
+            let diff_lbl = match self.difficulty {
+                0 => tr(uk, "Chill", "Легка"),
+                2 => tr(uk, "Overtime", "Хардкор"),
+                _ => tr(uk, "Normal", "Стандарт"),
+            };
+            let sync_lbl = format!("+{} ms", BS_SYNC_OFFSETS_MS[self.latency_idx]);
+            let hint_lbl = if self.show_hint {
+                tr(uk, "On", "Увімк.")
+            } else {
+                tr(uk, "Off", "Вимк.")
+            };
+            let items = [
+                PluginMenuRow::action(tr(uk, "Resume", "Продовжити")),
+                PluginMenuRow::action(tr(uk, "Restart", "Почати знову")),
+                PluginMenuRow::action(music_lbl),
+                PluginMenuRow::option(tr(uk, "Difficulty", "Складність"), diff_lbl),
+                PluginMenuRow::option(tr(uk, "Audio Sync", "Синхронізація"), &sync_lbl),
+                PluginMenuRow::option(tr(uk, "Rules Hint", "Підказка"), hint_lbl),
+                PluginMenuRow::action(tr(uk, "Quit", "Вихід")),
+            ];
+            render_native_plugin_menu(
+                ui,
+                t,
+                header,
+                tr(uk, "Beat Stack", "Біт Стек"),
+                &items,
+                self.menu_sel,
+            );
+            return;
+        }
+
+        let (lw, lh) = ui.plugin_begin_ex(t, t.bg_rgb, Some(header), win_w, win_h, true);
+        let lay = BsComputedLayout::compute(lw, lh);
+        let tile = lay.tile;
+        let bf = self.beat_frac;
+        let strong_hi = self.strong_pulse > 0.35;
+
+        // 1. Symmetric Outer Warehouse Shaft Frame (ZERO left girder protrusion & ZERO Sweep Line!)
+        ui.plugin_stroke_rect(
+            lay.shaft_x,
+            lay.shaft_y,
+            lay.shaft_w,
+            lay.shaft_h,
+            BS_SPEC.frame_radius,
+            BS_SPEC.wall_stroke,
+            t.fg_rgb,
+        );
+
+        // 2. Gantry Rail + Strong-Beat Rhythm Tick Markers & Column Guides
+        let rail_y = lay.shaft_y + tile * BS_SPEC.rail_top_ratio;
+        let rail_h = tile * BS_SPEC.rail_h_ratio;
+        ui.plugin_fill_rect(lay.grid_x, rail_y, lay.grid_w, rail_h, 0.0, t.fg2_rgb);
+        ui.plugin_draw_line(lay.grid_x, rail_y, lay.grid_x + lay.grid_w, rail_y, 2.5, t.fg_rgb);
+        ui.plugin_draw_line(
+            lay.grid_x,
+            rail_y + rail_h,
+            lay.grid_x + lay.grid_w,
+            rail_y + rail_h,
+            2.5,
+            t.fg_rgb,
+        );
+        for c in 0..BS_COLS {
+            let tx = lay.grid_x + (c as f32 + 0.5) * tile;
+            let tick_pad = if strong_hi { 1.0 } else { rail_h * 0.24 };
+            ui.plugin_draw_line(
+                tx,
+                rail_y + tick_pad,
+                tx,
+                rail_y + rail_h - tick_pad,
+                if strong_hi { 2.5 } else { 1.5 },
+                if strong_hi { t.bg_rgb } else { t.fg1_rgb },
+            );
+        }
+
+        ui.plugin_draw_line(
+            lay.grid_x + 2.0,
+            lay.grid_y,
+            lay.grid_x + lay.grid_w - 2.0,
+            lay.grid_y,
+            if strong_hi { 2.2 } else { 1.5 },
+            if strong_hi { t.fg2_rgb } else { t.fg1_rgb },
+        );
+        for c in 1..BS_COLS {
+            let gx = lay.grid_x + (c as f32) * tile;
+            ui.plugin_draw_line(
+                gx,
+                lay.grid_y + 4.0,
+                gx,
+                lay.grid_y + lay.grid_h - 4.0,
+                1.0,
+                t.fg1_rgb,
+            );
+        }
+
+        // 3. Roller Floor Plate
+        let floor_y = lay.grid_y + lay.grid_h;
+        ui.plugin_fill_rect(lay.grid_x, floor_y, lay.grid_w, lay.floor_plate_h, 0.0, t.fg2_rgb);
+        ui.plugin_draw_line(
+            lay.grid_x,
+            floor_y,
+            lay.grid_x + lay.grid_w,
+            floor_y,
+            BS_SPEC.wall_stroke,
+            t.fg_rgb,
+        );
+        let rr = (lay.floor_plate_h * 0.28).clamp(2.5, 5.5);
+        for c in 0..BS_COLS {
+            ui.plugin_fill_circle(
+                lay.grid_x + (c as f32 + 0.5) * tile,
+                floor_y + lay.floor_plate_h * 0.54,
+                rr,
+                t.bg_rgb,
+            );
+        }
+
+        // 4. Grounded Crates + Pulsing Armed Group Highlights & Falling Crates
+        for r in 0..BS_ROWS {
+            for c in 0..BS_COLS {
+                if let Some(cell) = self.grid[r][c] {
+                    let x = lay.grid_x + (c as f32) * tile;
+                    let off = (cell.settle_px_frac as f32 * 0.01) * tile * 0.65;
+                    let y = lay.grid_y + (r as f32) * tile - off;
+                    Self::draw_crate_wasm(ui, t, x, y, tile, cell.kind, cell.is_armed(), false, bf);
+                }
+            }
+        }
+        self.draw_armed_highlights(ui, t, &lay);
+
+        for fc in &self.falling {
+            let x = lay.grid_x + (fc.col as f32) * tile;
+            let y = lay.grid_y + ((fc.row as f32) + fc.snap_anim * 0.45) * tile;
+            Self::draw_crate_wasm(ui, t, x, y, tile, fc.kind, false, false, bf);
+        }
+
+        // 5. Cranes
+        for crane in &self.cranes {
+            if !crane.active {
+                continue;
+            }
+            let cx = lay.grid_x + (crane.vis_col + 0.5) * tile;
+            let hw = tile * 0.58;
+            let hh = tile * 0.34;
+            let hx = cx - hw * 0.5;
+            let hy = rail_y - 2.0;
+            let flash = crane.mode == BsCraneMode::Telegraph && bf < 0.5;
+            ui.plugin_fill_rect(hx, hy, hw, hh, 3.0, if flash { t.bg_rgb } else { t.fg_rgb });
+            ui.plugin_stroke_rect(hx, hy, hw, hh, 3.0, 2.5, t.fg_rgb);
+            let ec = if flash { t.fg_rgb } else { t.bg_rgb };
+            let es = (tile * 0.08).max(3.0);
+            ui.plugin_fill_rect(cx - hw * 0.24, hy + hh * 0.34, es, es, 1.0, ec);
+            ui.plugin_fill_rect(cx + hw * 0.24 - es, hy + hh * 0.34, es, es, 1.0, ec);
+            let st_top = hy + hh;
+            let st_bot = st_top + tile * 0.16;
+            ui.plugin_draw_line(cx, st_top, cx, st_bot, 3.5, t.fg_rgb);
+            let sp = if crane.cargo.is_some() {
+                if flash { tile * 0.54 } else { tile * 0.48 }
+            } else {
+                tile * (0.56 + crane.open_flash * 0.12)
+            };
+            let jb = st_bot + tile * 0.44;
+            ui.plugin_draw_line(cx - sp, st_bot, cx + sp, st_bot, 3.0, t.fg_rgb);
+            ui.plugin_draw_line(cx - sp, st_bot, cx - sp, jb, 3.0, t.fg_rgb);
+            ui.plugin_draw_line(cx + sp, st_bot, cx + sp, jb, 3.0, t.fg_rgb);
+            if let Some(kind) = crane.cargo {
+                let cy = st_bot + tile * 0.04;
+                Self::draw_crate_wasm(ui, t, cx - tile * 0.5, cy, tile, kind, false, flash, bf);
+                if crane.mode == BsCraneMode::Telegraph {
+                    let ay = cy + tile + 3.0;
+                    let aw = tile * 0.22;
+                    let col = if flash { t.fg_rgb } else { t.fg2_rgb };
+                    ui.plugin_draw_line(cx - aw, ay, cx, ay + aw * 0.65, 3.0, col);
+                    ui.plugin_draw_line(cx + aw, ay, cx, ay + aw * 0.65, 3.0, col);
+                }
+            }
+        }
+
+        // 6. Worker
+        let (vx, vy, airborne, push_dir) = self.worker_vis();
+        let dir = self.worker_facing as f32;
+        let wx = lay.grid_x + vx * tile;
+        let wy = lay.grid_y + vy * tile;
+        let wcx = wx + tile * 0.5 + (push_dir as f32) * tile * 0.08;
+        if !airborne {
+            ui.plugin_fill_rect(
+                wcx - tile * 0.28,
+                wy + tile - 4.0,
+                tile * 0.56,
+                4.0,
+                2.0,
+                t.fg2_rgb,
+            );
+        }
+        let leg_y = wy + tile * 0.72;
+        let leg_h = if airborne { tile * 0.18 } else { tile * 0.25 };
+        let leg_w = (tile * 0.15).max(4.0);
+        let stride = if matches!(self.worker_action, BsWorkerAction::Walking { .. })
+            || self.worker_walk_phase % 2 == 1
+        {
+            tile * 0.06
+        } else {
+            0.0
+        };
+        ui.plugin_fill_rect(wcx - tile * 0.20 - stride, leg_y, leg_w, leg_h, 2.0, t.fg_rgb);
+        ui.plugin_fill_rect(wcx + tile * 0.06 + stride, leg_y, leg_w, leg_h, 2.0, t.fg_rgb);
+        let bw = tile * 0.44;
+        let bh = tile * 0.36;
+        let bx = wcx - bw * 0.5;
+        let by = wy + tile * 0.40;
+        ui.plugin_fill_rect(bx, by, bw, bh, 3.0, t.fg_rgb);
+        let stw = (tile * 0.08).max(2.5);
+        ui.plugin_fill_rect(bx + tile * 0.07, by + 3.0, stw, bh * 0.52, 1.0, t.bg_rgb);
+        ui.plugin_fill_rect(bx + bw - tile * 0.07 - stw, by + 3.0, stw, bh * 0.52, 1.0, t.bg_rgb);
+        if push_dir != 0 {
+            let ax = if push_dir > 0 {
+                bx + bw - 2.0
+            } else {
+                bx - tile * 0.20
+            };
+            ui.plugin_fill_rect(ax, by + tile * 0.05, tile * 0.22, (tile * 0.11).max(3.5), 2.0, t.fg_rgb);
+        }
+        let hdw = tile * 0.36;
+        let hdh = tile * 0.24;
+        let hdx = wcx - hdw * 0.5;
+        let hdy = wy + tile * 0.18;
+        ui.plugin_fill_rect(hdx, hdy, hdw, hdh, 2.0, t.bg_rgb);
+        ui.plugin_stroke_rect(hdx, hdy, hdw, hdh, 2.0, 2.2, t.fg_rgb);
+        ui.plugin_fill_rect(
+            wcx + dir * tile * 0.06 - 1.5,
+            hdy + hdh * 0.32,
+            3.5,
+            3.5,
+            1.0,
+            t.fg_rgb,
+        );
+        let nx = if dir > 0.0 {
+            hdx + hdw - 1.0
+        } else {
+            hdx - tile * 0.09
+        };
+        ui.plugin_fill_rect(nx, hdy + hdh * 0.38, tile * 0.10, (tile * 0.08).max(2.5), 1.0, t.fg_rgb);
+        let hat_w = tile * 0.44;
+        let hat_h = tile * 0.16;
+        let hat_x = wcx - hat_w * 0.5;
+        let hat_y = wy + tile * 0.05;
+        ui.plugin_fill_rect(hat_x, hat_y, hat_w, hat_h, 3.0, t.fg2_rgb);
+        ui.plugin_stroke_rect(hat_x, hat_y, hat_w, hat_h, 3.0, 2.2, t.fg_rgb);
+        let brim_x = if dir > 0.0 {
+            hat_x
+        } else {
+            hat_x - tile * 0.10
+        };
+        ui.plugin_fill_rect(brim_x, hat_y + hat_h - 3.0, hat_w + tile * 0.10, 3.5, 1.0, t.fg_rgb);
+        if self.worker_danger && bf < 0.72 {
+            let sy = hat_y - tile * 0.16;
+            ui.plugin_draw_line(wcx, sy - 6.0, wcx, sy + 1.0, 3.0, t.fg_rgb);
+            ui.plugin_fill_circle(wcx, sy + 5.0, 2.0, t.fg_rgb);
+        }
+
+        // 7. Shatter Particles & Combo Callouts
+        for p in &self.particles {
+            let px = lay.grid_x + p.x * tile;
+            let py = lay.grid_y + p.y * tile;
+            let sz = (p.life * tile * 0.17).max(2.5);
+            ui.plugin_fill_rect(
+                px - sz * 0.5,
+                py - sz * 0.5,
+                sz,
+                sz,
+                1.5,
+                if p.shade >= 3 { t.fg_rgb } else { t.fg2_rgb },
+            );
+        }
+        if let Some((ref txt, cc, ry, _)) = self.callout {
+            let cx = lay.grid_x + cc * tile;
+            let cy = lay.grid_y + ry * tile;
+            let tw = ui.plugin_measure_text(txt, BS_SPEC.font_callout, 3) + 20.0;
+            ui.plugin_fill_rect(cx - tw * 0.5, cy - 16.0, tw, 30.0, 7.0, t.fg_rgb);
+            ui.plugin_draw_text(cx, cy - 1.0, txt, BS_SPEC.font_callout, 3, 1, t.bg_rgb);
+        }
+
+        // 8. Concise 2-Line Onboarding Rules Hint Banner
+        if self.show_hint && self.lose_reason.is_none() {
+            let hw = (lay.grid_w - 20.0).max(260.0);
+            let hx = lay.grid_x + (lay.grid_w - hw) * 0.5;
+            let hy = lay.grid_y + 6.0;
+            ui.plugin_fill_rect(hx, hy, hw, BS_SPEC.hint_card_h, BS_SPEC.hint_radius, t.bg_rgb);
+            ui.plugin_stroke_rect(
+                hx,
+                hy,
+                hw,
+                BS_SPEC.hint_card_h,
+                BS_SPEC.hint_radius,
+                BS_SPEC.thin_stroke,
+                t.fg2_rgb,
+            );
+            ui.plugin_draw_text(
+                hx + hw * 0.5,
+                hy + 16.0,
+                tr(
+                    uk,
+                    "Push crates into 2×2 matching squares or a full floor row — matches explode on the strong beat!",
+                    "Складай ящики у квадрати 2×2 або повний ряд підлоги — вибух на сильну долю!",
+                ),
+                BS_SPEC.font_hint_main,
+                2,
+                1,
+                t.fg_rgb,
+            );
+            ui.plugin_draw_text(
+                hx + hw * 0.5,
+                hy + 35.0,
+                tr(
+                    uk,
+                    "B: Jump · L1/R1: Diag Jump · START: Pause",
+                    "B: Стрибок · L1/R1: Діаг. стрибок · START: Пауза",
+                ),
+                BS_SPEC.font_hint_sub,
+                1,
+                1,
+                t.fg2_rgb,
+            );
+        }
+
+        // 9. Floor HUD Strip
+        ui.plugin_fill_rect(
+            lay.hud_x,
+            lay.hud_y,
+            lay.hud_w,
+            lay.hud_h,
+            BS_SPEC.hud_radius,
+            t.bg_rgb,
+        );
+        ui.plugin_stroke_rect(
+            lay.hud_x,
+            lay.hud_y,
+            lay.hud_w,
+            lay.hud_h,
+            BS_SPEC.hud_radius,
+            if strong_hi {
+                BS_SPEC.thin_stroke + 0.8
+            } else {
+                BS_SPEC.thin_stroke
+            },
+            if strong_hi { t.fg_rgb } else { t.fg2_rgb },
+        );
+        let col_w = lay.hud_w / 4.0;
+        let lbl_y = lay.hud_y + 16.0;
+        let val_y = lay.hud_y + 39.0;
+
+        let c0 = lay.hud_x + col_w * 0.5;
+        ui.plugin_draw_text(
+            c0,
+            lbl_y,
+            tr(uk, "SCORE", "РАХУНОК"),
+            BS_SPEC.font_hud_lbl,
+            2,
+            1,
+            t.fg2_rgb,
+        );
+        ui.plugin_draw_text(
+            c0,
+            val_y,
+            &self.score.to_string(),
+            BS_SPEC.font_hud_val,
+            3,
+            1,
+            t.fg_rgb,
+        );
+
+        let c1 = lay.hud_x + col_w * 1.5;
+        ui.plugin_draw_text(
+            c1,
+            lbl_y,
+            tr(uk, "HIGH", "РЕКОРД"),
+            BS_SPEC.font_hud_lbl,
+            2,
+            1,
+            t.fg2_rgb,
+        );
+        ui.plugin_draw_text(
+            c1,
+            val_y,
+            &self.hi_score.max(self.score).to_string(),
+            BS_SPEC.font_hud_val,
+            3,
+            1,
+            t.fg_rgb,
+        );
+
+        let c2 = lay.hud_x + col_w * 2.5;
+        let w_lbl = format!("{} {} · CHAIN", tr(uk, "W", "ХВ"), self.wave);
+        ui.plugin_draw_text(c2, lbl_y, &w_lbl, BS_SPEC.font_hud_lbl, 2, 1, t.fg2_rgb);
+        ui.plugin_draw_text(
+            c2,
+            val_y,
+            &format!("×{}", self.chain),
+            BS_SPEC.font_hud_val,
+            3,
+            1,
+            t.fg_rgb,
+        );
+
+        let c3 = lay.hud_x + col_w * 3.5;
+        let src_lbl = if self.music_playing {
+            tr(uk, "LIVE AUDIO", "ЖИВИЙ ЗВУК")
+        } else {
+            tr(uk, "INTERNAL CLOCK", "ВНУТР. РИТМ")
+        };
+        ui.plugin_draw_text(c3, lbl_y, src_lbl, BS_SPEC.font_hud_lbl, 2, 1, t.fg2_rgb);
+        let bpm_s = format!("{:.0} BPM", self.effective_bpm.round());
+        let bpm_w = ui.plugin_measure_text(&bpm_s, BS_SPEC.font_hud_val, 3);
+        ui.plugin_fill_circle(
+            c3 - bpm_w * 0.5 - 12.0,
+            val_y,
+            4.5 + self.bpm_pulse * 2.0 + self.strong_pulse * 2.8,
+            if self.strong_pulse > 0.35 || self.bpm_pulse > 0.55 {
+                t.fg_rgb
+            } else {
+                t.fg2_rgb
+            },
+        );
+        ui.plugin_draw_text(
+            c3 + 4.0,
+            val_y,
+            &bpm_s,
+            BS_SPEC.font_hud_val + self.strong_pulse * 1.5,
+            3,
+            1,
+            t.fg_rgb,
+        );
+
+        for d in 1..4 {
+            let dx = lay.hud_x + col_w * (d as f32);
+            ui.plugin_draw_line(dx, lay.hud_y + 10.0, dx, lay.hud_y + lay.hud_h - 10.0, 1.5, t.fg1_rgb);
+        }
+
+        if let Some(reason) = self.lose_reason {
+            let cw = (lay.grid_w * 0.76).clamp(320.0, 520.0);
+            let ch = 168.0;
+            let cx = lay.grid_x + (lay.grid_w - cw) * 0.5;
+            let cy = lay.grid_y + (lay.grid_h - ch) * 0.5;
+            ui.plugin_fill_rect(cx, cy, cw, ch, 14.0, t.bg_rgb);
+            ui.plugin_stroke_rect(cx, cy, cw, ch, 14.0, 4.0, t.fg_rgb);
+            let head = match reason {
+                BsLoseReason::Crushed => tr(uk, "CRUSHED!", "ПРИДАВИЛО!"),
+                BsLoseReason::ShaftJammed => tr(uk, "SHAFT JAMMED!", "ШАХТУ ЗАБЛОКОВАНО!"),
+            };
+            ui.plugin_draw_text(
+                cx + cw * 0.5,
+                cy + 44.0,
+                head,
+                BS_SPEC.font_banner_lg,
+                3,
+                1,
+                t.fg_rgb,
+            );
+            let st = format!(
+                "{}: {}   ·   {}: ×{}",
+                tr(uk, "Score", "Рахунок"),
+                self.score,
+                tr(uk, "Max Chain", "Макс. ланцюг"),
+                self.max_chain
+            );
+            ui.plugin_draw_text(
+                cx + cw * 0.5,
+                cy + 92.0,
+                &st,
+                BS_SPEC.font_banner_sm,
+                2,
+                1,
+                t.fg2_rgb,
+            );
+            ui.plugin_draw_text(
+                cx + cw * 0.5,
+                cy + 134.0,
+                tr(
+                    uk,
+                    "A: Play Again  ·  START: Pause / Quit",
+                    "A: Ще раз  ·  START: Пауза / Вихід",
+                ),
+                15.0,
+                1,
+                1,
+                t.fg_rgb,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod beat_stack_wasm_tests {
+    use super::*;
+
+    fn silent_snap() -> AudioSnapshot<'static> {
+        AudioSnapshot {
+            playing: false,
+            track_title: "",
+            pos_ms: 0,
+            dur_ms: 0,
+            sample_rate: 48_000,
+        }
+    }
+
+    #[test]
+    fn wasm_beat_stack_140_bpm_cranes_strong_beat_and_b_jump_parity() {
+        // 1. Verify 140 BPM lock within ±1 BPM with loud off-beat hats
+        let sr = 48_000u32;
+        let total = (6.0 * (sr as f32)) as usize;
+        let mut pcm = vec![0i16; total * 2];
+        let beat_sec = 60.0 / 140.0;
+        for f in 0..total {
+            let t = (f as f32) / (sr as f32);
+            let bp = t / beat_sec;
+            let in_b = (bp - bp.floor()) * beat_sec;
+            let kick = if in_b < 0.075 {
+                (2.0 * core::f32::consts::PI * 62.0 * in_b).sin()
+                    * (1.0 - in_b / 0.075).powi(2)
+                    * 0.80
+            } else {
+                0.0
+            };
+            let eighth = t % (beat_sec * 0.5);
+            let hat = if eighth < 0.025 {
+                (2.0 * core::f32::consts::PI * 2600.0 * t).sin() * (1.0 - eighth / 0.025) * 0.45
+            } else {
+                0.0
+            };
+            let s = ((kick + hat).clamp(-0.98, 0.98) * 32767.0) as i16;
+            pcm[f * 2] = s;
+            pcm[f * 2 + 1] = s;
+        }
+        let mut p = BeatStackPlugin::new(99);
+        let mut cur = 0.0f32;
+        while cur < 5.5 {
+            cur += 1.0 / 60.0;
+            let ef = ((cur * (sr as f32)) as usize).min(total);
+            let sf = ef.saturating_sub(1024);
+            let _ = p.update(
+                1.0 / 60.0,
+                0,
+                0,
+                &pcm[sf * 2..ef * 2],
+                AudioSnapshot {
+                    playing: true,
+                    track_title: "140 Test",
+                    pos_ms: (cur * 1000.0) as u32,
+                    dur_ms: 6000,
+                    sample_rate: sr,
+                },
+                false,
+            );
+        }
+        assert!(
+            (p.effective_bpm - 140.0).abs() <= 1.0,
+            "expected 140 BPM ± 1, got {:.2}",
+            p.effective_bpm
+        );
+
+        // 2. Verify B jumps, Hold B never exits, and X/Y never jump
+        let mut g = BeatStackPlugin::new(42);
+        g.grid = [[None; BS_COLS]; BS_ROWS];
+        g.falling.clear();
+        for c in &mut g.cranes {
+            c.active = false;
+        }
+        let floor = BS_ROWS - 1;
+        g.worker_col = 4;
+        g.worker_row = floor as i32;
+
+        // X toggles hint without jumping; Y does not jump
+        let act_xy = g.update(1.0 / 60.0, btn::X | btn::Y, 0, &[], silent_snap(), false);
+        assert!(matches!(act_xy, PluginAction::Continue));
+        assert_eq!(g.worker_action, BsWorkerAction::Idle);
+
+        // B jumps vertically, and holding B for > 1.5s NEVER returns PluginAction::Exit!
+        let act_b = g.update(1.0 / 60.0, btn::B, btn::B, &[], silent_snap(), false);
+        assert!(matches!(act_b, PluginAction::Continue));
+        assert!(matches!(g.worker_action, BsWorkerAction::Jumping { .. }));
+        for _ in 0..100 {
+            let act_hold = g.update(1.0 / 60.0, 0, btn::B, &[], silent_snap(), false);
+            assert!(matches!(act_hold, PluginAction::Continue));
+        }
+
+        // 3. Verify Strong-Beat 2x2 detonation
+        for c in &mut g.cranes {
+            c.active = false;
+        }
+        g.grid[floor][2] = Some(BsGroundedCrate::new(BsCrateKind::Heavy));
+        g.grid[floor][3] = Some(BsGroundedCrate::new(BsCrateKind::Heavy));
+        g.grid[floor - 1][2] = Some(BsGroundedCrate::new(BsCrateKind::Heavy));
+        g.grid[floor - 1][3] = Some(BsGroundedCrate::new(BsCrateKind::Heavy));
+        g.recompute_armed();
+        for r in (floor - 1)..=floor {
+            for c in 2..=3 {
+                if let Some(ref mut cell) = g.grid[r][c] {
+                    cell.armed_sec = 0.4;
+                    cell.armed_beats = 1.0;
+                }
+            }
+        }
+        assert_eq!(g.step_strong_beat_detonation(false), 4);
+        assert_eq!(g.cleared_crates, 4);
+
+        // 4. Verify cranes drop 20+ crates continuously without freezing after drop #2
+        let mut cgame = BeatStackPlugin::new(777);
+        for _ in 0..(45 * 60) {
+            for r in 2..BS_ROWS {
+                for c in 0..BS_COLS {
+                    cgame.grid[r][c] = None;
+                }
+            }
+            cgame.falling.retain(|f| f.row < 2);
+            cgame.worker_col = 0;
+            cgame.worker_row = floor as i32;
+            let _ = cgame.update(1.0 / 60.0, 0, 0, &[], silent_snap(), false);
+        }
+        assert!(cgame.drops_done >= 20, "drops_done={}", cgame.drops_done);
     }
 }

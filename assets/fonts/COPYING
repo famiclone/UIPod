@@ -1,8 +1,8 @@
 Licenses for the fonts UIPod ships.  Three faces are distributed: Geologica
 (embedded as static Regular/Medium/SemiBold/Bold .ttf weights in `uipod-ui`),
-PixelMplus12-Regular.ttf (runtime CJK/Japanese fallback font), and Schumacher
-Clean (the fallback Rockbox system font, compiled into the binary from
-08-Schumacher-Clean.bdf).
+NotoSansJP-Regular.ttf (runtime CJK/Japanese vector fallback font), and
+Schumacher Clean (the fallback Rockbox system font, compiled into the binary
+from 08-Schumacher-Clean.bdf).
 
 ----- Geologica (Geologica-{Regular,Medium,SemiBold,Bold}.ttf) ----
 
@@ -99,21 +99,13 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
------ PixelMplus (PixelMplus12-Regular.ttf runtime CJK fallback) ----
+----- Noto Sans JP (NotoSansJP-Regular.ttf runtime CJK fallback) ----
 
-Japanese/CJK (kana/kanji/fullwidth) glyphs are rendered via the runtime fallback
-font PixelMplus12-Regular by Itou Hiroki (https://github.com/itouhiro/PixelMplus),
-a pixel-style outline conversion of the M+ bitmap fonts.
-Copyright (C) 2013 M+ Font Project.  Distributed under the M+ FONT LICENSE:
+Copyright 2014-2023 Adobe (http://www.adobe.com/), Google LLC.
+Noto is a trademark of Google LLC.
 
-M+ FONTS                                Copyright (C) 2002-2013 M+ FONTS PROJECT
-
-These fonts are free software.
-Unlimited permission is granted to use, copy, and distribute them, with
-or without modification, either commercially or noncommercially.
-THESE FONTS ARE PROVIDED "AS IS" WITHOUT WARRANTY.
-
-http://mplus-fonts.sourceforge.jp/mplus-outline-fonts/
+NotoSansJP-Regular.ttf is licensed under the SIL Open Font License, Version 1.1
+(copied in full above; see https://github.com/notofonts/noto-cjk).
 
 ----- Schumacher Clean (built-in system font) ----
 

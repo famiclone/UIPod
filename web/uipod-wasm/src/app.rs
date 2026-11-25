@@ -234,6 +234,8 @@ pub struct DspConfig {
     pub dj_max_stretch: u8,
     pub dj_keep_gapless: bool,
     pub dj_quick_cut: bool,
+    pub hp35_low_shelf: u8,
+    pub direct_dac_hw0: bool,
 }
 
 impl Default for DspConfig {
@@ -287,6 +289,8 @@ impl Default for DspConfig {
             dj_max_stretch: 1,
             dj_keep_gapless: true,
             dj_quick_cut: true,
+            hp35_low_shelf: 2,
+            direct_dac_hw0: true,
         }
     }
 }
@@ -1293,12 +1297,18 @@ impl UIPodApp {
 
         let on_keyboard = matches!(self.stack.last(), Some(Screen::Keyboard { .. }));
         let on_now_playing = matches!(self.stack.last(), Some(Screen::NowPlaying));
+        let b_captured_by_plugin = matches!(self.stack.last(), Some(Screen::PluginActive))
+            && self
+                .active_plugin
+                .as_ref()
+                .is_some_and(|p| p.captures_b_button());
         let ctx_aware = self.is_context_aware_screen();
 
         let mut immediate = mask;
 
-        // `B` uses `650 ms` `tp_hold` (`Hold B` -> Main Menu, tap on release) everywhere except Keyboard
-        if (mask & btn::B) != 0 && !on_keyboard {
+        // `B` uses `650 ms` `tp_hold` (`Hold B` -> Main Menu, tap on release) everywhere except
+        // Keyboard and gameplay plugins where `B` is an immediate action/jump button!
+        if (mask & btn::B) != 0 && !on_keyboard && !b_captured_by_plugin {
             immediate &= !btn::B;
             self.b_deferred = true;
             self.b_hold_sec = 0.0;
@@ -1373,7 +1383,15 @@ impl UIPodApp {
         if self.hold_locked || ui.hud_has_active_confirm() {
             return;
         }
+        let b_captured_by_plugin = matches!(self.stack.last(), Some(Screen::PluginActive))
+            && self
+                .active_plugin
+                .as_ref()
+                .is_some_and(|p| p.captures_b_button());
         if (mask & btn::B) != 0 {
+            if b_captured_by_plugin {
+                return;
+            }
             self.b_deferred = false;
             self.b_hold_fired = true;
             self.go_home(ui);
@@ -1492,6 +1510,7 @@ impl UIPodApp {
             }
             other if other.starts_with("plugin:") => {
                 let pid = match &other[7..] {
+                    "beat_stack" => PluginId::BeatStack,
                     "music_quiz" => PluginId::MusicQuiz,
                     "sound_racer" => PluginId::SoundRacer,
                     "tetris" => PluginId::Tetris,
@@ -1660,6 +1679,7 @@ impl UIPodApp {
         &mut self,
         dt: f32,
         pcm_interleaved: &[i16],
+        sample_rate: u32,
         ui: &mut UiEngine,
         viz: &mut VizEngine,
     ) {
@@ -1712,8 +1732,17 @@ impl UIPodApp {
             return;
         }
 
-        // 1. Firmware `650 ms` `Hold B` -> Home (`apps/action.c` `global_home_action`)
-        if self.b_deferred && (self.held_buttons & btn::B) != 0 && !self.b_hold_fired {
+        // 1. Firmware `650 ms` `Hold B` -> Home (`apps/action.c` `global_home_action`),
+        // suppressed inside gameplay plugins that bind `B` directly (e.g. Beat Stack jump).
+        let b_captured_by_plugin = matches!(self.stack.last(), Some(Screen::PluginActive))
+            && self
+                .active_plugin
+                .as_ref()
+                .is_some_and(|p| p.captures_b_button());
+        if b_captured_by_plugin {
+            self.b_deferred = false;
+            self.b_hold_sec = 0.0;
+        } else if self.b_deferred && (self.held_buttons & btn::B) != 0 && !self.b_hold_fired {
             self.b_hold_sec += dt;
             if self.b_hold_sec >= 0.65 {
                 self.b_hold_fired = true;
@@ -1830,6 +1859,7 @@ impl UIPodApp {
                 track_title: &cur_title,
                 pos_ms: self.pos_ms,
                 dur_ms: self.dur_ms,
+                sample_rate,
             };
             let act = if let Some(ref mut pl) = self.active_plugin {
                 pl.update(dt, pressed, self.held_buttons, pcm_interleaved, audio_snap, self.uk)
@@ -2242,7 +2272,7 @@ impl UIPodApp {
 
             Screen::PluginCategory { cat, mut sel } => {
                 let count = match cat {
-                    0 => 6, // Games: Music Quiz, Sound Racer, Tetris, Snake, 2048, Brick Breaker
+                    0 => 7, // Games: Beat Stack, Music Quiz, Sound Racer, Tetris, Snake, 2048, Brick Breaker
                     1 => 1, // Apps: Stopwatch
                     2 => 1, // Demos: LCD Plasma
                     _ => 1, // Viewers: Text Viewer
@@ -2255,11 +2285,12 @@ impl UIPodApp {
                     match cat {
                         0 => {
                             let pid = match sel {
-                                0 => PluginId::MusicQuiz,
-                                1 => PluginId::SoundRacer,
-                                2 => PluginId::Tetris,
-                                3 => PluginId::Snake,
-                                4 => PluginId::Game2048,
+                                0 => PluginId::BeatStack,
+                                1 => PluginId::MusicQuiz,
+                                2 => PluginId::SoundRacer,
+                                3 => PluginId::Tetris,
+                                4 => PluginId::Snake,
+                                5 => PluginId::Game2048,
                                 _ => PluginId::BrickBreaker,
                             };
                             self.active_plugin =
@@ -3021,9 +3052,9 @@ impl UIPodApp {
             }
 
             Screen::SoundMenu { mut sel } => {
-                // Exact 8 rows from `apps/menus/sound_menu.c`:
-                // Equalizer, Effects, Crossfade & Auto-DJ, Replaygain, Balance, Channels, Crossfeed, Menu Click
-                if self.nav_list(pressed, &mut sel, 8, ui) {
+                // Exact 10 rows from `apps/menus/sound_menu.c`:
+                // Equalizer, Effects, Crossfade & Auto-DJ, Replaygain, 3.5mm Low-Shelf, Direct DAC (hw:0,0), Balance, Channels, Crossfeed, Menu Click
+                if self.nav_list(pressed, &mut sel, 10, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
@@ -3035,10 +3066,21 @@ impl UIPodApp {
                         2 if !is_dir => self.push_screen(Screen::DjCrossfadeMenu { sel: 0 }, ui),
                         3 if !is_dir => self.push_screen(Screen::ReplayGainMenu { sel: 0 }, ui),
                         4 => {
+                            self.dsp.hp35_low_shelf = if left {
+                                (self.dsp.hp35_low_shelf + 3) % 4
+                            } else {
+                                (self.dsp.hp35_low_shelf + 1) % 4
+                            };
+                            self.emit_dsp();
+                        }
+                        5 => {
+                            self.dsp.direct_dac_hw0 = !self.dsp.direct_dac_hw0;
+                        }
+                        6 => {
                             let d = if left { -5i8 } else { 5i8 };
                             self.dsp.balance_pct = (self.dsp.balance_pct + d).clamp(-100, 100);
                         }
-                        5 => {
+                        7 => {
                             let n = CHANNEL_MODES.len();
                             self.dsp.channels_idx = if left {
                                 (self.dsp.channels_idx + n - 1) % n
@@ -3046,7 +3088,7 @@ impl UIPodApp {
                                 (self.dsp.channels_idx + 1) % n
                             };
                         }
-                        6 => {
+                        8 => {
                             let n = CROSSFEED_MODES.len();
                             self.dsp.crossfeed_idx = if left {
                                 (self.dsp.crossfeed_idx + n - 1) % n
@@ -3054,7 +3096,7 @@ impl UIPodApp {
                                 (self.dsp.crossfeed_idx + 1) % n
                             };
                         }
-                        7 => {
+                        9 => {
                             self.dsp.menu_click = !self.dsp.menu_click;
                             self.state_dirty = true;
                         }
@@ -4322,7 +4364,7 @@ impl UIPodApp {
             self.trans_t = (self.trans_t + dt * 4.6).min(1.0);
         }
 
-        self.handle_input(dt, pcm_interleaved, ui, viz);
+        self.handle_input(dt, pcm_interleaved, sample_rate, ui, viz);
 
         let top = match self.stack.last().cloned() {
             Some(s) => s,
@@ -4368,7 +4410,7 @@ impl UIPodApp {
                 .as_ref()
                 .map(|pl| self.header_state(pl.title(self.uk)));
             if let (Some(ref mut pl), Some(hdr)) = (&mut self.active_plugin, hdr) {
-                pl.render(ui, self.theme, &hdr, self.uk);
+                pl.render(ui, self.theme, &hdr, self.uk, win_w, win_h);
                 ui.present_fbo_transition(
                     win_w,
                     win_h,
@@ -4525,7 +4567,7 @@ impl UIPodApp {
 
             Screen::PluginsHub { sel } => {
                 let items = vec![
-                    (self.tr("Games", "Ігри").to_string(), FileIconKind::None, OwnedRight::Value("6".into())),
+                    (self.tr("Games", "Ігри").to_string(), FileIconKind::None, OwnedRight::Value("7".into())),
                     (self.tr("Apps", "Програми").to_string(), FileIconKind::None, OwnedRight::Value("1".into())),
                     (self.tr("Demos", "Демо").to_string(), FileIconKind::None, OwnedRight::Value("1".into())),
                     (self.tr("Viewers", "Переглядачі").to_string(), FileIconKind::None, OwnedRight::Value("1".into())),
@@ -4539,6 +4581,7 @@ impl UIPodApp {
                     0 => (
                         self.tr("Games", "Ігри"),
                         vec![
+                            (self.tr("Beat Stack", "Біт Стек").to_string(), FileIconKind::Text("PLG".into()), OwnedRight::None),
                             (self.tr("Music Quiz", "Вгадай мелодію").to_string(), FileIconKind::Text("PLG".into()), OwnedRight::None),
                             ("Sound Racer".to_string(), FileIconKind::Text("PLG".into()), OwnedRight::None),
                             (self.tr("Tetris", "Тетріс").to_string(), FileIconKind::Text("PLG".into()), OwnedRight::None),
@@ -5187,11 +5230,19 @@ impl UIPodApp {
             }
 
             Screen::SoundMenu { sel } => {
+                let hp35_lbl = match self.dsp.hp35_low_shelf {
+                    1 => self.tr("Subtle (+2.5 dB)", "М'який (+2.5 дБ)"),
+                    2 => self.tr("Warm (+4.0 dB)", "Теплий (+4.0 дБ)"),
+                    3 => self.tr("Deep (+6.0 dB)", "Глибокий (+6.0 дБ)"),
+                    _ => self.tr("Off", "Вимк."),
+                };
                 let items = vec![
                     (self.tr("Equalizer", "Еквалайзер").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Effects", "Ефекти").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     (self.tr("Crossfade & Auto-DJ", "Авто-DJ і кросфейд").to_string(), FileIconKind::None, OwnedRight::Chevron),
                     ("Replaygain".to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("3.5mm Low-Shelf", "НЧ-фільтр 3.5 мм").to_string(), FileIconKind::None, OwnedRight::CycleValue(hp35_lbl.to_string())),
+                    (self.tr("Direct DAC (hw:0,0)", "Прямий ЦАП (hw:0,0)").to_string(), FileIconKind::None, OwnedRight::Toggle(self.dsp.direct_dac_hw0)),
                     (self.tr("Balance", "Баланс").to_string(), FileIconKind::None, OwnedRight::CycleValue(format!("{}%", self.dsp.balance_pct))),
                     (self.tr("Channels", "Канали").to_string(), FileIconKind::None, OwnedRight::CycleValue(CHANNEL_MODES[self.dsp.channels_idx].to_string())),
                     (self.tr("Crossfeed", "Кросфід").to_string(), FileIconKind::None, OwnedRight::CycleValue(CROSSFEED_MODES[self.dsp.crossfeed_idx].to_string())),

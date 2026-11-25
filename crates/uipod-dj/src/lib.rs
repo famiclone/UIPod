@@ -14,7 +14,7 @@ pub mod wsola;
 
 pub use cue_scanner::{analyze_pcm_f32, analyze_pcm_s16, DeckCueAnalysis};
 pub use filter::{DeckChannelStrip, OnePoleSmoother, StereoWashDelay};
-pub use mixer::{DualDeckMixer, MixerPhase};
+pub use mixer::{DualDeckMixer, MixerPhase, PlayheadSnapshot};
 pub use planner::{
     evaluate_mix_curves, fold_bpm_to_reference, plan_transition, should_respect_album_gapless,
     MixCurveStep, PlannedTransitionKind, TransitionPlan,
@@ -419,5 +419,183 @@ mod tests {
         assert_eq!(midpoint_count, 1, "Midpoint handoff must fire exactly once at p=0.50");
         assert!(saw_active_tel, "DJ telemetry should report active Beatmatch during mix");
         assert!(total_rendered > (sr as usize) * 14);
+    }
+
+    #[test]
+    fn test_burst_writes_zero_drop_and_exact_eof_sample_conservation() {
+        let sr = 44_100u32;
+        // 24.5 seconds (> 18s MAX_DECK_A_SECONDS) with deterministic per-frame signature
+        let frames_a = (sr as usize) * 24 + (sr as usize) / 2;
+        let mut pcm_a = Vec::with_capacity(frames_a * 2);
+        for i in 0..frames_a {
+            let l = ((i % 30_000) as i16).wrapping_sub(15_000);
+            let r = (((i * 7 + 13) % 30_000) as i16).wrapping_sub(15_000);
+            pcm_a.push(l);
+            pcm_a.push(r);
+        }
+
+        // Case 1: Faster-than-realtime huge burst writes (65,536 frames/call) + EOF drain with no Deck B
+        let mut mixer = DualDeckMixer::new(sr);
+        mixer.set_config(DjConfig {
+            mode: CrossfadeMode::ClassicFade,
+            length: TransitionLength::Long12s,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        });
+        mixer.begin_deck_a_capture(sr, "Solo", 1, false, false);
+        mixer.set_track_timing(155_500, 180_000, 0);
+
+        let mut recovered = Vec::with_capacity(pcm_a.len());
+        let mut io_chunk = vec![0i16; 1024 * 2];
+
+        for burst in pcm_a.chunks(65_536 * 2) {
+            mixer.push_deck_a_frames(burst);
+            // Deliberately pop only 1 small chunk per massive burst to stress internal spill backpressure
+            let (spilled, el_ms) = mixer.pop_spill_s16(&mut io_chunk);
+            if spilled > 0 {
+                assert!(
+                    el_ms < 175_000,
+                    "Spill timestamp must track actual spilled audio, got {el_ms} ms"
+                );
+                recovered.extend_from_slice(&io_chunk[..spilled * 2]);
+            }
+        }
+
+        // Track hits EOF with no next track (or Crossfade switched Off): must drain 100% of tail
+        mixer.flush_to_gapless_drain();
+        while mixer.phase() != MixerPhase::Idle {
+            let (n, _mid) = mixer.render_s16(&mut io_chunk);
+            assert!(n > 0);
+            recovered.extend_from_slice(&io_chunk[..n * 2]);
+        }
+
+        assert_eq!(
+            recovered.len(),
+            pcm_a.len(),
+            "Burst writes + EOF drain must conserve exact frame count (N in == N out)"
+        );
+        assert_eq!(
+            recovered, pcm_a,
+            "Every sample from frame 0 to final EOF sample must match bit-for-bit with zero skips"
+        );
+
+        // Case 2: Toggling Crossfade = OFF mid-capture drains 100% of captured frames without truncation
+        mixer.begin_deck_a_capture(sr, "Live", 1, false, false);
+        mixer.push_deck_a_frames(&pcm_a);
+        mixer.set_config(DjConfig {
+            mode: CrossfadeMode::Off,
+            ..mixer.config()
+        });
+        let mut recovered_off = Vec::with_capacity(pcm_a.len());
+        while mixer.phase() != MixerPhase::Idle {
+            let (n, _) = mixer.render_s16(&mut io_chunk);
+            assert!(n > 0);
+            recovered_off.extend_from_slice(&io_chunk[..n * 2]);
+        }
+        assert_eq!(recovered_off, pcm_a);
+    }
+
+    #[test]
+    fn test_12s_crossfade_playhead_countdown_never_hits_zero_early_and_mid_handoff() {
+        let sr = 44_100u32;
+        let f_a = synth_beat_signal(sr, 18.0, 122.0, 330.0);
+        let f_b = synth_beat_signal(sr, 16.0, 126.0, 440.0);
+        let s16_a: Vec<i16> = f_a.iter().map(|&x| (x * 22_000.0) as i16).collect();
+        let s16_b: Vec<i16> = f_b.iter().map(|&x| (x * 22_000.0) as i16).collect();
+
+        for mode in [
+            CrossfadeMode::ClassicFade,
+            CrossfadeMode::DjVinylSync,
+            CrossfadeMode::DjMasterTempo,
+        ] {
+            let mut mixer = DualDeckMixer::new(sr);
+            mixer.set_config(DjConfig {
+                mode,
+                length: TransitionLength::Long12s,
+                max_stretch: MaxTempoStretch::Pct10,
+                keep_album_gapless: true,
+                quick_cut_on_next: true,
+            });
+
+            // Track 1 is 180,000 ms (3:00); tail capture begins at 162,000 ms (18.0s remaining).
+            // Track 2 is 210,000 ms (3:30).
+            mixer.begin_deck_a_capture(sr, "Set A", 1, false, false);
+            mixer.set_track_timing(162_000, 180_000, 210_000);
+            mixer.push_deck_a_frames(&s16_a);
+            mixer.finish_deck_a_and_begin_deck_b("Set B", 1, false);
+            mixer.set_deck_b_duration_ms(210_000);
+            assert!(mixer.push_deck_b_frames(&s16_b, true));
+
+            // Simulate faster-than-realtime codec rendering into a 4.0s downstream `pcmbuf` + ALSA FIFO
+            let max_downstream_frames = (sr as usize) * 4;
+            let mut downstream_queued = 0usize;
+            let mut out_chunk = [0i16; 1024 * 2];
+            let step_frames = (sr as usize) / 10; // 100 ms hardware sink tick
+
+            let mut prev_a_rem = u32::MAX;
+            let mut saw_deck_a_during_mix = false;
+            let mut saw_clean_deck_b_handoff = false;
+            let mut prev_b_el = 0u32;
+
+            loop {
+                while mixer.phase() != MixerPhase::Idle
+                    && downstream_queued + 1024 <= max_downstream_frames
+                {
+                    let (n, _mid, _chunk_el) = mixer.render_s16_timed(&mut out_chunk);
+                    if n == 0 {
+                        break;
+                    }
+                    downstream_queued += n;
+                }
+
+                if downstream_queued == 0 && mixer.phase() == MixerPhase::Idle {
+                    break;
+                }
+
+                let snap = mixer.playhead_at_delay_frames(downstream_queued);
+                if !snap.is_deck_b_foreground {
+                    assert!(
+                        snap.audible_remaining_ms >= 4_500,
+                        "Mode {mode:?}: Deck A remaining_ms clamped early ({} ms) while Track 1 is foreground!",
+                        snap.audible_remaining_ms
+                    );
+                    assert!(
+                        snap.audible_remaining_ms <= prev_a_rem.saturating_add(5),
+                        "Mode {mode:?}: Deck A countdown jumped backwards ({} -> {})",
+                        prev_a_rem,
+                        snap.audible_remaining_ms
+                    );
+                    prev_a_rem = snap.audible_remaining_ms;
+                    if snap.telemetry.active != 0 {
+                        saw_deck_a_during_mix = true;
+                    }
+                } else {
+                    if !saw_clean_deck_b_handoff {
+                        saw_clean_deck_b_handoff = true;
+                        // At p = 0.50 of an 8-bar / 12s crossfade, Deck B's audible elapsed must be ~4.5s..9.0s
+                        assert!(
+                            (3_500..=10_500).contains(&snap.audible_elapsed_ms),
+                            "Mode {mode:?}: Midpoint handoff jumped to wrong Deck B elapsed: {} ms",
+                            snap.audible_elapsed_ms
+                        );
+                        prev_b_el = snap.audible_elapsed_ms;
+                    } else {
+                        assert!(
+                            snap.audible_elapsed_ms + 5 >= prev_b_el,
+                            "Mode {mode:?}: Deck B elapsed regressed ({} -> {})",
+                            prev_b_el,
+                            snap.audible_elapsed_ms
+                        );
+                        prev_b_el = snap.audible_elapsed_ms;
+                    }
+                }
+
+                downstream_queued = downstream_queued.saturating_sub(step_frames);
+            }
+
+            assert!(saw_deck_a_during_mix, "Mode {mode:?}: Expected active pre-midpoint mix on Deck A");
+            assert!(saw_clean_deck_b_handoff, "Mode {mode:?}: Expected clean midpoint handoff to Deck B");
+        }
     }
 }

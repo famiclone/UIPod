@@ -68,6 +68,7 @@
 #include "uipod_page.h"
 #include "uipod_ui.h"
 #include "uipod_rs_ui.h"
+#include "uipod_track_intel.h"
 
 /* Delay-compensated stereo PCM tap in firmware/target/hosted/sdl/pcm-alsa.c */
 extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
@@ -363,6 +364,8 @@ static int viz_render_thread(void *param)
             else if (!(st_now & AUDIO_STATUS_PAUSE))
                 transport_speed = base_spd;
         }
+
+        uipod_track_intel_tick_live();
 
         uipod_rs_viz_render_frame(pcm,
                                   (size_t)frames,

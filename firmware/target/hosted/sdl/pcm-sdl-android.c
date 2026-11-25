@@ -159,6 +159,12 @@ static volatile unsigned int viz_pcm_w = 0;
 static volatile unsigned int out_delay_us = 95000U;
 static volatile Uint32       out_delay_tick = 0;
 
+extern void uipod_rs_intel_audio_tap_push(const int16_t *stereo_s16,
+                                          size_t frames,
+                                          uint32_t sample_rate,
+                                          uint32_t output_delay_us,
+                                          uint64_t now_ms);
+
 static void viz_pcm_push(const void *src, unsigned nframes)
 {
     const int16_t *s = (const int16_t *)src;
@@ -170,6 +176,15 @@ static void viz_pcm_push(const void *src, unsigned nframes)
         viz_pcm_ring[idx + 1] = s[2U * i + 1U];
     }
     viz_pcm_w = w;
+
+    unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
+    if (!sr)
+        sr = 44100U;
+    uipod_rs_intel_audio_tap_push(s,
+                                  (size_t)nframes,
+                                  (uint32_t)sr,
+                                  (uint32_t)out_delay_us,
+                                  (uint64_t)SDL_GetTicks());
 }
 
 static unsigned int live_output_delay_us(void)
@@ -757,6 +772,11 @@ void pcm_alsa_wake_writer(void)
 {
     if (writer_wake)
         SDL_SemPost(writer_wake);
+}
+
+void pcm_alsa_set_direct_hw(bool enabled)
+{
+    (void)enabled;
 }
 
 void pcm_alsa_shutdown(void)

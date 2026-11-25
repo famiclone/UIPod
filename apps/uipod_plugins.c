@@ -45,6 +45,7 @@
 #include "uipod_rs_codecs.h"
 #include "uipod_rs_plugins.h"
 #include "uipod_rs_ui.h"
+#include "uipod_track_intel.h"
 #include "uipod_svg.h"
 #include "uipod_transition.h"
 #include "uipod_ui.h"
@@ -1042,6 +1043,8 @@ static const struct UIPodPluginApi s_host_api = {
     .canvas_begin_responsive = host_canvas_begin_responsive,
     .get_responsive_size     = host_get_responsive_size,
     .audio_get_apu_telemetry = host_audio_get_apu_telemetry,
+    .audio_get_track_analysis= uipod_track_intel_get_analysis,
+    .audio_get_live_telemetry= uipod_track_intel_get_live,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */
@@ -1060,12 +1063,16 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
     s_last_menu_title[0]  = '\0';
     action_wait_for_release();
 
-    FOR_NB_SCREENS(i)
-        viewportmanager_theme_enable(i, false, NULL);
-
     /* Hold dynamic cpufreq during active plugin sessions so a low user CPU cap
      * cannot starve 60 FPS GPU rasterization + lossless/stream audio decoding. */
     retrohh_cpu_hold_dynamic();
+
+    /* Synchronous `"Processing..."` HUD gate if launching a music-driven game
+     * while the active track's analysis record is not yet cached in DB. */
+    uipod_track_intel_ensure_for_plugin(plugin_id);
+
+    FOR_NB_SCREENS(i)
+        viewportmanager_theme_enable(i, false, NULL);
 
 #ifdef HAVE_PRIORITY_SCHEDULING
     unsigned int self_tid = thread_self();

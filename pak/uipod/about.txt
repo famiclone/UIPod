@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.9.0
+Version: v0.9.1
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -18,7 +18,7 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 • MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
 • VOL + / VOL - — Adjust volume (40 perceptual steps on TrimUI Brick; synced with hardware STREAM_MUSIC on Android)
 • SELECT + VOL + / VOL - — Adjust screen brightness anywhere
-• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Sound Racer
+• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Beat Stack, Sound Racer & Pulsar Vanguard
 • Side Switch — Input Hold / Lock (volume rocker stays active without waking the screen)
 
 ## 2. Media Library & Sources
@@ -43,7 +43,7 @@ Open Settings -> Appearance (Display) to customize the visual experience:
 • Monochrome Album Art — Quantizes and Bayer-dithers cover art into the 4 shades of your active theme (toggleable to full-color 24-bit RGB).
 • Screen Transitions — Choose between Slide, Cover, Fade, Pixels, Blinds, or Off.
 • Main Menu Items — Show or hide Main Menu entries (Browse is enabled first by default for full SD-card file management, alongside Library facets and Shuffle All).
-• Language — English and Ukrainian UI localization.
+• Language — English and Ukrainian UI localization, with built-in Noto Sans JP vector fallback for Japanese, Chinese, and Korean track metadata.
 
 ## 4. Sound, Equalizer & AutoEQ
 
@@ -59,6 +59,7 @@ Open Settings -> Sound for studio-grade Rockbox 32-bit DSP processing:
   - Flanger — Resonant jet-sweep flanger with Rate, Depth, Feedback, and Mix.
 • Crossfade & Auto-DJ — Dual-Deck Smart DJ transition engine with Off, Classic, DJ Vinyl (cubic pitch resampler), and DJ Master Tempo (pitch-preserving stereo WSOLA) modes, 4 Bars / 8 Bars / 12s transition lengths, ±6% / ±10% / ±12% max tempo stretch (with 0.5x/2x octave folding and native .nsf tick-rate sync), Equal-Power center-phrase Bass Swap (20 Hz <-> 250 Hz), automatic DJ Filter Wash + Ping-Pong Tail fallback on incompatible BPMs, Keep Album Gapless protection, Quick Cut on Next (single R1 tap = ~2s DJ Filter Fade, double-tap R1 = instant cut), and a live Now Playing status pill (DJ SYNC / DJ WASH / FADE).
 • ReplayGain — Automatic track or album loudness normalization with clipping prevention.
+• 3.5mm Low-Shelf & Direct DAC (hw:0,0) — Optional wired headphone bass compensation (Off, Subtle +2.5 dB, Warm +4.0 dB, Deep +6.0 dB) for AC-coupled 3.5mm jacks, plus Direct DAC (hw:0,0) hardware ALSA output bypassing software dmix.
 • Balance, Channels & Crossfeed — L/R channel balance, mono/swap routing, and Meier headphone crossfeed for vintage stereo recordings.
 • Menu Click — Authentic iPod-style tactile click sound when scrolling menus and adjusting inline settings.
 • Audio Outputs — Automatic hot-switching between internal speaker, 3.5mm headphone jack, USB-C DACs, and Bluetooth A2DP headphones (paired in NextUI).
@@ -71,6 +72,7 @@ Open Extras -> Plugins to launch native 60 FPS GPU-accelerated Rust plugins:
   - Music Quiz — Classic iPod-style "Name That Tune" game! Plays a random mid-song snippet from your local SD-card library with 4 choices ("Artist - Track"). Pick with Up/Down + A (+1 point per right answer), press X for another snippet, or START/MENU for timer & round options.
   - Sound Racer — Real-time 3D rhythm highway generated directly from the currently playing song (including PCM audio and .nsf / chiptune / tracker formats)! Choose "Start song from beginning" or "Continue" on launch. Steer with Left/Right (or L1/R1), jump spikes with A, cash in clusters with B, skip songs with L2/R2, and pause game + music with START. Analyzed song maps (.bin) are cached automatically, and per-song Hi-Scores are recorded when you complete a track from beginning to end.
   - Pulsar Vanguard — Cosmic Galaga-inspired swarm shooter with monotonic bar-phase music auto-attack! Steer with Left/Right (or L/R), switch 1/4 Beat Pulse and 1/1 Wave Cannon with Y, hold A for 1/8 Focus Vulcan spread, dash with B/X (±65 ms on-beat triggers Perfect Phase + EMP), and skip tracks with L2/R2.
+  - Beat Stack — Music-synced 4-color Siemens Stack Attack rhythm-puzzle game! Overhead cranes drop 4 distinct crate types on the live track's beat grid (with a 120 BPM fallback clock when paused/silent). Walk and push single crates with Left/Right, jump vertically with B, leap diagonally onto crates with B + Left/Right or L1/R1, toggle the rules hint with X, skip tracks with L2/R2, and form 2x2+ same-color clusters or full 12-wide floor rows (MONO ROW x3 for single-color rows) that arm immediately and detonate on the next strong beat (Beats 1 & 3) for CHAIN cascades.
   - Tetris — Guideline 7-bag Tetris with SRS wall kicks, ghost piece, hold piece, and high scores.
   - Snake — Smooth arcade Snake with speed scaling and Classic / Wrap wall modes.
   - Brick Breaker — Arkanoid-style paddle & multi-brick arcade game.
@@ -96,7 +98,6 @@ UIPod is free software released under the GNU General Public License v2.0 (GPL-2
 • Author & Maintainer — famiclone (github.com/famiclone/UIPod)
 • Core Audio Firmware — Rockbox Project (rockbox.org, GPL-2.0)
 • Original TrimUI Adaptation — Trimpod Classic by Werewolf Camp / tyrannotorus (GPL-2.0)
-• Base Skin Assets — 1ST_GEN_REMIX by Monica G. (CC-BY-SA 3.0)
-• Typography — Geologica (SIL OFL 1.1) & PixelMplus (M+ Font License)
+• Typography — Geologica & Noto Sans JP (SIL OFL 1.1)
 • USB MTP Daemon — uMTP-Responder (GPL-3.0)
 • Platform & Toolchain — NextUI (github.com/LoveRetro/NextUI)

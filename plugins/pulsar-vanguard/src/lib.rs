@@ -2075,17 +2075,59 @@ fn run_pulsar_vanguard(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> 
             }
         }
 
-        // Read live pre-volume PCM from audio sink and extract 40..120 Hz bass + flux + VU
-        let (low_energy, flux_hint, vu_level) = if music_playing {
-            let n_frames = ctx.audio_read_pcm(0, &mut pcm_window);
-            if n_frames > 0 {
-                pcm_analyzer.analyze_window(&pcm_window, n_frames, dt_sec)
+        // Read lock-free `uipod-track-intel` telemetry & cached `SongMapFixed` beat grid
+        // (falling back cleanly to `LivePcmAnalyzer` + `LivePll` on older `< v8` hosts).
+        let live_intel = if music_playing {
+            ctx.audio_live_telemetry()
+        } else {
+            None
+        };
+        let cached_analysis = if music_playing {
+            ctx.audio_track_analysis()
+        } else {
+            None
+        };
+
+        let (sync_source, playback_pos_sec, low_energy, flux_hint, vu_level) = if music_playing {
+            if let (Some(live), Some(rec)) = (live_intel, cached_analysis) {
+                if live.status == 1 && live.has_analysis != 0 && rec.key_hash == live.track_key_hash
+                {
+                    let apu_hit = if live.apu.is_available() {
+                        live.apu.percussion_trigger().max(live.apu.bass_trigger())
+                    } else {
+                        0.0
+                    };
+                    (
+                        SyncSource::SongMapFixed {
+                            bpm: rec.bpm,
+                            first_downbeat_sec: (rec.first_beat_offset_ms as f64) * 0.001,
+                        },
+                        Some((live.playhead_ms as f64) * 0.001),
+                        live.bands_5[0].max(live.bands_5[1]).max(apu_hit * 0.8),
+                        live.kick_impulse.max(live.snare_impulse).max(apu_hit),
+                        live.vu_l.max(live.vu_r).clamp(0.15, 1.0),
+                    )
+                } else {
+                    let n_frames = ctx.audio_read_pcm(0, &mut pcm_window);
+                    let (le, fh, vu) = if n_frames > 0 {
+                        pcm_analyzer.analyze_window(&pcm_window, n_frames, dt_sec)
+                    } else {
+                        (0.0, 0.0, 0.35)
+                    };
+                    (SyncSource::LivePll, None, le, fh, vu)
+                }
             } else {
-                (0.0, 0.0, 0.35)
+                let n_frames = ctx.audio_read_pcm(0, &mut pcm_window);
+                let (le, fh, vu) = if n_frames > 0 {
+                    pcm_analyzer.analyze_window(&pcm_window, n_frames, dt_sec)
+                } else {
+                    (0.0, 0.0, 0.35)
+                };
+                (SyncSource::LivePll, None, le, fh, vu)
             }
         } else {
             // Internal 120 BPM silent pulsar clock so the game remains 100% playable when music is paused/stopped
-            (0.0, 0.0, 0.45)
+            (SyncSource::LivePll, None, 0.0, 0.0, 0.45)
         };
 
         let mut move_axis = 0.0_f32;
@@ -2101,10 +2143,10 @@ fn run_pulsar_vanguard(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> 
 
         game.step_frame(
             &mut tracker,
-            SyncSource::LivePll,
+            sync_source,
             AudioFrameInput {
                 dt_sec,
-                playback_pos_sec: None,
+                playback_pos_sec,
                 low_energy,
                 flux_hint,
                 vu_level,

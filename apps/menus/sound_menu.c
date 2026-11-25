@@ -38,6 +38,8 @@ MENUITEM_SETTING(balance, &global_settings.balance, NULL);
 MENUITEM_SETTING(channel_config, &global_settings.channel_config,
                  lowlatency_callback);
 MENUITEM_SETTING(crossfeed, &global_settings.crossfeed, lowlatency_callback);
+MENUITEM_SETTING(hp35_low_shelf, &global_settings.hp35_low_shelf, NULL);
+MENUITEM_SETTING(direct_dac_hw0, &global_settings.direct_dac_hw0, NULL);
 MENUITEM_SETTING(menu_click, &global_settings.menu_click, NULL);
 
 /* Effects submenu:
@@ -177,6 +179,8 @@ MAKE_MENU(sound_settings, ID2P(LANG_UIPOD_SOUND), NULL, Icon_Audio,
           &sound_effects_menu,
           &dj_crossfade_menu,
           &replaygain_settings_menu,
+          &hp35_low_shelf,
+          &direct_dac_hw0,
           &balance,
           &channel_config,
           &crossfeed,

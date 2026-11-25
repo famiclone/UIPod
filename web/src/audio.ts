@@ -67,6 +67,8 @@ export interface DjWasmBridge {
     manualQuickCut: boolean,
   ) => boolean;
   feedDeckBS16: (chunkS16: Int16Array, isEof: boolean) => void;
+  setTrackTiming: (deckAStartMs: number, deckADurMs: number, deckBDurMs: number) => void;
+  getAudibleElapsedMs: (downstreamFrames: number) => number;
   renderS16: (frames: number) => Int16Array;
   takeMidpointCrossed: () => boolean;
   isActive: () => boolean;
@@ -148,6 +150,7 @@ export class UIPodAudioEngine {
   private pcmOut = new Int16Array(2048);
 
   private sourceNode: AudioBufferSourceNode | null = null;
+  private sourceGainNode: GainNode | null = null;
   private activeDecodedBuffer: AudioBuffer | null = null;
   private streamNode: ScriptProcessorNode | null = null;
   private activeStreamSource: StreamingPcmSource | null = null;
@@ -172,6 +175,8 @@ export class UIPodAudioEngine {
   >();
   public onNonStreamingTrack: (() => void) | null = null;
   public onTrackAutoAdvance: ((nextIndex: number) => void) | null = null;
+  public onTrackDecoded: ((trackIndex: number, buf: AudioBuffer) => void) | null = null;
+  public onStreamingTrackStarted: ((trackIndex: number) => void) | null = null;
   private playSeq = 0;
 
   public playing = false;
@@ -828,6 +833,10 @@ export class UIPodAudioEngine {
       return;
     }
 
+    const durAMs = Math.round(this.currentDurSec * 1000);
+    const startAMs = Math.round(posA * 1000);
+    const durBMs = Math.round(durSecB * 1000);
+
     const armed = djBridge.beginTransition(
       ctx.sampleRate,
       trackA,
@@ -846,6 +855,7 @@ export class UIPodAudioEngine {
       }
       return;
     }
+    djBridge.setTrackTiming(startAMs, durAMs, durBMs);
 
     this.stopSource(false, false);
     this.djActive = true;
@@ -885,19 +895,18 @@ export class UIPodAudioEngine {
         outR[i] = s16[i * 2 + 1] * inv;
       }
 
-      this.djDisplayPosSec += Math.min(frames, gotFrames) / ctx.sampleRate;
-
       if (!this.djMidpointDone && this.djBridge.takeMidpointCrossed()) {
         this.djMidpointDone = true;
         this.currentTrack = nextIdx;
         this.currentDurSec = durSecB;
-        this.djDisplayPosSec = Math.min(handoffSecB, durSecB * 0.25);
         setTimeout(() => {
           if (this.playing) {
             this.onTrackAutoAdvance?.(nextIdx);
           }
         }, 0);
       }
+
+      this.djDisplayPosSec = this.djBridge.getAudibleElapsedMs(frames) / 1000;
 
       if (gotFrames < frames || !this.djBridge.isActive()) {
         const remOut = frames - gotFrames;
@@ -1038,6 +1047,22 @@ export class UIPodAudioEngine {
     this.applyDsp(this.dsp);
   }
 
+  private preloadNeighborTracks(ctx: AudioContext, trackIndex: number): void {
+    if (this.trackCount < 2) return;
+    const neighbors = [
+      (trackIndex + 1) % this.trackCount,
+      (trackIndex - 1 + this.trackCount) % this.trackCount,
+    ];
+    for (const nIdx of neighbors) {
+      if (this.streamingTracks.has(nIdx) || this.userBuffers.has(nIdx)) continue;
+      if (this.lazyPcmLoaders.has(nIdx)) continue;
+      const bIdx = nIdx % BUILTIN_TRACK_URLS.length;
+      if (!this.builtinCache.has(bIdx) && !this.builtinLoading.has(bIdx)) {
+        void this.loadTrackBuffer(ctx, nIdx).catch(() => {});
+      }
+    }
+  }
+
   private startDecodedBuffer(
     ctx: AudioContext,
     buf: AudioBuffer,
@@ -1046,21 +1071,28 @@ export class UIPodAudioEngine {
     skipMotorRamp = false,
   ): void {
     this.stopSource(false);
-    const isUser = this.userBuffers.has(trackIndex);
-    const djOn = (this.dsp.djMode ?? 0) > 0 && this.trackCount >= 2;
     this.activeDecodedBuffer = buf;
     this.currentTrack = trackIndex;
     this.currentDurSec = buf.duration;
-    this.offsetSec = Math.max(0, Math.min(startSec, Math.max(0, buf.duration - 0.25)));
+    this.offsetSec = Math.max(0, Math.min(startSec, Math.max(0, buf.duration - 0.05)));
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.loop = !isUser && !djOn;
-    src.connect(this.eqFilters[0]);
+    src.loop = this.trackCount < 2;
+
+    const voiceGain = ctx.createGain();
+    const now = ctx.currentTime;
+    if (skipMotorRamp) {
+      voiceGain.gain.setValueAtTime(1.0, now);
+    } else {
+      // 5 ms anti-click fade-in on manual / cold track start
+      voiceGain.gain.setValueAtTime(0.0, now);
+      voiceGain.gain.linearRampToValueAtTime(1.0, now + 0.005);
+    }
+    src.connect(voiceGain).connect(this.eqFilters[0]);
 
     const fxOn = this.dsp.fxEnabled !== false;
     const targetRate = fxOn ? Math.max(0.5, Math.min(1.5, this.dsp.speed / 100)) : 1.0;
-    const now = ctx.currentTime;
     if (!skipMotorRamp && fxOn && this.dsp.tape && this.dsp.stopStart) {
       src.playbackRate.setValueAtTime(0.32, now);
       src.playbackRate.exponentialRampToValueAtTime(targetRate, now + 0.24);
@@ -1068,20 +1100,23 @@ export class UIPodAudioEngine {
       src.playbackRate.setValueAtTime(targetRate, now);
     }
 
-    const bufOffset = this.offsetSec % Math.max(0.1, buf.duration);
+    const bufOffset = this.offsetSec % Math.max(0.05, buf.duration);
     src.start(now, bufOffset);
     src.onended = () => {
-      if (this.sourceNode === src && (isUser || djOn) && this.playing && !this.djActive) {
+      if (this.sourceNode === src && this.trackCount >= 2 && this.playing && !this.djActive) {
         const next = (this.currentTrack + 1) % Math.max(1, this.trackCount);
-        this.playTrack(next, 0);
+        this.playTrack(next, 0, true);
         this.onTrackAutoAdvance?.(next);
       }
     };
 
     this.sourceNode = src;
+    this.sourceGainNode = voiceGain;
     this.startCtxTime = now;
     this.playing = true;
     this.applyDsp(this.dsp);
+    this.onTrackDecoded?.(trackIndex, buf);
+    this.preloadNeighborTracks(ctx, trackIndex);
   }
 
   private startStreamingTrack(
@@ -1155,9 +1190,10 @@ export class UIPodAudioEngine {
     this.startCtxTime = ctx.currentTime;
     this.playing = true;
     this.applyDsp(this.dsp);
+    this.onStreamingTrackStarted?.(trackIndex);
   }
 
-  public playTrack(trackIndex: number, startSec = 0): void {
+  public playTrack(trackIndex: number, startSec = 0, seamlessGapless = false): void {
     const ctx = this.ensureContext();
     const seq = ++this.playSeq;
     this.currentTrack = trackIndex;
@@ -1167,6 +1203,7 @@ export class UIPodAudioEngine {
     const streaming = this.streamingTracks.get(trackIndex);
     if (streaming) {
       this.startStreamingTrack(ctx, trackIndex, streaming, startSec);
+      this.preloadNeighborTracks(ctx, trackIndex);
       return;
     }
 
@@ -1175,7 +1212,7 @@ export class UIPodAudioEngine {
 
     const userBuf = this.userBuffers.get(trackIndex);
     if (userBuf) {
-      this.startDecodedBuffer(ctx, userBuf, trackIndex, startSec);
+      this.startDecodedBuffer(ctx, userBuf, trackIndex, startSec, seamlessGapless);
       return;
     }
 
@@ -1186,7 +1223,7 @@ export class UIPodAudioEngine {
       void this.loadTrackBuffer(ctx, trackIndex)
         .then((buf) => {
           if (seq !== this.playSeq || !this.playing) return;
-          this.startDecodedBuffer(ctx, buf, trackIndex, startSec);
+          this.startDecodedBuffer(ctx, buf, trackIndex, startSec, seamlessGapless);
         })
         .catch((err) => {
           console.warn('GSF track decode error:', err);
@@ -1201,15 +1238,16 @@ export class UIPodAudioEngine {
     this.currentDurSec = BUILTIN_TRACK_DURATIONS_SEC[idx] ?? 23.0;
     const cached = this.builtinCache.get(idx);
     if (cached) {
-      this.startDecodedBuffer(ctx, cached, trackIndex, startSec);
+      this.startDecodedBuffer(ctx, cached, trackIndex, startSec, seamlessGapless);
       return;
     }
 
+    // Keep outgoing source fading cleanly; do not kill AudioContext while buffer decodes
     this.stopSource(false);
     void this.loadTrackBuffer(ctx, trackIndex)
       .then((buf) => {
         if (seq !== this.playSeq || !this.playing) return;
-        this.startDecodedBuffer(ctx, buf, trackIndex, startSec);
+        this.startDecodedBuffer(ctx, buf, trackIndex, startSec, seamlessGapless);
       })
       .catch((err) => {
         console.warn('Audio track load error:', err);
@@ -1342,15 +1380,38 @@ export class UIPodAudioEngine {
     }
 
     const src = this.sourceNode;
+    const vGain = this.sourceGainNode;
     this.sourceNode = null;
+    this.sourceGainNode = null;
     if (!src || !this.ctx) return;
     const now = this.ctx.currentTime;
     try {
+      src.onended = null;
       if (withTapeSpinDown) {
         src.playbackRate.cancelScheduledValues(now);
         src.playbackRate.setValueAtTime(src.playbackRate.value, now);
         src.playbackRate.exponentialRampToValueAtTime(0.18, now + 0.26);
         src.stop(now + 0.28);
+        setTimeout(() => {
+          try {
+            vGain?.disconnect();
+          } catch {
+            // ignore
+          }
+        }, 320);
+      } else if (vGain) {
+        // 6 ms anti-click fade-out on manual skip / DJ handoff
+        vGain.gain.cancelScheduledValues(now);
+        vGain.gain.setValueAtTime(vGain.gain.value, now);
+        vGain.gain.linearRampToValueAtTime(0.0, now + 0.006);
+        src.stop(now + 0.007);
+        setTimeout(() => {
+          try {
+            vGain.disconnect();
+          } catch {
+            // ignore
+          }
+        }, 30);
       } else {
         src.stop();
       }

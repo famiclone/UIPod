@@ -64,6 +64,7 @@
 #include "uipod_lastfm.h"
 #include "uipod_listenbrainz.h"
 #include "uipod_downloads.h"
+#include "uipod_track_intel.h"
 #include "uipod_plugins.h"
 #include "menus/exported_menus.h"
 #include "uipod_m4b.h"
@@ -184,6 +185,7 @@ int main(void)
     uipod_downloads_init();
     uipod_lastfm_init();
     uipod_listenbrainz_init();
+    uipod_track_intel_init();
     uipod_plugins_init();
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */

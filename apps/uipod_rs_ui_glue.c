@@ -74,33 +74,41 @@ static const struct
 
 static const struct
 {
-    float   bar_x;
-    float   bar_y;
-    float   bar_w;
-    float   bar_h;
-    float   text_center_y;
-    float   hud_font_size;
-    float   sub_strip_top;
-    float   sub_strip_h;
-    float   sub_margin_x;
-    float   sub_font_size;
-    float   sub_min_font;
-    float   sub_line_gap;
-    uint8_t font_weight;
+    float    strip_top;
+    uint32_t strip_rows;
+    float    bar_x;
+    float    bar_y;
+    float    bar_w;
+    float    bar_h;
+    float    text_center_y;
+    float    hud_font_size;
+    float    sub_strip_top;
+    float    sub_strip_h;
+    uint32_t sub_strip_rows;
+    float    sub_margin_x;
+    float    sub_font_size;
+    float    sub_min_font;
+    float    sub_line_gap;
+    float    divider_stroke;
+    uint8_t  font_weight;
 } kVideoOverlayLayoutSpec = {
-    .bar_x         = 64.0f,
-    .bar_y         = 616.0f,
-    .bar_w         = 896.0f,
-    .bar_h         = 32.0f,
-    .text_center_y = 708.0f,
-    .hud_font_size = 42.0f,
-    .sub_strip_top = 656.0f,
-    .sub_strip_h   = 112.0f,
-    .sub_margin_x  = 40.0f,
-    .sub_font_size = 38.0f,
-    .sub_min_font  = 22.0f,
-    .sub_line_gap  = 10.0f,
-    .font_weight   = 2, /* Geologica SemiBold */
+    .strip_top      = 576.0f,
+    .strip_rows     = 192,
+    .bar_x          = 64.0f,
+    .bar_y          = 616.0f,
+    .bar_w          = 896.0f,
+    .bar_h          = 32.0f,
+    .text_center_y  = 708.0f,
+    .hud_font_size  = 42.0f,
+    .sub_strip_top  = 656.0f,
+    .sub_strip_h    = 112.0f,
+    .sub_strip_rows = 112,
+    .sub_margin_x   = 40.0f,
+    .sub_font_size  = 38.0f,
+    .sub_min_font   = 22.0f,
+    .sub_line_gap   = 10.0f,
+    .divider_stroke = 4.0f,
+    .font_weight    = 2, /* Geologica SemiBold */
 };
 
 void uipod_gpu_set_header_source(uint8_t src_icon)
@@ -165,6 +173,19 @@ void uipod_gpu_present_current_fbo(void)
     int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
     sdl_gl_make_current();
     sdl_gl_get_drawable_size(&win_w, &win_h);
+
+    int vid_rows = 0;
+    if (sdl_gl_get_video_through(&vid_rows))
+    {
+        if (uipod_rs_ui_present_video_overlay_gpu((uint32_t)win_w,
+                                                  (uint32_t)win_h,
+                                                  (uint32_t)(vid_rows > 0 ? vid_rows : 0)))
+        {
+            sdl_gl_swap_window();
+        }
+        return;
+    }
+
     uipod_rs_hud_set_clock((uint64_t)sdl_get_ms());
     if (uipod_rs_ui_plugin_present_gpu((uint32_t)win_w, (uint32_t)win_h))
         sdl_gl_swap_window();
@@ -612,7 +633,7 @@ bool uipod_gpu_ui_ensure_ready(void)
         return true;
 
     return uipod_rs_ui_init(sdl_gl_get_proc_address,
-                            ROCKBOX_DIR "/fonts/PixelMplus12-Regular.ttf");
+                            ROCKBOX_DIR "/fonts/NotoSansJP-Regular.ttf");
 }
 
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,
@@ -1133,14 +1154,26 @@ bool uipod_gpu_render_video_overlay(int panel_kind,
                                     const char *sub_line1,
                                     const char *sub_line2)
 {
-    if (panel_kind < 1 || panel_kind > 3)
+    if (panel_kind < 0 || panel_kind > 3)
         return false;
 
     if (!uipod_gpu_ui_ensure_ready())
         return false;
 
-    /* Hardware video composites `sim_lcd_surface` via `gl_present_lcd_fade` */
-    sdl_gl_set_gpu_active(false);
+    int win_w = LCD_WIDTH, win_h = LCD_HEIGHT;
+    sdl_gl_get_drawable_size(&win_w, &win_h);
+
+    if (panel_kind == 0)
+    {
+        s_curr_had_header = false;
+        sdl_gl_set_gpu_active(true);
+        if (!lcd_panel_is_dark() &&
+            uipod_rs_ui_present_video_overlay_gpu((uint32_t)win_w, (uint32_t)win_h, 0))
+        {
+            sdl_gl_swap_window();
+        }
+        return true;
+    }
 
     const uint32_t bg  = (uint32_t)global_settings.bg_color;
     const uint32_t fg  = (uint32_t)global_settings.fg_color;
@@ -1151,17 +1184,25 @@ bool uipod_gpu_render_video_overlay(int panel_kind,
         return false;
 
     const float W = (float)LCD_WIDTH;
+    uint32_t overlay_rows = 0;
 
     if (panel_kind == 1 || panel_kind == 2)
     {
+        overlay_rows = kVideoOverlayLayoutSpec.strip_rows;
+        uipod_rs_ui_plugin_fill_rect(0.0f,
+                                     kVideoOverlayLayoutSpec.strip_top,
+                                     W,
+                                     kVideoOverlayLayoutSpec.divider_stroke,
+                                     0.0f,
+                                     fg1);
         uipod_rs_ui_plugin_draw_progress_bar(bg, fg, fg1, fg2,
                                              kVideoOverlayLayoutSpec.bar_x,
                                              kVideoOverlayLayoutSpec.bar_y,
                                              kVideoOverlayLayoutSpec.bar_w,
                                              kVideoOverlayLayoutSpec.bar_h,
                                              progress_norm);
-        const float ty  = kVideoOverlayLayoutSpec.text_center_y;
-        const float fsz = kVideoOverlayLayoutSpec.hud_font_size;
+        const float ty   = kVideoOverlayLayoutSpec.text_center_y;
+        const float fsz  = kVideoOverlayLayoutSpec.hud_font_size;
         const uint8_t wt = kVideoOverlayLayoutSpec.font_weight;
 
         if (left_text && left_text[0])
@@ -1176,6 +1217,13 @@ bool uipod_gpu_render_video_overlay(int panel_kind,
     }
     else if (panel_kind == 3 && sub_line1 && sub_line1[0])
     {
+        overlay_rows = kVideoOverlayLayoutSpec.sub_strip_rows;
+        uipod_rs_ui_plugin_fill_rect(0.0f,
+                                     kVideoOverlayLayoutSpec.sub_strip_top,
+                                     W,
+                                     kVideoOverlayLayoutSpec.divider_stroke,
+                                     0.0f,
+                                     fg1);
         const float max_w = W - 2.0f * kVideoOverlayLayoutSpec.sub_margin_x;
         const uint8_t wt  = kVideoOverlayLayoutSpec.font_weight;
         float fsz1 = fit_line_font_size(sub_line1,
@@ -1206,5 +1254,16 @@ bool uipod_gpu_render_video_overlay(int panel_kind,
         }
     }
 
-    return uipod_rs_ui_plugin_present((uint8_t *)FBADDR(0, 0));
+    s_curr_had_header = false;
+    sdl_gl_set_gpu_active(true);
+    if (lcd_panel_is_dark())
+    {
+        (void)uipod_rs_ui_plugin_flush_fbo();
+        return true;
+    }
+
+    if (!uipod_rs_ui_present_video_overlay_gpu((uint32_t)win_w, (uint32_t)win_h, overlay_rows))
+        return false;
+    sdl_gl_swap_window();
+    return true;
 }

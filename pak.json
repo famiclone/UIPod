@@ -1,6 +1,6 @@
 {
   "name": "UIPod",
-  "version": "v0.9.0",
+  "version": "v0.9.1",
   "type": "TOOL",
   "description": "An iPod-inspired offline, Navidrome & Jellyfin media player for the TrimUI Brick/Hammer with GPU UI and visualizations.",
   "author": "famiclone",
@@ -13,6 +13,7 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.9.1": "- Fixed mid-track forward skips, clipped track endings, stuck 0:00 crossfade countdowns, and ~500ms track-switch audio dropouts with lock-safe ring commits, full EOF tail draining, latency-accurate Dual-Deck playhead & midpoint handoff, and sub-20ms anti-click track splicing\n- Added Direct DAC (hw:0,0) hardware ALSA output and 3.5mm Low-Shelf (Subtle / Warm / Deep) wired headphone bass compensation in Settings -> Sound\n- Added Beat Stack music-synced Stack Attack × Lumines rhythm-puzzle game under Extras -> Plugins and unified background BPM/beat-grid track intelligence across DJ Crossfade, Sound Racer, Pulsar Vanguard, and Beat Stack\n- Added Noto Sans JP CJK vector font fallback for Japanese, Chinese, and Korean metadata and synced 1:1 v0.9.1 parity in the WebAssembly simulator",
     "v0.9.0": "- Added Unified Stacked HUD overlay system with choreographed floating cards for Volume, multi-line Toasts, live Progress bars, and non-destructive Confirmation dialogs across Firmware, Android, and WebAssembly\n- Migrated all remaining video HUD, .srt subtitle, Hold lock, and message screens to crisp vector Geologica typography and pruned ~42 MB of legacy bitmap fonts from TrimUI Brick .pak and Android .apk packages\n- Hardened ListenBrainz authentication and endpoint handling with automatic token sanitization (stripping quotes, whitespace, and scheme prefixes) and canonical API URL normalization\n- Synced 1:1 Stacked HUD confirmation, progress, and toast behavior in the WebAssembly simulator",
     "v0.8.2": "- Fixed Video Settings context menu (Hold A / MENU) input freeze and flicker-free GPU overlay transition during active video playback, with reliable pause/resume and clean Hold-button release handling\n- Hardened hardware video player (tplayerslave / ffprobe / ffmpeg) child process lifecycle with PR_SET_PDEATHSIG, FD_CLOEXEC, and orphan cleanup so background video processes never outlive UIPod\n- Synced 1:1 Video Settings (Aspect Fit, Audio Track, Subtitles) and EN/UA localization parity in the WebAssembly simulator, and hardened deploy-brick.sh process termination & auto-repackaging",
     "v0.8.1": "- Replaced the legacy blocking \"Nothing to resume\" modal with a non-blocking floating HUD toast that keeps the active menu cursor intact\n- Unified Volume and toast HUD overlays in uipod-ui with shared backdrop/border styling, smooth top-slide entrance/exit curves, and jitter-free timer coexistence across Firmware and WebAssembly",

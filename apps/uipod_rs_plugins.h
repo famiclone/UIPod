@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 7u
+#define UIPOD_PLUGIN_API_VERSION 8u
 
 enum uipod_plugin_category
 {
@@ -72,6 +72,62 @@ struct UIPodPluginApuTelemetry
     uint16_t                       mute_mask;
     uint16_t                       pad;
     struct UIPodPluginChannelState channels[8];
+};
+
+struct UIPodPluginTrackAnalysis
+{
+    uint64_t key_hash;
+    uint32_t record_crc32;
+    uint16_t subtrack_index;
+    uint8_t  channels;
+    uint8_t  analysis_flags;
+    uint32_t duration_ms;
+    uint32_t sample_rate;
+    float    bpm;
+    float    bpm_confidence;
+    uint32_t first_beat_offset_ms;
+    float    tag_tbpm;
+    float    tonal_balance[5];
+    float    avg_rms;
+    float    crest_factor;
+    float    kick_baseline;
+    float    snare_baseline;
+    uint8_t  title[64];
+    uint8_t  artist[56];
+    uint8_t  album[40];
+    uint8_t  genre[20];
+    uint8_t  energy_contour[256];
+};
+
+struct UIPodPluginLiveTelemetry
+{
+    uint64_t                       track_key_hash;
+    uint64_t                       beat_index;
+    uint32_t                       seq_generation;
+    uint8_t                        status;
+    uint8_t                        has_analysis;
+    uint8_t                        bar_beat;
+    uint8_t                        beat_flags;
+    uint32_t                       playhead_ms;
+    uint32_t                       duration_ms;
+    uint32_t                       sample_rate;
+    float                          output_latency_ms;
+    float                          bpm;
+    float                          bpm_confidence;
+    float                          beat_phase;
+    float                          bar_phase;
+    float                          kick_impulse;
+    float                          snare_impulse;
+    float                          structural_energy;
+    float                          vu_l;
+    float                          vu_r;
+    float                          vu_peak_l;
+    float                          vu_peak_r;
+    float                          bands_5[5];
+    uint8_t                        spectrum_64[64];
+    uint8_t                        spectrum_peak_64[64];
+    int8_t                         waveform_256[256];
+    struct UIPodPluginApuTelemetry apu;
 };
 
 struct UIPodPluginApi
@@ -152,6 +208,10 @@ struct UIPodPluginApi
 
     /* Hardware APU Channel Telemetry Extension (v7+) */
     bool     (*audio_get_apu_telemetry)(struct UIPodPluginApuTelemetry *out);
+
+    /* Unified Track Intelligence Extension (v8+) */
+    bool     (*audio_get_track_analysis)(struct UIPodPluginTrackAnalysis *out);
+    bool     (*audio_get_live_telemetry)(struct UIPodPluginLiveTelemetry *out);
 };
 
 struct UIPodPluginInfoC

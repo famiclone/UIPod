@@ -341,6 +341,25 @@ impl UiEngine {
         Ok(engine)
     }
 
+    /// Registers an in-memory CJK fallback `.ttf` (e.g. `NotoSansJP-Regular.ttf` fetched
+    /// asynchronously in `uipod-wasm`) behind all four `Geologica` weights.
+    pub fn add_cjk_fallback_bytes(&mut self, font_bytes: &[u8]) -> Result<(), String> {
+        let fallback = self
+            .canvas
+            .add_font_mem(font_bytes)
+            .map_err(|e| format!("CJK fallback font load failed: {e:?}"))?;
+        for chain in [
+            &mut self.fonts_regular,
+            &mut self.fonts_medium,
+            &mut self.fonts_semibold,
+            &mut self.fonts_bold,
+        ] {
+            chain.truncate(1);
+            chain.push(fallback);
+        }
+        Ok(())
+    }
+
     /// Truncates `text` with `"..."` on UTF-8 character boundaries so its rendered width fits `max_width`.
     fn truncate_ellipsis(&mut self, text: &str, max_width: f32, paint: &Paint) -> String {
         if text.is_empty() || max_width <= 4.0 {
@@ -3828,21 +3847,47 @@ impl UiEngine {
         self.restore_gl_state();
     }
 
-    /// Synchronizes the most recently rendered `self.fbo_image` into Rockbox's CPU `1024x768` `{b, g, r}`
-    /// framebuffer on demand (resampling cleanly via `compat_fbo_image` when `fbo_w/h != 1024x768`).
-    pub fn plugin_sync_fbo_into_bgr(&mut self, fb_bgr: &mut [u8]) {
+    /// Zero-copy GPU presentation for hardware video playback (`video_through`):
+    /// clears the GL window backbuffer to `RGBA(0, 0, 0, 0)` so the hardware video plane
+    /// underneath shows through, and blits only the bottom `bottom_rows_768` scanlines
+    /// (`Progress`, `Volume`, or `.srt` `Subtitle` strip) from `self.fbo_image`.
+    pub fn present_video_overlay_gpu(&mut self, win_w: u32, win_h: u32, bottom_rows_768: u32) {
         self.canvas.reset_scissor();
         self.canvas.flush();
 
-        if self.fbo_w == WIDTH && self.fbo_h == HEIGHT {
-            self.canvas.reset();
-            self.canvas.set_size(WIDTH as u32, HEIGHT as u32, 1.0);
-            self.canvas
-                .set_render_target(RenderTarget::Image(self.fbo_image));
-            self.finish_and_read_top_rows(HEIGHT);
-            self.unpack_top_rows_to_bgr(HEIGHT, fb_bgr);
-            return;
+        let sw = win_w.max(1);
+        let sh = win_h.max(1);
+        self.canvas.set_size(sw, sh, 1.0);
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.reset_transform();
+        self.canvas.reset_scissor();
+        self.canvas
+            .clear_rect(0, 0, sw, sh, Color::rgba(0, 0, 0, 0));
+
+        let rows = bottom_rows_768.min(HEIGHT as u32);
+        if rows > 0 {
+            let strip_h = ((rows as f32) * (sh as f32) / (HEIGHT as f32))
+                .round()
+                .max(1.0);
+            let strip_y = (sh as f32 - strip_h).max(0.0);
+            let paint = Paint::image(self.fbo_image, 0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+            let mut quad = VgPath::new();
+            quad.rect(0.0, strip_y, sw as f32, strip_h);
+            self.canvas.fill_path(&quad, &paint);
         }
+        self.canvas.flush();
+
+        self.canvas
+            .set_size(self.fbo_w as u32, self.fbo_h as u32, 1.0);
+        self.restore_gl_state();
+    }
+
+    /// Synchronizes the most recently rendered `self.fbo_image` into Rockbox's CPU `1024x768` `{b, g, r}`
+    /// framebuffer on demand (always blitting into `compat_fbo_image` so `finish_and_read_top_rows`
+    /// executes a non-empty `flush()` with `compat`'s FBO bound before `glReadPixels`).
+    pub fn plugin_sync_fbo_into_bgr(&mut self, fb_bgr: &mut [u8]) {
+        self.canvas.reset_scissor();
+        self.canvas.flush();
 
         let compat = match self.compat_fbo_image {
             Some(id) => id,
@@ -3964,5 +4009,129 @@ mod tests {
         assert_eq!(hud.active_count(), 2);
         assert!(hud.active_payload_at(0).unwrap().is_volume());
         assert!(hud.active_payload_at(1).unwrap().is_toast());
+    }
+
+    #[test]
+    fn geologica_and_noto_cjk_fallback_cover_en_ua_and_cjk_without_overlap_drift() {
+        let noto_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fonts/NotoSansJP-Regular.ttf");
+        let noto_bytes = std::fs::read(&noto_path).expect("read NotoSansJP-Regular.ttf");
+
+        // Verify valid static TrueType sfnt (`0x00010000`) and non-empty font tables
+        assert_eq!(&noto_bytes[..4], &[0x00, 0x01, 0x00, 0x00]);
+        assert!(FONT_GEOLOGICA_REGULAR.len() > 50_000);
+        assert!(FONT_GEOLOGICA_SEMIBOLD.len() > 50_000);
+
+        // Parse CMAP Format 4 / 12 via minimal big-endian SFNT walker to prove exact glyph resolution:
+        // Geologica covers EN + UA (`Касета`) and yields 0 (`.notdef`) for CJK (`カセット`, `音楽`, `「」`),
+        // which then fall through cleanly to `NotoSansJP-Regular.ttf`!
+        fn has_glyph_in_ttf(ttf: &[u8], cp: u32) -> bool {
+            let num_tables = u16::from_be_bytes([ttf[4], ttf[5]]) as usize;
+            let mut cmap_off = None;
+            for i in 0..num_tables {
+                let rec = 12 + i * 16;
+                if &ttf[rec..rec + 4] == b"cmap" {
+                    cmap_off = Some(u32::from_be_bytes([
+                        ttf[rec + 8],
+                        ttf[rec + 9],
+                        ttf[rec + 10],
+                        ttf[rec + 11],
+                    ]) as usize);
+                    break;
+                }
+            }
+            let base = cmap_off.expect("cmap table");
+            let n_sub = u16::from_be_bytes([ttf[base + 2], ttf[base + 3]]) as usize;
+            // Prefer Format 12 if present, else Format 4
+            let mut f12 = None;
+            let mut f4 = None;
+            for i in 0..n_sub {
+                let r = base + 4 + i * 8;
+                let sub = base
+                    + u32::from_be_bytes([ttf[r + 4], ttf[r + 5], ttf[r + 6], ttf[r + 7]])
+                        as usize;
+                let fmt = u16::from_be_bytes([ttf[sub], ttf[sub + 1]]);
+                if fmt == 12 {
+                    f12 = Some(sub);
+                } else if fmt == 4 {
+                    f4 = Some(sub);
+                }
+            }
+            if let Some(sub) = f12 {
+                let n_groups =
+                    u32::from_be_bytes([ttf[sub + 12], ttf[sub + 13], ttf[sub + 14], ttf[sub + 15]])
+                        as usize;
+                for g in 0..n_groups {
+                    let o = sub + 16 + g * 12;
+                    let start = u32::from_be_bytes([ttf[o], ttf[o + 1], ttf[o + 2], ttf[o + 3]]);
+                    let end =
+                        u32::from_be_bytes([ttf[o + 4], ttf[o + 5], ttf[o + 6], ttf[o + 7]]);
+                    let gid =
+                        u32::from_be_bytes([ttf[o + 8], ttf[o + 9], ttf[o + 10], ttf[o + 11]]);
+                    if cp >= start && cp <= end {
+                        return (gid + (cp - start)) != 0;
+                    }
+                }
+                return false;
+            }
+            if let Some(sub) = f4 {
+                if cp > 0xFFFF {
+                    return false;
+                }
+                let seg_count = (u16::from_be_bytes([ttf[sub + 6], ttf[sub + 7]]) / 2) as usize;
+                let end_codes = sub + 14;
+                let start_codes = end_codes + seg_count * 2 + 2;
+                let id_deltas = start_codes + seg_count * 2;
+                let id_range_offsets = id_deltas + seg_count * 2;
+                for s in 0..seg_count {
+                    let end_c =
+                        u16::from_be_bytes([ttf[end_codes + s * 2], ttf[end_codes + s * 2 + 1]])
+                            as u32;
+                    let start_c = u16::from_be_bytes([
+                        ttf[start_codes + s * 2],
+                        ttf[start_codes + s * 2 + 1],
+                    ]) as u32;
+                    if cp >= start_c && cp <= end_c {
+                        let delta = i16::from_be_bytes([
+                            ttf[id_deltas + s * 2],
+                            ttf[id_deltas + s * 2 + 1],
+                        ]) as i32;
+                        let ro_pos = id_range_offsets + s * 2;
+                        let ro = u16::from_be_bytes([ttf[ro_pos], ttf[ro_pos + 1]]) as usize;
+                        if ro == 0 {
+                            return (((cp as i32 + delta) & 0xFFFF) as u16) != 0;
+                        }
+                        let glyph_idx_addr = ro_pos + ro + ((cp - start_c) as usize) * 2;
+                        let raw =
+                            u16::from_be_bytes([ttf[glyph_idx_addr], ttf[glyph_idx_addr + 1]]);
+                        if raw == 0 {
+                            return false;
+                        }
+                        return (((raw as i32 + delta) & 0xFFFF) as u16) != 0;
+                    }
+                }
+            }
+            false
+        }
+
+        // Primary Geologica handles EN + UA Cyrillic (`Касета`, `Ї`, `Є`, `Ґ`)
+        for ch in "UIPod Касета ЇЄҐ 0123456789".chars().filter(|c| !c.is_whitespace()) {
+            assert!(
+                has_glyph_in_ttf(FONT_GEOLOGICA_SEMIBOLD, ch as u32),
+                "Geologica missing expected EN/UA glyph {ch:?}"
+            );
+        }
+
+        // CJK (`カセット`, Hiragana `あいう`, Kanji `音楽`, quotes `「」`, fullwidth `Ａ`) fall back cleanly to NotoSansJP
+        for ch in "カセットあいう音楽日本語「」Ａ".chars() {
+            assert!(
+                !has_glyph_in_ttf(FONT_GEOLOGICA_SEMIBOLD, ch as u32),
+                "Expected {ch:?} to bypass Geologica to CJK fallback"
+            );
+            assert!(
+                has_glyph_in_ttf(&noto_bytes, ch as u32),
+                "NotoSansJP-Regular.ttf missing CJK glyph {ch:?}"
+            );
+        }
     }
 }

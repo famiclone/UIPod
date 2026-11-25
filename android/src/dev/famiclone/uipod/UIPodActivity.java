@@ -685,22 +685,6 @@ public class UIPodActivity extends SDLActivity implements SurfaceHolder.Callback
     }
 
     private void rewriteConfigPaths(File rbDir, boolean freshInstall) {
-        File themesDir = new File(rbDir, "themes");
-        File[] themes = themesDir.listFiles();
-        if (themes != null) {
-            for (File t : themes) {
-                if (t.isFile() && t.getName().endsWith(".cfg")) {
-                    String s = readSmallText(t);
-                    if (s != null) {
-                        s = s.replace("/.rockbox", CANONICAL_RBDIR)
-                             .replace("/tmp/uipod", CANONICAL_RBDIR)
-                             .replace("/tmp/trimpod", CANONICAL_RBDIR);
-                        writeSmallText(t, s);
-                    }
-                }
-            }
-        }
-
         File[] cfgs = new File[] {
             new File(rbDir, "config.cfg"),
             new File(rbDir, ".resume.cfg"),
@@ -713,7 +697,8 @@ public class UIPodActivity extends SDLActivity implements SurfaceHolder.Callback
                 if (s != null) {
                     s = s.replace("/.rockbox", CANONICAL_RBDIR)
                          .replace("/tmp/uipod", CANONICAL_RBDIR)
-                         .replace("/tmp/trimpod", CANONICAL_RBDIR);
+                         .replace("/tmp/trimpod", CANONICAL_RBDIR)
+                         .replaceAll("(?m)^(sbs|wps|font):\\s*.*(1ST_GEN_REMIX|Geologica).*$", "$1: -");
                     if (freshInstall) {
                         s = s.replace("volume_ddb: -220", "volume_ddb: 0")
                              .replace("volume_ddb: -22", "volume_ddb: 0")

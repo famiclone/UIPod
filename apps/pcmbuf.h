@@ -48,6 +48,7 @@ enum pcm_track_change_type
 };
 void pcmbuf_monitor_track_change(bool monitor);
 void pcmbuf_start_track_change(enum pcm_track_change_type type);
+void pcmbuf_dj_commit_midpoint_handoff(void);
 
 /* Crossfade */
 #ifdef HAVE_CROSSFADE
@@ -79,6 +80,7 @@ void pcmbuf_sync_position_update(void);
 /* Misc */
 bool pcmbuf_is_lowdata(void);
 void pcmbuf_set_low_latency(bool state);
+size_t pcmbuf_unplayed_frames(void);
 size_t pcmbuf_peek_ahead_s16(uint32_t ahead_ms, int16_t *out, size_t max_frames);
 
 #endif /* PCMBUF_H */

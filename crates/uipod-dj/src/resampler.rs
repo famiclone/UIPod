@@ -10,6 +10,7 @@ pub struct VinylResampler {
     hist_l: [f32; 4],
     hist_r: [f32; 4],
     primed: usize,
+    eof_pushed: u8,
 }
 
 impl Default for VinylResampler {
@@ -25,6 +26,7 @@ impl VinylResampler {
             hist_l: [0.0; 4],
             hist_r: [0.0; 4],
             primed: 0,
+            eof_pushed: 0,
         }
     }
 
@@ -33,6 +35,19 @@ impl VinylResampler {
         self.hist_l = [0.0; 4];
         self.hist_r = [0.0; 4];
         self.primed = 0;
+        self.eof_pushed = 0;
+    }
+
+    /// Exact number of already-consumed input frames still buffered inside the 4-tap Hermite history.
+    #[inline]
+    pub fn unplayed_input_frames(&self) -> f64 {
+        if self.primed == 0 {
+            0.0
+        } else if self.primed < 4 {
+            1.0
+        } else {
+            (2.0 - (self.eof_pushed as f64) - self.frac).max(0.0)
+        }
     }
 
     #[inline]
@@ -69,9 +84,22 @@ impl VinylResampler {
         tempo_ratio: f32,
         out_interleaved: &mut [f32],
     ) -> (usize, usize) {
+        self.process_with_eof(src_interleaved, tempo_ratio, false, out_interleaved)
+    }
+
+    /// Pull up to `out_frames` stereo frames from `src_interleaved` at `tempo_ratio`,
+    /// optionally draining the 2-sample Hermite lookahead tail when `is_eof` is `true`.
+    pub fn process_with_eof(
+        &mut self,
+        src_interleaved: &[f32],
+        tempo_ratio: f32,
+        is_eof: bool,
+        out_interleaved: &mut [f32],
+    ) -> (usize, usize) {
         let in_avail = src_interleaved.len() / 2;
         let out_cap = out_interleaved.len() / 2;
-        if out_cap == 0 || in_avail == 0 {
+        if out_cap == 0 || (in_avail == 0 && (!is_eof || self.primed == 0 || self.eof_pushed >= 2))
+        {
             return (0, 0);
         }
 
@@ -103,20 +131,37 @@ impl VinylResampler {
         }
 
         if self.primed < 4 {
+            if is_eof && self.primed == 3 && self.eof_pushed == 0 && out_cap > 0 {
+                out_interleaved[0] = self.hist_l[3];
+                out_interleaved[1] = self.hist_r[3];
+                self.eof_pushed = 2;
+                return (in_idx, 1);
+            }
             return (in_idx, 0);
         }
 
         while out_idx < out_cap {
             while self.frac >= 1.0 {
-                if in_idx >= in_avail {
+                if in_idx < in_avail {
+                    self.push_input_frame(
+                        src_interleaved[in_idx * 2],
+                        src_interleaved[in_idx * 2 + 1],
+                    );
+                    in_idx += 1;
+                    self.frac -= 1.0;
+                } else if is_eof && self.eof_pushed < 2 {
+                    let l = self.hist_l[3];
+                    let r = self.hist_r[3];
+                    self.push_input_frame(l, r);
+                    self.eof_pushed += 1;
+                    self.frac -= 1.0;
+                } else {
                     return (in_idx, out_idx);
                 }
-                self.push_input_frame(
-                    src_interleaved[in_idx * 2],
-                    src_interleaved[in_idx * 2 + 1],
-                );
-                in_idx += 1;
-                self.frac -= 1.0;
+            }
+
+            if is_eof && in_idx >= in_avail && self.eof_pushed >= 2 {
+                break;
             }
 
             let t = self.frac as f32;

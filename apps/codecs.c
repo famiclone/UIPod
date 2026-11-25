@@ -218,7 +218,13 @@ static int rust_codec_run(struct codec_api *api)
 
     while (1)
     {
-        pcmbuf_set_low_latency(low_lat && uipod_rs_dj_get_phase() == 0);
+        uint32_t dur_ms = uipod_rs_codec_duration_ms();
+        uint32_t el_ms  = uipod_rs_codec_elapsed_ms();
+        bool near_eof   = !api->loop_track() &&
+                          uipod_rs_nsf_get_endless_loop() == 0 &&
+                          dur_ms > 4000 &&
+                          (el_ms + 3000 >= dur_ms);
+        pcmbuf_set_low_latency(low_lat && !near_eof && uipod_rs_dj_get_phase() == 0);
 
         intptr_t param = 0;
         long action = api->get_command(&param);

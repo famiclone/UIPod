@@ -571,6 +571,10 @@ struct user_settings
     bool dj_keep_album_gapless; /* Respect consecutive same-album tracks when Shuffle OFF */
     bool dj_quick_cut_next;     /* ~2s DJ Filter Wash on single manual Next (R1) */
 
+    /* Hardware Output & 3.5mm Smooth Bass Low-Shelf */
+    bool direct_dac_hw0;        /* Direct 48 kHz hw:0,0 output bypassing dmix */
+    int  hp35_low_shelf;        /* 0=Off, 1=Subtle (+2.5dB), 2=Warm (+4.0dB), 3=Deep (+6.0dB) */
+
 #if defined(BUTTON_REC) || \
     (CONFIG_KEYPAD == GIGABEAT_PAD) || \
     (CONFIG_KEYPAD == IPOD_4G_PAD) || \
@@ -604,5 +608,6 @@ extern struct system_status global_status;
 void uipod_tape_fx_apply(void);
 bool uipod_fx_is_active(void);
 void uipod_eq_apply(void);
+void uipod_audio_hw_apply(void);
 
 #endif /* __SETTINGS_H__ */

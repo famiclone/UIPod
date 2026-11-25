@@ -118,6 +118,13 @@ static size_t chunk_transidx;
 
 static size_t pcmbuf_watermark = 0;
 
+/* Gap-free manual skip keepalive & anti-click cosine/Hermite splice state */
+#define SKIP_KEEPALIVE_FRAMES 256u
+static int16_t s_keepalive_zeros[SKIP_KEEPALIVE_FRAMES * 2];
+static volatile int s_manual_skip_keepalive_chunks = 0;
+static volatile bool s_fade_in_next_write = false;
+static void *s_last_req_write_ptr = NULL;
+
 static bool low_latency_mode = false;
 
 static bool pcmbuf_sync_position = false;
@@ -214,8 +221,8 @@ static void start_audio_playback(void)
    a full chunk even if only partially filled) */
 static size_t pcmbuf_unplayed_bytes(void)
 {
-    size_t ridx = chunk_ridx;
-    size_t widx = chunk_widx;
+    size_t ridx = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
 
     if (ridx > widx)
         widx += pcmbuf_size;
@@ -282,8 +289,8 @@ static bool index_committed(size_t index)
     if (index == INVALID_BUF_INDEX)
         return false;
 
-    size_t ridx = chunk_ridx;
-    size_t widx = chunk_widx;
+    size_t ridx = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
 
     if (widx < ridx)
     {
@@ -308,7 +315,7 @@ void snip_buffer_tail(size_t index, int offset)
     if (!index_committed(index) && index != chunk_widx)
         return;
 
-    chunk_widx = index;
+    __atomic_store_n(&chunk_widx, index, __ATOMIC_RELEASE);
     pcmbuf_bytes_waiting = 0;
     index_chunkdesc(index)->pos_key = 0;
 
@@ -332,29 +339,48 @@ static void commit_chunks(size_t threshold)
     size_t index = chunk_widx;
     size_t end_index = index + pcmbuf_bytes_waiting;
 
-    /* Copy to the beginning of the buffer all data that must wrap */
+    /* Copy to the beginning of the buffer all data that must wrap BEFORE
+       publishing descriptor size / chunk_widx to trimpod-pcm! */
     if (end_index > pcmbuf_size)
         memcpy(pcmbuf_buffer, pcmbuf_guardbuf, end_index - pcmbuf_size);
 
+    unsigned long byterate = BYTERATE;
+
+    pcm_play_lock();
     struct chunkdesc *desc = index_chunkdesc(index);
+    unsigned int base_key = desc->pos_key;
+    unsigned long cur_el  = desc->elapsed;
+    off_t cur_off         = desc->offset;
+    size_t acc_bytes      = 0;
 
     do
     {
         size_t size = MIN(pcmbuf_bytes_waiting, PCMBUF_CHUNK_SIZE);
         pcmbuf_bytes_waiting -= size;
 
+        if (acc_bytes > 0 && base_key != 0 && desc->pos_key == 0 && byterate > 0)
+        {
+            desc->pos_key = (uint16_t)base_key;
+            desc->elapsed = cur_el + (unsigned long)(((uint64_t)acc_bytes * 1000ULL) / byterate);
+            desc->offset  = cur_off;
+        }
+        acc_bytes += size;
+
         /* Fill in the values in the new buffer chunk */
         desc->size = (uint16_t)size;
 
-        /* Advance the current write chunk and make it available to the
-           PCM callback */
-        chunk_widx = index = index_next(index);
+        /* Advance the current write chunk with release ordering so ARMv8
+           reader core sees sample payload + desc fields before chunk_widx */
+        index = index_next(index);
         desc = index_chunkdesc(index);
 
-        /* Reset it before using it */
+        /* Reset next slot before exposing chunk_widx */
         desc->pos_key = 0;
+        desc->size = 0;
+        __atomic_store_n(&chunk_widx, index, __ATOMIC_RELEASE);
     }
     while (pcmbuf_bytes_waiting >= threshold);
+    pcm_play_unlock();
 }
 
 /* If uncommitted data count is above or equal to the threshold, commit it */
@@ -512,21 +538,66 @@ void * pcmbuf_request_buffer(int *count)
     else
 #endif
     {
-        /* Give the maximum amount available if there's more */
-        if (size + PCMBUF_CHUNK_SIZE < freespace)
-            size = freespace - PCMBUF_CHUNK_SIZE;
-
+        /* Respect `PCMBUF_MAX_BUFFER` (`32 KiB`) so codec writes commit in smooth,
+           bounded increments rather than 800+ KiB bursts. */
         buf = get_write_buffer(&size);
+        s_last_req_write_ptr = buf;
     }
 
     *count = size / PCMBUF_SAMPLE_SIZE;
     return buf;
 }
 
+/* Apply C1-continuous Hermite smoothstep (`3t^2 - 2t^3`) fade-in or fade-out
+   across `frames` stereo S16 samples (`fade_in == true`: 0 -> 1, `false`: 1 -> 0). */
+static void apply_smooth_fade_s16(int16_t *stereo, size_t frames, bool fade_in)
+{
+    if (!stereo || frames == 0)
+        return;
+    if (frames == 1)
+    {
+        if (!fade_in)
+        {
+            stereo[0] = 0;
+            stereo[1] = 0;
+        }
+        return;
+    }
+    uint32_t denom = (uint32_t)(frames - 1);
+    for (size_t i = 0; i < frames; i++)
+    {
+        /* Q15 normalized progress t in [0, 32768] */
+        uint32_t t = (uint32_t)(((uint64_t)i * 32768ULL) / denom);
+        if (!fade_in)
+            t = 32768U - t;
+        /* smoothstep(t) = t^2 * (3 - 2t) in Q15 */
+        uint32_t t2 = (t * t) >> 15;
+        uint32_t three_minus_2t = 98304U - (t << 1); /* 3.0 in Q15 = 98304 */
+        int32_t gain_q15 = (int32_t)((t2 * three_minus_2t) >> 15);
+        stereo[i * 2]     = (int16_t)(((int32_t)stereo[i * 2] * gain_q15) >> 15);
+        stereo[i * 2 + 1] = (int16_t)(((int32_t)stereo[i * 2 + 1] * gain_q15) >> 15);
+    }
+}
+
 /* Handle new samples to the buffer */
 void pcmbuf_write_complete(int count, unsigned long elapsed, off_t offset)
 {
     size_t size = count * PCMBUF_SAMPLE_SIZE;
+    bool immediate_commit = false;
+
+    if (s_fade_in_next_write && count > 0 && s_last_req_write_ptr != NULL)
+    {
+        unsigned long freq = mixer_get_frequency();
+        if (freq == 0)
+            freq = 44100UL;
+        size_t fade_frames = (size_t)((freq * 5UL) / 1000UL); /* 5 ms anti-click fade-in */
+        if (fade_frames > (size_t)count)
+            fade_frames = (size_t)count;
+        apply_smooth_fade_s16((int16_t *)s_last_req_write_ptr, fade_frames, true);
+        s_fade_in_next_write = false;
+        immediate_commit = true;
+    }
+    s_last_req_write_ptr = NULL;
 
 #ifdef HAVE_CROSSFADE
     if (crossfade_status != CROSSFADE_INACTIVE)
@@ -537,17 +608,30 @@ void pcmbuf_write_complete(int count, unsigned long elapsed, off_t offset)
 #endif
     {
         stamp_chunk(index_chunkdesc(chunk_widx), elapsed, offset);
-        commit_write_buffer(size);
+        if (immediate_commit)
+        {
+            pcmbuf_bytes_waiting += size;
+            commit_if_needed(COMMIT_ALL_DATA);
+            pcm_play_lock();
+            s_manual_skip_keepalive_chunks = 0;
+            pcm_play_unlock();
+        }
+        else
+        {
+            commit_write_buffer(size);
+        }
     }
 
     /* Revert to position updates by PCM */
     pcmbuf_sync_position = false;
 
-    if (low_latency_mode &&
-        mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) == CHANNEL_STOPPED &&
-        pcmbuf_unplayed_bytes() >= data_level(1))
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) == CHANNEL_STOPPED)
     {
-        start_audio_playback();
+        size_t start_thresh = low_latency_mode
+            ? data_level(1)
+            : (PCMBUF_CHUNK_SIZE * 2); /* ~92 ms fast start instead of 1000 ms LOW_DATA stall */
+        if (pcmbuf_unplayed_bytes() >= start_thresh)
+            start_audio_playback();
     }
 }
 
@@ -574,12 +658,16 @@ static unsigned int get_next_required_pcmbuf_chunks(void)
 static void init_buffer_state(void)
 {
     /* Reset counters */
-    chunk_ridx = chunk_widx = 0;
+    __atomic_store_n(&chunk_ridx, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&chunk_widx, 0, __ATOMIC_RELEASE);
     pcmbuf_bytes_waiting = 0;
+    s_manual_skip_keepalive_chunks = 0;
+    s_fade_in_next_write = false;
+    s_last_req_write_ptr = NULL;
 
-    /* Reset first descriptor */
-    if (pcmbuf_descriptors)
-        pcmbuf_descriptors->pos_key = 0;
+    /* Zero all descriptors so recycled audiobuf memory never leaks stale pos_key/size */
+    if (pcmbuf_descriptors && pcmbuf_desc_count > 0)
+        memset(pcmbuf_descriptors, 0, pcmbuf_desc_count * sizeof(struct chunkdesc));
 
     /* Clear change notification */
     chunk_transidx = INVALID_BUF_INDEX;
@@ -688,6 +776,79 @@ void pcmbuf_monitor_track_change(bool monitor)
     pcm_play_unlock();
 }
 
+/* Commit pre-midpoint (`p < 0.50`) DJ mix chunk, arm `chunk_transidx`, and advance
+   `position_key` so post-midpoint (`p >= 0.50`) chunks immediately drive `Deck B`'s playhead! */
+void pcmbuf_dj_commit_midpoint_handoff(void)
+{
+    commit_if_needed(COMMIT_ALL_DATA);
+    pcmbuf_monitor_track_change(true);
+    if (++position_key > POSITION_KEY_MAX)
+        position_key = 1;
+}
+
+/* Perform a sub-20ms click-free manual skip splice WITHOUT stopping `PCM_MIXER_CHAN_PLAYBACK`
+   or closing/starving `trimpod-pcm`:
+   - Applies a 6 ms C1-continuous fade-out on the next outgoing chunk (`index_next(chunk_ridx)`),
+   - Snips all stale outgoing tail chunks past that 6 ms ramp,
+   - Keeps `trimpod-pcm` running continuously with tiny 5.8 ms zero-stuffed keepalive slices
+     until the first incoming frame arrives (which receives a 5 ms fade-in + immediate commit). */
+static void pcmbuf_manual_skip_splice(bool dj_quick_cut_armed)
+{
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) != CHANNEL_PLAYING ||
+        !pcmbuf_buffer || !pcmbuf_descriptors || pcmbuf_size == 0)
+    {
+        pcmbuf_play_stop();
+        if (dj_quick_cut_armed)
+            s_fade_in_next_write = true;
+        return;
+    }
+
+    unsigned long freq = mixer_get_frequency();
+    if (freq == 0)
+        freq = 44100UL;
+    size_t fade_out_frames = (size_t)((freq * 6UL) / 1000UL); /* 6 ms raised-cosine/Hermite fade-out */
+    if (fade_out_frames < 32U)
+        fade_out_frames = 32U;
+
+    pcm_play_lock();
+    chunk_transidx = INVALID_BUF_INDEX;
+    pcmbuf_bytes_waiting = 0;
+    s_last_req_write_ptr = NULL;
+    crossfade_cancel();
+
+    size_t ridx = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
+    if (ridx != widx)
+    {
+        size_t next_idx = index_next(ridx);
+        if (next_idx != widx)
+        {
+            struct chunkdesc *ndesc = index_chunkdesc(next_idx);
+            size_t avail_frames = ((size_t)ndesc->size) / PCMBUF_SAMPLE_SIZE;
+            if (avail_frames > 0)
+            {
+                size_t f_frames = MIN(avail_frames, fade_out_frames);
+                int16_t *samples = (int16_t *)index_buffer(next_idx);
+                apply_smooth_fade_s16(samples, f_frames, false);
+                ndesc->size = (uint16_t)(f_frames * PCMBUF_SAMPLE_SIZE);
+                ndesc->pos_key = 0;
+                size_t new_widx = index_next(next_idx);
+                struct chunkdesc *wdesc = index_chunkdesc(new_widx);
+                wdesc->pos_key = 0;
+                wdesc->size = 0;
+                __atomic_store_n(&chunk_widx, new_widx, __ATOMIC_RELEASE);
+            }
+        }
+    }
+
+    s_manual_skip_keepalive_chunks = 64; /* up to ~370 ms zero-stuffed keepalive bridge */
+    s_fade_in_next_write = true;
+    pcm_play_unlock();
+
+    pcmbuf_sync_position = false;
+    trigger_cpu_boost();
+}
+
 void pcmbuf_start_track_change(enum pcm_track_change_type type)
 {
     /* Commit all outstanding data before starting next track - tracks don't
@@ -706,27 +867,38 @@ void pcmbuf_start_track_change(enum pcm_track_change_type type)
 #endif
     bool auto_skip = type != TRACK_CHANGE_MANUAL;
 
-    /* Update position key so that:
-       1) Positions are keyed to the track to which they belong for sync
-          purposes
-
-       2) Buffers stamped with the outgoing track's positions are restamped
-          to the incoming track's positions when crossfading
-    */
-    if (++position_key > POSITION_KEY_MAX)
-        position_key = 1;
-
     if (type == TRACK_CHANGE_END_OF_DATA)
     {
+        /* Drain any captured DJ Deck A tail BEFORE incrementing position_key */
         uipod_dj_on_end_of_data();
+        commit_if_needed(COMMIT_ALL_DATA);
+        if (++position_key > POSITION_KEY_MAX)
+            position_key = 1;
         crossfade_cancel();
+        pcmbuf_monitor_track_change(true);
 
         /* Fill might not have been above watermark */
         start_audio_playback();
+        return;
     }
+
+    bool dj_deferred = false;
+    if (auto_skip)
+        dj_deferred = uipod_dj_on_auto_track_change();
+
+    /* When `uipod_dj` owns an active auto-transition (`dj_deferred == true`), keep Track 1's
+       `position_key` active across `PreMixDeckA` and pre-midpoint (`p < 0.50`) `Mixing` so
+       Now Playing counts down Track 1 smoothly; `pcmbuf_dj_commit_midpoint_handoff()` will
+       advance `position_key` right at `p = 0.50`! */
+    if (!dj_deferred)
+    {
+        if (++position_key > POSITION_KEY_MAX)
+            position_key = 1;
+    }
+
 #ifdef HAVE_CROSSFADE
     /* Determine whether this track change needs to crossfaded and how */
-    else if (crossfade_setting != CROSSFADE_ENABLE_OFF)
+    if (!dj_deferred && crossfade_setting != CROSSFADE_ENABLE_OFF)
     {
         if (crossfade_status == CROSSFADE_INACTIVE &&
             pcmbuf_unplayed_bytes() >= data_level(2) &&
@@ -783,15 +955,16 @@ void pcmbuf_start_track_change(enum pcm_track_change_type type)
             crossfade_status = CROSSFADE_CONTINUE;
 #endif
 
-        if (!uipod_dj_on_auto_track_change())
+        if (!dj_deferred)
             pcmbuf_monitor_track_change(true);
     }
     else
     {
-        /* Discard old data; caller needs no transition notification */
+        /* Manual skip (`Left`/`Right` or `L1`/`R1`): splice with 6 ms fade-out
+           keeping `trimpod-pcm` continuously warm! */
         logf("manual track change");
-        uipod_dj_on_manual_skip();
-        pcmbuf_play_stop();
+        bool dj_quick_cut = uipod_dj_on_manual_skip();
+        pcmbuf_manual_skip_splice(dj_quick_cut);
     }
 }
 
@@ -802,7 +975,8 @@ void pcmbuf_start_track_change(enum pcm_track_change_type type)
 static void pcmbuf_pcm_callback(const void **start, size_t *size)
 {
     /*- Process the chunk that just finished -*/
-    size_t index = chunk_ridx;
+    size_t index = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx  = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
     struct chunkdesc *desc = current_desc;
 
     if (desc)
@@ -817,7 +991,8 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
         }
 
         /* Free it for reuse */
-        chunk_ridx = index = index_next(index);
+        index = index_next(index);
+        __atomic_store_n(&chunk_ridx, index, __ATOMIC_RELEASE);
 
         if (track_change && !audio_pcmbuf_may_play())
         {
@@ -828,8 +1003,9 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
     }
 
     /*- Process the new one -*/
-    if (index != chunk_widx && !fade_out_complete)
+    if (index != widx && !fade_out_complete)
     {
+        s_manual_skip_keepalive_chunks = 0;
         current_desc = desc = index_chunkdesc(index);
 
         *start = index_buffer(index);
@@ -841,6 +1017,19 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
             audio_pcmbuf_position_callback(desc->elapsed, desc->offset,
                                            desc->pos_key);
         }
+    }
+    else if (s_manual_skip_keepalive_chunks > 0 && !fade_out_complete)
+    {
+        /* Stream zero-stuffed keepalive slice so `trimpod-pcm` stays warm while
+           codec decodes the first frame of the manually selected track */
+        current_desc = NULL;
+        s_manual_skip_keepalive_chunks--;
+        *start = s_keepalive_zeros;
+        *size = sizeof(s_keepalive_zeros);
+    }
+    else
+    {
+        current_desc = NULL;
     }
 }
 
@@ -1454,6 +1643,30 @@ bool pcmbuf_is_lowdata(void)
 void pcmbuf_set_low_latency(bool state)
 {
     low_latency_mode = state;
+}
+
+size_t pcmbuf_unplayed_frames(void)
+{
+    if (!pcmbuf_buffer || !pcmbuf_descriptors || pcmbuf_size == 0)
+        return 0;
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) != CHANNEL_PLAYING)
+        return 0;
+
+    size_t total_bytes = 0;
+    pcm_play_lock();
+    size_t idx  = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
+    while (idx != widx)
+    {
+        struct chunkdesc *desc = index_chunkdesc(idx);
+        size_t cbytes = (size_t)desc->size;
+        if (cbytes > PCMBUF_CHUNK_SIZE)
+            cbytes = PCMBUF_CHUNK_SIZE;
+        total_bytes += cbytes;
+        idx = index_next(idx);
+    }
+    pcm_play_unlock();
+    return total_bytes / PCMBUF_SAMPLE_SIZE;
 }
 
 size_t pcmbuf_peek_ahead_s16(uint32_t ahead_ms, int16_t *out, size_t max_frames)

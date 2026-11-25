@@ -74,6 +74,9 @@ void tape_deck_fx_set_eq(bool enabled,
                          const int q_tenths[TAPE_EQ_BANDS],
                          const int gain_tenths[TAPE_EQ_BANDS]);
 void tape_deck_fx_set_eq_bypass(bool bypass);
+void tape_deck_fx_set_hp35_profile(int profile);
+void tape_deck_fx_set_hp35_jack(bool inserted);
+void tape_deck_fx_set_hp35_route_codec(bool is_codec_route);
 int  tape_deck_fx_eval_eq_curve_tenths_db(double freq_hz);
 bool tape_deck_fx_is_enabled(void);
 bool tape_deck_fx_pause_fx_enabled(void);
@@ -110,5 +113,6 @@ void   tape_deck_fx_render_ff_period(int16_t *out_interleaved,
 
 /* Implemented in `pcm-alsa.c` to wake the ALSA writer thread immediately */
 void pcm_alsa_wake_writer(void);
+void pcm_alsa_set_direct_hw(bool enabled);
 
 #endif /* TAPE_DECK_FX_H */

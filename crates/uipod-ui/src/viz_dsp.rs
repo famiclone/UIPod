@@ -81,6 +81,8 @@ pub struct VizDsp {
     beat_cooldown: f32,
     beat_dir: f32,
     beat_count: u32,
+    last_intel_hash: u64,
+    last_intel_beat: u64,
 
     /// Packed `256 x 2 x 4` (`2048` bytes) `RGBA8` texture:
     /// - Row 0: `[L_wave, R_wave, Mono_smooth, Stereo_diff]`
@@ -164,6 +166,8 @@ impl VizDsp {
             beat_cooldown: 0.0,
             beat_dir: 1.0,
             beat_count: 0,
+            last_intel_hash: 0,
+            last_intel_beat: u64::MAX,
             audio_tex,
         }
     }
@@ -275,7 +279,18 @@ impl VizDsp {
         let rms_l = (sq_l * inv_frames).sqrt();
         let rms_r = (sq_r * inv_frames).sqrt();
 
-        // Smooth AGC gain for waveform & VU reference (0 VU tracks average program level)
+        // Smooth AGC gain for waveform & VU reference (0 VU tracks average program level),
+        // seeded immediately on track change from `uipod-track-intel` cached `avg_rms`!
+        let intel_rec = uipod_track_intel::read_active_analysis();
+        if let Some(ref rec) = intel_rec {
+            if rec.key_hash != 0 && rec.key_hash != self.last_intel_hash {
+                self.last_intel_hash = rec.key_hash;
+                self.last_intel_beat = u64::MAX;
+                if rec.avg_rms > 0.01 {
+                    self.wave_rms_avg = rec.avg_rms.clamp(0.04, 0.65);
+                }
+            }
+        }
         let agc_alpha = 1.0 - (-dt * 1.8).exp();
         if rms > 0.002 {
             self.wave_rms_avg += (rms - self.wave_rms_avg) * agc_alpha;
@@ -422,12 +437,30 @@ impl VizDsp {
         self.mid_att += (self.mid_env - self.mid_att) * att_a;
         self.treb_att += (self.treb_env - self.treb_att) * att_a;
 
-        // 5. Spectral-flux beat & drop detector
+        // 5. Spectral-flux + lock-free `uipod-track-intel` beat & bar-phase synchronization
+        let live_intel = uipod_track_intel::read_live_frame();
+        let intel_locked = live_intel.status == 1
+            && live_intel.has_analysis != 0
+            && live_intel.track_key_hash != 0;
+
         let flux_alpha = 1.0 - (-dt * 2.5).exp();
         self.flux_avg += (low_mid_flux - self.flux_avg) * flux_alpha;
         let mut beat_hit = false;
         let flux_thresh = (self.flux_avg * 1.48).max(0.004);
-        if silence_gate > 0.25
+
+        if intel_locked && live_intel.beat_index != self.last_intel_beat {
+            let initialized = self.last_intel_beat != u64::MAX;
+            self.last_intel_beat = live_intel.beat_index;
+            if initialized && silence_gate > 0.15 {
+                beat_hit = true;
+                self.beat_pulse = (0.78 + 0.22 * live_intel.kick_impulse).clamp(0.0, 1.0);
+                self.beat_cooldown = 0.11;
+                self.beat_count = live_intel.beat_index as u32;
+                if live_intel.bar_beat == 0 || (live_intel.bar_beat == 2 && rel_bass > 1.35) {
+                    self.beat_dir = -self.beat_dir;
+                }
+            }
+        } else if silence_gate > 0.25
             && self.beat_cooldown <= 0.0
             && low_mid_flux > flux_thresh
             && (rel_sub > 1.18 || rel_bass > 1.15)
@@ -440,6 +473,12 @@ impl VizDsp {
                 self.beat_dir = -self.beat_dir;
             }
         }
+
+        let resolved_beat_phase = if intel_locked {
+            ((live_intel.beat_index & 3) as f32) + live_intel.beat_phase
+        } else {
+            ((self.beat_count & 7) as f32) + (PI * 0.25)
+        };
 
         let energy = (0.5 * self.bass_att + 0.35 * self.mid_att + 0.15 * self.treb_att).clamp(0.0, 2.5);
         self.music_time += dt * (0.35 + 0.85 * energy + 0.45 * self.beat_pulse);
@@ -499,7 +538,7 @@ impl VizDsp {
             treb_att: self.treb_att,
             beat_pulse: self.beat_pulse,
             beat_dir: self.beat_dir,
-            beat_phase: ((self.beat_count & 7) as f32) + (PI * 0.25),
+            beat_phase: resolved_beat_phase,
             stereo_width: self.stereo_env,
             vu_l: self.vu_pos_l,
             vu_r: self.vu_pos_r,

@@ -52,6 +52,7 @@ void sdl_gl_present_lcd_fade(float fade);
 void sdl_gl_present_lcd_fade_rgb(float fade, uint32_t target_rgb);
 /* Let a video show through the window, keeping the bottom overlay_rows LCD rows. */
 void sdl_gl_set_video_through(bool on, int overlay_rows);
+bool sdl_gl_get_video_through(int *out_overlay_rows);
 /* Query current GL drawable dimensions and swap directly for zero-copy GPU plugins. */
 void sdl_gl_get_drawable_size(int *out_w, int *out_h);
 void sdl_gl_swap_window(void);
