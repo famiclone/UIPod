@@ -65,6 +65,7 @@ docker run --rm \
   # the sysroot's broken sdl2-config, so do NOT prepend \$SYSROOT/usr/bin here.
   if [ ! -f $BUILD_DIR/Makefile ] || \
      ! grep -q libuipod_ffi $BUILD_DIR/Makefile || \
+     ! grep -q -- '-lgcc_s' $BUILD_DIR/Makefile || \
      grep -q libprojectM $BUILD_DIR/Makefile || \
      ! grep -q 'RBDIR=/tmp/uipod' $BUILD_DIR/Makefile; then
     rm -rf $BUILD_DIR/apps $BUILD_DIR/firmware $BUILD_DIR/Makefile $BUILD_DIR/autoconf.h $BUILD_DIR/make.dep

@@ -29,11 +29,12 @@ echo ">> Pruning legacy Rockbox skin & bitmap font directories (uipod-ui renders
 rm -rf "$PAK/uipod/themes" "$PAK/uipod/wps" "$PAK/uipod/backdrops" "$PAK/uipod/icons" 2>/dev/null || true
 rm -f "$PAK/uipod/fonts/"*.fnt "$PAK/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 
-echo ">> Injecting runtime Noto Sans CJK fallback font & font licenses (see assets/fonts)"
-# Geologica-{Regular,Medium,SemiBold,Bold}.ttf are embedded into `uipod` via Rust `include_bytes!`;
-# only the runtime CJK fallback `NotoSansJP-Regular.ttf` ships on disk.
+echo ">> Injecting runtime Noto CJK fallback fonts & font licenses (see assets/fonts)"
+# Geologica-{Regular,Medium,SemiBold,Bold}.ttf and NotoSerif-{Regular,Bold,Italic,BoldItalic}.ttf
+# are embedded into `uipod` via Rust `include_bytes!`; runtime Pan-CJK + Cyrillic `.ttf` faces ship on disk.
 mkdir -p "$PAK/uipod/fonts"
-cp -a "$ROOT/assets/fonts/NotoSansJP-Regular.ttf" "$PAK/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSansCJK-Regular.ttf" "$PAK/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSerifCJK-Regular.ttf" "$PAK/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$PAK/uipod/fonts/COPYING-fonts.txt"
 
 echo ">> Injecting AutoEQ headphone database & EQ presets folder (see assets/autoeq)"

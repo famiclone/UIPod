@@ -133,10 +133,11 @@ impl FileIconKind {
                 };
                 Self::Video(short.to_string())
             }
-            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "JSON" | "INI" | "CUE" | "XML" | "NFO"
-            | "UIPOD" => {
+            "TXT" | "LRC" | "CFG" | "LOG" | "MD" | "MARKDOWN" | "JSON" | "INI" | "CUE" | "XML"
+            | "NFO" | "EPUB" | "FB2" | "MOBI" | "PRC" | "AZW" | "UIPOD" => {
                 let short = match upper.as_str() {
                     "JSON" => "JSN",
+                    "MARKDOWN" => "MD",
                     "UIPOD" => "PLG",
                     other => other,
                 };

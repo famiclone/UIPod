@@ -5,7 +5,9 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$ROOT/public/fonts"
-cp "$ROOT/../assets/fonts/NotoSansJP-Regular.ttf" "$ROOT/public/fonts/NotoSansJP-Regular.ttf"
+rm -f "$ROOT/public/fonts/NotoSansJP-Regular.ttf"
+cp "$ROOT/../assets/fonts/NotoSansCJK-Regular.ttf" "$ROOT/public/fonts/NotoSansCJK-Regular.ttf"
+cp "$ROOT/../assets/fonts/NotoSerifCJK-Regular.ttf" "$ROOT/public/fonts/NotoSerifCJK-Regular.ttf"
 
 echo ">> 1/2 Building uipod-wasm (Rust -> WebAssembly / WebGL2)..."
 (cd "$ROOT/uipod-wasm" && wasm-pack build --target web --out-dir ../src/wasm-pkg)

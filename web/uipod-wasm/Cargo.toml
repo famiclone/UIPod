@@ -17,6 +17,7 @@ uipod-nsf = { path = "../../crates/uipod-nsf" }
 uipod-dj = { path = "../../crates/uipod-dj" }
 uipod-track-intel = { path = "../../crates/uipod-track-intel" }
 uipod-plugin-sdk = { path = "../../crates/uipod-plugin-sdk" }
+uipod-ebook = { path = "../../crates/uipod-ebook" }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",

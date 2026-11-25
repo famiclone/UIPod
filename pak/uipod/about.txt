@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.9.2
+Version: v0.10.0
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -11,14 +11,14 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 • D-Pad Up / Down (or Left Stick) — Navigate lists and menus (hold to fast-scroll)
 • D-Pad Left / Right (or L1 / R1) — Page up / down in lists; previous / next track on Now Playing (hold to seek)
 • A — Select / Open item (shows a non-blocking floating HUD toast if Now Playing has nothing to resume); Play / Pause on Now Playing; Confirm on floating HUD confirmation cards
-• Hold A — Open context menu on tracks, albums, folders, or playlists
+• Hold A — Open context menu on tracks, albums, folders, or playlists; in Text Viewer opens Reader Options
 • B — Go back one screen; Cancel on floating HUD confirmation cards
 • Hold B — Return directly to the Main Menu from anywhere
 • START — Play / Pause music globally (or open Pause Menu inside games)
 • MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
 • VOL + / VOL - — Adjust volume (40 perceptual steps on TrimUI Brick; synced with hardware STREAM_MUSIC on Android)
-• SELECT + VOL + / VOL - — Adjust screen brightness anywhere
-• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Beat Stack, Sound Racer & Pulsar Vanguard
+• SELECT + VOL + / VOL - — Adjust screen brightness anywhere; solo SELECT toggles Paginated / Scroll mode in Text Viewer
+• L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Text Viewer, Beat Stack, Sound Racer & Pulsar Vanguard
 • Side Switch — Input Hold / Lock (volume rocker stays active without waking the screen)
 
 ## 2. Media Library & Sources
@@ -43,7 +43,7 @@ Open Settings -> Appearance (Display) to customize the visual experience:
 • Monochrome Album Art — Quantizes and Bayer-dithers cover art into the 4 shades of your active theme (toggleable to full-color 24-bit RGB).
 • Screen Transitions — Choose between Slide, Cover, Fade, Pixels, Blinds, or Off.
 • Main Menu Items — Show or hide Main Menu entries (Browse is enabled first by default for full SD-card file management, alongside Library facets and Shuffle All).
-• Language — English and Ukrainian UI localization, with built-in Noto Sans JP vector fallback for Japanese, Chinese, and Korean track metadata.
+• Language — English and Ukrainian UI localization, with built-in Noto Sans CJK & Noto Serif CJK vector fallbacks for Ukrainian Cyrillic, Japanese, Chinese, and Korean text.
 
 ## 4. Sound, Equalizer & AutoEQ
 
@@ -81,7 +81,7 @@ Open Extras -> Plugins to launch native 60 FPS GPU-accelerated Rust plugins:
   - Stopwatch — Precision millisecond lap timer.
   - LCD Plasma — 60 FPS 4-shade procedural demoscene shader effect.
 • Viewers:
-  - Text Viewer — Opens .txt, .lrc, .md, .log, .cfg, .ini, .json, .cue, and .nfo files from Browse. Press X to cycle font size, MENU for bookmarks/jump/line spacing, START to play/pause music, and B to save your reading position and exit.
+  - Text Viewer (E-Book & Document Reader) — Opens .epub, .fb2, .fb2.zip (UTF-8 & Windows-1251), DRM-free .mobi/.prc/.azw, .md, .txt, .lrc, .log, .cfg, .ini, .json, .cue, and .nfo files from Browse, complete with 4-shade Bayer-dithered book covers & illustrations, interactive Footnote popup cards (short-tap A to open/cycle, Up/Down to scroll, B to dismiss), and a permanent full-width bottom progress bar (% or READ / TOTAL pages). Press solo SELECT to toggle Paginated (Left/Right) vs Infinite Scroll (Up/Down) at the exact same reading spot, MENU or Hold A for Reader Options (Chapters / Table of Contents, Reading Mode, Font switching between Geologica Sans and Noto Serif with full Ukrainian Cyrillic + CJK support, Font Size, Line Spacing, Hide UI top header toggle, Progress Label, Go to Beginning, Go to End, Exit), X to cycle font size, START to play/pause music, L2/R2 for previous/next music track, and B to save reading progress and exit.
 
 Custom third-party .uipod plugins can be installed by placing compiled .uipod files into /mnt/SDCARD/Plugins/UIPod/.
 
@@ -98,6 +98,6 @@ UIPod is free software released under the GNU General Public License v2.0 (GPL-2
 • Author & Maintainer — famiclone (github.com/famiclone/UIPod)
 • Core Audio Firmware — Rockbox Project (rockbox.org, GPL-2.0)
 • Original TrimUI Adaptation — Trimpod Classic by Werewolf Camp / tyrannotorus (GPL-2.0)
-• Typography — Geologica & Noto Sans JP (SIL OFL 1.1)
+• Typography — Geologica, Noto Serif, Noto Sans CJK & Noto Serif CJK (SIL OFL 1.1)
 • USB MTP Daemon — uMTP-Responder (GPL-3.0)
 • Platform & Toolchain — NextUI (github.com/LoveRetro/NextUI)

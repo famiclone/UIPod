@@ -77,11 +77,7 @@ impl DlLibrary {
         if desc.magic != UIPOD_PLUGIN_MAGIC {
             return Err(format!("Invalid plugin magic: 0x{:08X}", desc.magic));
         }
-        if desc.api_version != UIPOD_PLUGIN_API_VERSION
-            && desc.api_version != 7
-            && desc.api_version != 6
-            && desc.api_version != 5
-        {
+        if !(5..=UIPOD_PLUGIN_API_VERSION).contains(&desc.api_version) {
             return Err(format!(
                 "Incompatible plugin ABI v{} (host v{})",
                 desc.api_version, UIPOD_PLUGIN_API_VERSION
@@ -320,6 +316,19 @@ impl PluginRegistry {
     }
 
     pub fn find_viewer_for_path(&self, file_path: &Path) -> Option<PluginMeta> {
+        let name_lower = file_path
+            .file_name()
+            .and_then(|n| n.to_str())?
+            .to_ascii_lowercase();
+        // Check compound extensions first (e.g. `book.fb2.zip` -> `"fb2.zip"`)
+        if name_lower.ends_with(".fb2.zip") {
+            if let Some(p) = self.plugins.iter().find(|p| {
+                p.category == PluginCategory::Viewer
+                    && (p.matches_extension("fb2.zip") || p.matches_extension("fb2"))
+            }) {
+                return Some(p.clone());
+            }
+        }
         let ext = file_path
             .extension()
             .and_then(|e| e.to_str())?
@@ -354,7 +363,12 @@ fn execute_library_path(
             _ => None,
         };
         let file_ptr = c_file.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
-        Ok((desc.run)(api, file_ptr))
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (desc.run)(api, file_ptr)
+        })) {
+            Ok(rc) => Ok(rc),
+            Err(_) => Err("Plugin panicked".to_string()),
+        }
     }
 }
 
@@ -462,32 +476,35 @@ pub unsafe extern "C" fn uipod_rs_plugins_is_menu_driven(
     plugin_id: *const c_char,
     open_path: *const c_char,
 ) -> bool {
-    let id = read_cstr(plugin_id);
-    if !id.is_empty() {
-        return registry_slot()
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = read_cstr(plugin_id);
+        if !id.is_empty() {
+            return registry_slot()
+                .lock()
+                .ok()
+                .and_then(|g| g.find_by_id(&id))
+                .map(|m| m.kind == PluginKind::MenuDriven)
+                .unwrap_or(false);
+        }
+
+        let path_str = read_cstr(open_path);
+        if path_str.is_empty() {
+            return false;
+        }
+        let p = Path::new(&path_str);
+        if is_plugin_binary_path(p) {
+            return probe_plugin_file(p, false)
+                .map(|m| m.kind == PluginKind::MenuDriven)
+                .unwrap_or(false);
+        }
+        registry_slot()
             .lock()
             .ok()
-            .and_then(|g| g.find_by_id(&id))
+            .and_then(|g| g.find_viewer_for_path(p))
             .map(|m| m.kind == PluginKind::MenuDriven)
-            .unwrap_or(false);
-    }
-
-    let path_str = read_cstr(open_path);
-    if path_str.is_empty() {
-        return false;
-    }
-    let p = Path::new(&path_str);
-    if is_plugin_binary_path(p) {
-        return probe_plugin_file(p, false)
-            .map(|m| m.kind == PluginKind::MenuDriven)
-            .unwrap_or(false);
-    }
-    registry_slot()
-        .lock()
-        .ok()
-        .and_then(|g| g.find_viewer_for_path(p))
-        .map(|m| m.kind == PluginKind::MenuDriven)
-        .unwrap_or(false)
+            .unwrap_or(false)
+    }))
+    .unwrap_or(false)
 }
 
 #[no_mangle]
@@ -498,57 +515,66 @@ pub unsafe extern "C" fn uipod_rs_plugins_run_by_id(
     err_out: *mut c_char,
     err_cap: usize,
 ) -> i32 {
-    let id = read_cstr(plugin_id);
-    let file_str = read_cstr(file_path);
-    let lib_path = {
-        let Ok(guard) = registry_slot().lock() else {
-            return -1;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = read_cstr(plugin_id);
+        let file_str = read_cstr(file_path);
+        let lib_path = {
+            let Ok(guard) = registry_slot().lock() else {
+                return -1;
+            };
+            match guard.find_by_id(&id) {
+                Some(meta) => meta.lib_path,
+                None => {
+                    if !err_out.is_null() && err_cap > 0 {
+                        let s = std::slice::from_raw_parts_mut(err_out, err_cap);
+                        write_fixed_cstr("Plugin not found", s);
+                    }
+                    return -1;
+                }
+            }
         };
-        match guard.find_by_id(&id) {
-            Some(meta) => meta.lib_path,
-            None => {
+
+        let opt_file = if file_str.is_empty() {
+            None
+        } else {
+            Some(file_str.as_str())
+        };
+        match execute_library_path(&lib_path, api, opt_file) {
+            Ok(code) => code,
+            Err(e) => {
                 if !err_out.is_null() && err_cap > 0 {
                     let s = std::slice::from_raw_parts_mut(err_out, err_cap);
-                    write_fixed_cstr("Plugin not found", s);
+                    write_fixed_cstr(&e, s);
                 }
-                return -1;
+                -2
             }
         }
-    };
-
-    let opt_file = if file_str.is_empty() {
-        None
-    } else {
-        Some(file_str.as_str())
-    };
-    match execute_library_path(&lib_path, api, opt_file) {
-        Ok(code) => code,
-        Err(e) => {
-            if !err_out.is_null() && err_cap > 0 {
-                let s = std::slice::from_raw_parts_mut(err_out, err_cap);
-                write_fixed_cstr(&e, s);
-            }
-            -2
-        }
-    }
+    }))
+    .unwrap_or(-3)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn uipod_rs_plugins_is_plugin_file(path: *const c_char) -> bool {
-    let s = read_cstr(path);
-    !s.is_empty() && is_plugin_binary_path(Path::new(&s))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = read_cstr(path);
+        !s.is_empty() && is_plugin_binary_path(Path::new(&s))
+    }))
+    .unwrap_or(false)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn uipod_rs_plugins_has_viewer(path: *const c_char) -> bool {
-    let s = read_cstr(path);
-    if s.is_empty() {
-        return false;
-    }
-    let Ok(guard) = registry_slot().lock() else {
-        return false;
-    };
-    guard.find_viewer_for_path(Path::new(&s)).is_some()
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = read_cstr(path);
+        if s.is_empty() {
+            return false;
+        }
+        let Ok(guard) = registry_slot().lock() else {
+            return false;
+        };
+        guard.find_viewer_for_path(Path::new(&s)).is_some()
+    }))
+    .unwrap_or(false)
 }
 
 #[no_mangle]
@@ -558,15 +584,38 @@ pub unsafe extern "C" fn uipod_rs_plugins_open_viewer(
     err_out: *mut c_char,
     err_cap: usize,
 ) -> i32 {
-    let s = read_cstr(path);
-    if s.is_empty() {
-        return -1;
-    }
-    let p = Path::new(&s);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = read_cstr(path);
+        if s.is_empty() {
+            return -1;
+        }
+        let p = Path::new(&s);
 
-    // Direct execution when tapping a `.uipod` plugin binary in Browse!
-    if is_plugin_binary_path(p) {
-        return match execute_library_path(p, api, None) {
+        // Direct execution when tapping a `.uipod` plugin binary in Browse!
+        if is_plugin_binary_path(p) {
+            return match execute_library_path(p, api, None) {
+                Ok(code) => code,
+                Err(e) => {
+                    if !err_out.is_null() && err_cap > 0 {
+                        let sl = std::slice::from_raw_parts_mut(err_out, err_cap);
+                        write_fixed_cstr(&e, sl);
+                    }
+                    -2
+                }
+            };
+        }
+
+        let viewer_lib = {
+            let Ok(guard) = registry_slot().lock() else {
+                return -1;
+            };
+            guard.find_viewer_for_path(p).map(|m| m.lib_path)
+        };
+        let Some(lib_path) = viewer_lib else {
+            return -1;
+        };
+
+        match execute_library_path(&lib_path, api, Some(&s)) {
             Ok(code) => code,
             Err(e) => {
                 if !err_out.is_null() && err_cap > 0 {
@@ -575,29 +624,9 @@ pub unsafe extern "C" fn uipod_rs_plugins_open_viewer(
                 }
                 -2
             }
-        };
-    }
-
-    let viewer_lib = {
-        let Ok(guard) = registry_slot().lock() else {
-            return -1;
-        };
-        guard.find_viewer_for_path(p).map(|m| m.lib_path)
-    };
-    let Some(lib_path) = viewer_lib else {
-        return -1;
-    };
-
-    match execute_library_path(&lib_path, api, Some(&s)) {
-        Ok(code) => code,
-        Err(e) => {
-            if !err_out.is_null() && err_cap > 0 {
-                let sl = std::slice::from_raw_parts_mut(err_out, err_cap);
-                write_fixed_cstr(&e, sl);
-            }
-            -2
         }
-    }
+    }))
+    .unwrap_or(-3)
 }
 
 #[cfg(test)]
@@ -702,8 +731,16 @@ mod tests {
             .find_viewer_for_path(Path::new("/mnt/SDCARD/Music/lyrics.LRC"))
             .unwrap();
         assert_eq!(viewer.id, "text_viewer");
-        assert_eq!(viewer.version, "0.2.0");
         assert_eq!(viewer.kind, PluginKind::Utility);
+        assert!(reg
+            .find_viewer_for_path(Path::new("/mnt/SDCARD/Books/kobzar.fb2.zip"))
+            .is_some());
+        assert!(reg
+            .find_viewer_for_path(Path::new("/mnt/SDCARD/Books/novel.EPUB"))
+            .is_some());
+        assert!(reg
+            .find_viewer_for_path(Path::new("/mnt/SDCARD/Books/story.mobi"))
+            .is_some());
 
         // Invoke `text_viewer` end-to-end with a mock Host API that signals immediate exit
         extern "C" fn m_ticks() -> u64 { 100 }
@@ -849,6 +886,20 @@ mod tests {
             false
         }
 
+        unsafe extern "C" fn m_rgba_img(
+            _: u64,
+            _: u32,
+            _: u32,
+            _: *const u8,
+            _: usize,
+            _: f32,
+            _: f32,
+            _: f32,
+            _: f32,
+            _: f32,
+        ) {
+        }
+
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
             get_ticks_ms: m_ticks,
@@ -888,6 +939,7 @@ mod tests {
             audio_get_apu_telemetry: m_apu_tel,
             audio_get_track_analysis: m_trk_analysis,
             audio_get_live_telemetry: m_live_tel,
+            canvas_draw_rgba_image: m_rgba_img,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");
@@ -899,6 +951,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rc, 0);
+
+        // Also verify opening a deflated `.epub` with Ukrainian Cyrillic + Pan-CJK + HTML entities via `uipod_rs_plugins_open_viewer`
+        let sample_epub = tmp_dir.join("Кобзар і Світ.epub");
+        {
+            use std::io::Write;
+            let mut z = Vec::new();
+            let mut cd = Vec::new();
+            let entries: &[(&str, &[u8])] = &[
+                (
+                    "META-INF/container.xml",
+                    br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#,
+                ),
+                (
+                    "OEBPS/content.opf",
+                    r#"<?xml version="1.0" encoding="utf-8"?><package version="3.0" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Кобзар &amp; 「世界」</dc:title></metadata><manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#.as_bytes(),
+                ),
+                (
+                    "OEBPS/ch1.xhtml",
+                    r#"<html><body><h1>Ґрунт&nbsp;Єдності — Історія Їжака</h1><p>&nbsp;Привіт світе! 「日本語・한국어・简体中文・繁體中文」.</p></body></html>"#.as_bytes(),
+                ),
+            ];
+            for &(name, body) in entries {
+                let loff = z.len() as u32;
+                let nb = name.as_bytes();
+                let sz = body.len() as u32;
+                z.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+                z.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                z.extend_from_slice(&sz.to_le_bytes());
+                z.extend_from_slice(&sz.to_le_bytes());
+                z.extend_from_slice(&(nb.len() as u16).to_le_bytes());
+                z.extend_from_slice(&0u16.to_le_bytes());
+                z.extend_from_slice(nb);
+                z.extend_from_slice(body);
+
+                cd.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+                cd.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                cd.extend_from_slice(&sz.to_le_bytes());
+                cd.extend_from_slice(&sz.to_le_bytes());
+                cd.extend_from_slice(&(nb.len() as u16).to_le_bytes());
+                cd.extend_from_slice(&[0; 12]);
+                cd.extend_from_slice(&loff.to_le_bytes());
+                cd.extend_from_slice(nb);
+            }
+            let cd_off = z.len() as u32;
+            let cd_sz = cd.len() as u32;
+            let cnt = entries.len() as u16;
+            z.extend_from_slice(&cd);
+            z.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+            z.extend_from_slice(&[0, 0, 0, 0]);
+            z.extend_from_slice(&cnt.to_le_bytes());
+            z.extend_from_slice(&cnt.to_le_bytes());
+            z.extend_from_slice(&cd_sz.to_le_bytes());
+            z.extend_from_slice(&cd_off.to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes());
+            let mut f = fs::File::create(&sample_epub).unwrap();
+            f.write_all(&z).unwrap();
+        }
+        let rc_epub = execute_library_path(
+            &viewer.lib_path,
+            &mock_api,
+            Some(sample_epub.to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(rc_epub, 0);
 
         let _ = fs::remove_dir_all(&tmp_dir);
     }

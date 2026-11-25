@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 8;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 9;
 
 /// Exact byte size of [`PluginTrackAnalysis`] (`512` bytes).
 pub const TRACK_ANALYSIS_RECORD_BYTES: usize = 512;
@@ -87,7 +87,7 @@ pub mod btn {
     pub const MENU: u32 = 0x0001_0000;
 }
 
-/// `Geologica` font weight selector for GPU canvas text rendering.
+/// `Geologica` / `Noto Serif` font weight selector for GPU canvas text rendering.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
@@ -96,6 +96,11 @@ pub enum FontWeight {
     SemiBold = 2,
     Bold = 3,
 }
+
+/// Optional style bit-flags combined with `FontWeight as u8` in [`HostContext::draw_text_styled`]
+/// and [`HostContext::measure_text_styled`].
+pub const FONT_STYLE_ITALIC: u8 = 0x04;
+pub const FONT_STYLE_SERIF: u8 = 0x08;
 
 /// Horizontal text alignment for [`HostContext::draw_text`].
 #[repr(u8)]
@@ -590,6 +595,20 @@ pub struct UIPodPluginApi {
     /* ---- Unified Track Intelligence Extension (v8+) ---- */
     pub audio_get_track_analysis: unsafe extern "C" fn(out: *mut PluginTrackAnalysis) -> bool,
     pub audio_get_live_telemetry: unsafe extern "C" fn(out: *mut PluginLiveTelemetry) -> bool,
+
+    /* ---- GPU Nearest-Neighbor RGBA Image Blitter Extension (v9+) ---- */
+    pub canvas_draw_rgba_image: unsafe extern "C" fn(
+        tex_key: u64,
+        src_w: u32,
+        src_h: u32,
+        rgba_ptr: *const u8,
+        rgba_len: usize,
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
+        radius: f32,
+    ),
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -785,6 +804,20 @@ impl<'a> HostContext<'a> {
         align: TextAlign,
         rgb: u32,
     ) -> f32 {
+        self.draw_text_styled(x, y, text, font_size, weight as u8, align, rgb)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        style_code: u8,
+        align: TextAlign,
+        rgb: u32,
+    ) -> f32 {
         if text.is_empty() {
             return 0.0;
         }
@@ -795,7 +828,7 @@ impl<'a> HostContext<'a> {
                 y,
                 c.as_ptr(),
                 font_size,
-                weight as u8,
+                style_code,
                 align as u8,
                 rgb,
             )
@@ -803,11 +836,15 @@ impl<'a> HostContext<'a> {
     }
 
     pub fn measure_text(&self, text: &str, font_size: f32, weight: FontWeight) -> f32 {
+        self.measure_text_styled(text, font_size, weight as u8)
+    }
+
+    pub fn measure_text_styled(&self, text: &str, font_size: f32, style_code: u8) -> f32 {
         if text.is_empty() {
             return 0.0;
         }
         let c = sanitize_cstring(text);
-        unsafe { (self.api.canvas_measure_text)(c.as_ptr(), font_size, weight as u8) }
+        unsafe { (self.api.canvas_measure_text)(c.as_ptr(), font_size, style_code) }
     }
 
     #[inline]
@@ -827,6 +864,39 @@ impl<'a> HostContext<'a> {
         visible: usize,
     ) {
         (self.api.canvas_draw_scrollbar)(x, y, w, h, total, start, visible);
+    }
+
+    /// Draws an `RGBA8` bitmap (`src_w * src_h * 4` bytes) with `NEAREST` texel filtering
+    /// onto the GPU vector canvas using a host-side LRU texture cache keyed by `tex_key`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_rgba_image(
+        &self,
+        tex_key: u64,
+        src_w: u32,
+        src_h: u32,
+        rgba: &[u8],
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
+        radius: f32,
+    ) {
+        if self.api.api_version >= 9 && !rgba.is_empty() {
+            unsafe {
+                (self.api.canvas_draw_rgba_image)(
+                    tex_key,
+                    src_w,
+                    src_h,
+                    rgba.as_ptr(),
+                    rgba.len(),
+                    dst_x,
+                    dst_y,
+                    dst_w,
+                    dst_h,
+                    radius,
+                );
+            }
+        }
     }
 
     #[inline]
@@ -1208,7 +1278,7 @@ mod tests {
 
     #[test]
     fn verify_plugin_apu_telemetry_c_abi_and_triggers() {
-        assert_eq!(UIPOD_PLUGIN_API_VERSION, 8);
+        assert_eq!(UIPOD_PLUGIN_API_VERSION, 9);
         assert_eq!(size_of::<PluginChannelState>(), 12);
         assert_eq!(align_of::<PluginChannelState>(), 4);
         assert_eq!(size_of::<PluginApuTelemetry>(), 8 + 8 * 12);

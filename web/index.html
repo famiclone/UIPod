@@ -211,13 +211,13 @@
 
               <!-- Drag & Drop Local Music Importer -->
               <div class="dropzone" id="audio-dropzone">
-                <input type="file" id="audio-file-input" accept="audio/*,.nsf,.nsfe,.m3u,.m3u8,.gsf,.minigsf,.gsflib,.mid,.midi,.kar,.rmi,.sf2" multiple hidden />
+                <input type="file" id="audio-file-input" accept="audio/*,.nsf,.nsfe,.m3u,.m3u8,.gsf,.minigsf,.gsflib,.mid,.midi,.kar,.rmi,.sf2,.epub,.fb2,.zip,.mobi,.prc,.azw,.md,.markdown,.txt,.lrc,.log" multiple hidden />
                 <div class="dropzone-copy">
-                  <strong data-i18n="drop_title">Drop your music here</strong>
-                  <span data-i18n="drop_sub">MP3, FLAC, WAV, OGG, M4A — plays locally in browser with EQ, Tape Mode &amp; visualizers</span>
+                  <strong data-i18n="drop_title">Drop music or e-books here</strong>
+                  <span data-i18n="drop_sub">MP3, FLAC, NSF, MIDI + EPUB, FB2, MOBI — plays &amp; reads locally in browser</span>
                 </div>
                 <button type="button" class="btn-outline-sm" id="btn-pick-audio" data-i18n="drop_btn">
-                  Load Audio
+                  Load File
                 </button>
               </div>
 
@@ -456,7 +456,7 @@
                     <button type="button" class="plugin-card" data-jump="plugin:about">
                       <span class="plugin-tag">VIEWER</span>
                       <strong>Text Viewer</strong>
-                      <span>about.txt Manual</span>
+                      <span>EPUB · FB2 · MOBI Reader</span>
                     </button>
                   </div>
 
@@ -486,9 +486,9 @@
               <div class="bento-tag">Themes · Transitions · Stacked HUD</div>
               <h3 data-i18n="f_ui_title">Vector UI &amp; Stacked HUD</h3>
               <p data-i18n="f_ui_desc">
-                Crisp Geologica vector typography, responsive handheld layouts, 38 four-shade iPod Mini
-                themes, 6 screen transitions, Bayer-dithered album art, and choreographed floating HUD
-                cards for volume, toasts, progress, and confirmations.
+                Crisp Geologica, Noto Serif &amp; Pan-CJK vector typography, responsive handheld layouts, 38
+                four-shade iPod Mini themes, 6 screen transitions, Bayer-dithered album art, and choreographed
+                floating HUD cards.
               </p>
             </article>
 
@@ -533,11 +533,12 @@
             </article>
 
             <article class="bento-card">
-              <div class="bento-tag">Games · Demos · Text Viewer</div>
-              <h3 data-i18n="f_plg_title">Built-In Games &amp; Utilities</h3>
+              <div class="bento-tag">E-Books · Games · Demos</div>
+              <h3 data-i18n="f_plg_title">4-Shade E-Book Reader &amp; Games</h3>
               <p data-i18n="f_plg_desc">
-                60 FPS handheld plugins: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake,
-                Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.
+                Built-in .epub, .fb2 &amp; .mobi reader with chapters, footnotes, dithered illustrations &amp;
+                Sans/Serif fonts, plus 60 FPS games &amp; tools: Beat Stack, Music Quiz, Sound Racer, Pulsar
+                Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch &amp; LCD Plasma.
               </p>
             </article>
           </div>
@@ -569,7 +570,7 @@
                 <tr>
                   <td><kbd>A</kbd> / <kbd>Hold A</kbd></td>
                   <td><kbd>Enter</kbd> / <kbd>Z</kbd></td>
-                  <td>Select / Open / Play-Pause on Now Playing; Hold for context menu</td>
+                  <td>Select, Play/Pause, or open footnote in Reader; Hold for context menu or Reader Options</td>
                 </tr>
                 <tr>
                   <td><kbd>B</kbd> / <kbd>Hold B</kbd></td>
@@ -584,7 +585,12 @@
                 <tr>
                   <td><kbd>MENU</kbd></td>
                   <td><kbd>M</kbd></td>
-                  <td>Context menu; opens Settings from Main Menu</td>
+                  <td>Context menu; opens Settings from Main Menu; Reader Options in Text Viewer</td>
+                </tr>
+                <tr>
+                  <td><kbd>SELECT</kbd></td>
+                  <td><kbd>Shift</kbd></td>
+                  <td>Toggle Paginated ↔ Scroll mode in Reader (solo tap)</td>
                 </tr>
                 <tr>
                   <td><kbd>X</kbd></td>

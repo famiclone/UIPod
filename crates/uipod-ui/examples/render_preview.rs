@@ -181,7 +181,7 @@ fn main() {
             .unwrap_or_else(|| PathBuf::from("/tmp"));
 
         let gl = macos_gl::HeadlessGl::init().expect("init headless CGL");
-        let cjk = Path::new("assets/fonts/NotoSansJP-Regular.ttf");
+        let cjk = Path::new("assets/fonts/NotoSansCJK-Regular.ttf");
         let mut engine = UiEngine::new(|s| gl.get_proc_address(s), Some(cjk))
             .expect("init UiEngine");
 

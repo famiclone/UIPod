@@ -20,9 +20,9 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     hero_hint: 'Click the device buttons, use Arrow keys + Enter/Esc, or connect a gamepad.',
     btn_fullscreen: 'Fullscreen',
     btn_exit_fs: 'Exit',
-    drop_title: 'Drop your music here',
-    drop_sub: 'MP3, FLAC, WAV, OGG, M4A — plays locally in browser with EQ, Tape Mode & visualizers',
-    drop_btn: 'Load Audio',
+    drop_title: 'Drop music or e-books here',
+    drop_sub: 'MP3, FLAC, NSF, MIDI + EPUB, FB2, MOBI — plays & reads locally in browser',
+    drop_btn: 'Load File',
     quick_main: 'Main Menu',
     quick_np: 'Now Playing',
     quick_viz: 'Visualizers',
@@ -61,7 +61,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     sec_arch_title: 'Features',
     f_ui_title: 'Vector UI & Stacked HUD',
     f_ui_desc:
-      'Crisp Geologica & CJK vector typography, responsive handheld layouts, 38 four-shade iPod Mini themes, 6 screen transitions, Bayer-dithered album art, and choreographed floating HUD cards for volume, toasts, progress, and confirmations.',
+      'Crisp Geologica, Noto Serif & Pan-CJK vector typography, responsive handheld layouts, 38 four-shade iPod Mini themes, 6 screen transitions, Bayer-dithered album art, and choreographed floating HUD cards.',
     f_android_title: 'Android Handheld Port (arm64-v8a)',
     f_android_desc:
       'Native APK for Android 8.0+ retro handhelds (Retroid, Odin, Anbernic, Ayaneo) with responsive multi-aspect framing, screen-off background playback, hardware video with .srt subtitles, and gamepad + volume rocker sync.',
@@ -74,9 +74,9 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     f_dsp_title: 'Graphic EQ, Smart DJ & Stereo FX',
     f_dsp_desc:
       '10-band Graphic EQ, offline AutoEQ headphone profiles, Direct DAC & 3.5mm Low-Shelf tuning, Dual-Deck Smart DJ Crossfade (Vinyl & Master Tempo sync with Bass Swap), Speed stretch, Walkman Tape Mode, Reverb, Ping-Pong Delay, Chorus, and Flanger.',
-    f_plg_title: 'Built-In Games & Utilities',
+    f_plg_title: '4-Shade E-Book Reader & Games',
     f_plg_desc:
-      '60 FPS handheld plugins: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma, and Text Viewer.',
+      'Built-in .epub, .fb2 & .mobi reader with chapters, footnotes, dithered illustrations & Sans/Serif fonts, plus 60 FPS games & tools: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch & LCD Plasma.',
     sec_ctrl_title: 'Controls',
     sec_inst_title: 'Installation',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',
@@ -106,8 +106,8 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     hero_hint: 'Натискайте кнопки на пристрої, стрілки + Enter/Esc або підключіть геймпад.',
     btn_fullscreen: 'На весь екран',
     btn_exit_fs: 'Закрити',
-    drop_title: 'Перетягніть аудіофайли сюди',
-    drop_sub: 'MP3, FLAC, WAV, OGG, M4A — грає локально в браузері з EQ, Tape Mode і візуалізаторами',
+    drop_title: 'Перетягніть музику або книги сюди',
+    drop_sub: 'MP3, FLAC, NSF, MIDI + EPUB, FB2, MOBI — грає та читається локально в браузері',
     drop_btn: 'Відкрити файл',
     quick_main: 'Головне меню',
     quick_np: 'Програється',
@@ -147,7 +147,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     sec_arch_title: 'Можливості',
     f_ui_title: 'Векторний UI та Stacked HUD',
     f_ui_desc:
-      'Чітка векторна типографіка Geologica та CJK, адаптивні макети під різні екрани, 38 чотиривідтінкових тем, 6 переходів, Bayer-дизеринг обкладинок і плаваючі HUD-картки гучності, тостів, прогресу й підтверджень.',
+      'Чітка векторна типографіка Geologica, Noto Serif та Pan-CJK, адаптивні макети під різні екрани, 38 чотиривідтінкових тем, 6 переходів, Bayer-дизеринг обкладинок і плаваючі HUD-картки.',
     f_android_title: 'Нативний порт на Android (arm64-v8a)',
     f_android_desc:
       'Нативний APK для Android 8.0+ консолей (Retroid, Odin, Anbernic, Ayaneo): адаптивне кадрування, фонове відтворення з вимкненим екраном, апаратне відео з .srt субтитрами та синхронізація кнопок гучності й геймпада.',
@@ -160,9 +160,9 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     f_dsp_title: 'Графічний EQ, Smart DJ та Стерео FX',
     f_dsp_desc:
       '10-смуговий графічний EQ, офлайн-база AutoEQ, Direct DAC та 3.5mm Low-Shelf, Dual-Deck Smart DJ Crossfade (Vinyl і Master Tempo з Bass Swap), розтягування Speed, емуляція касетної деки, Reverb, Ping-Pong Delay, Chorus і Flanger.',
-    f_plg_title: 'Вбудовані ігри та утиліти',
+    f_plg_title: '4-відтінкова Читалка та Ігри',
     f_plg_desc:
-      'Швидкі 60 FPS плагіни: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch, LCD Plasma та Text Viewer.',
+      'Вбудована читалка .epub, .fb2 і .mobi з розділами, виносками, ілюстраціями та вибором шрифту Sans/Serif, а також 60 FPS ігри й утиліти: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch та LCD Plasma.',
     sec_ctrl_title: 'Керування',
     sec_inst_title: 'Встановлення',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',

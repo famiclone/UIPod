@@ -620,6 +620,9 @@ void uipod_gpu_prepare_cpu_fallback(void)
     lcd_set_viewport(prev_vp);
 }
 
+extern const char *handle_special_dirs(const char *dir, unsigned flags,
+                                       char *buf, const size_t bufsize);
+
 bool uipod_gpu_ui_ensure_ready(void)
 {
     /* Never touch the SDL GLES context while the visualizer thread owns it */
@@ -632,8 +635,11 @@ bool uipod_gpu_ui_ensure_ready(void)
     if (uipod_rs_ui_is_ready())
         return true;
 
+    char font_real[MAX_PATH];
+    const char *raw_font = ROCKBOX_DIR "/fonts/NotoSansCJK-Regular.ttf";
+    const char *resolved = handle_special_dirs(raw_font, 0, font_real, sizeof(font_real));
     return uipod_rs_ui_init(sdl_gl_get_proc_address,
-                            ROCKBOX_DIR "/fonts/NotoSansJP-Regular.ttf");
+                            (resolved && resolved[0]) ? resolved : raw_font);
 }
 
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,

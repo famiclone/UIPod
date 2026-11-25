@@ -587,6 +587,15 @@ name = "uipod-dj"
 version = "0.1.0"
 
 [[package]]
+name = "uipod-ebook"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "png",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "uipod-nsf"
 version = "0.1.0"
 dependencies = [
@@ -630,6 +639,7 @@ version = "0.8.1"
 dependencies = [
  "uipod-codecs",
  "uipod-dj",
+ "uipod-ebook",
  "uipod-nsf",
  "uipod-plugin-sdk",
  "uipod-track-intel",

@@ -239,7 +239,8 @@ rm -rf "$APK_WORK/assets/uipod/themes" "$APK_WORK/assets/uipod/wps" \
 
 rm -f "$APK_WORK/assets/uipod/fonts/"*.fnt "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt" 2>/dev/null || true
 mkdir -p "$APK_WORK/assets/uipod/fonts"
-cp -a "$ROOT/assets/fonts/NotoSansJP-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSansCJK-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
+cp -a "$ROOT/assets/fonts/NotoSerifCJK-Regular.ttf" "$APK_WORK/assets/uipod/fonts/"
 cp "$ROOT/assets/fonts/COPYING" "$APK_WORK/assets/uipod/fonts/COPYING-fonts.txt"
 
 mkdir -p "$APK_WORK/assets/uipod/autoeq" "$APK_WORK/assets/uipod/eqs"

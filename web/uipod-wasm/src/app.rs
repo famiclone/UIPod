@@ -406,6 +406,7 @@ pub struct UIPodApp {
     a_deferred: bool,
     a_hold_sec: f32,
     a_hold_fired: bool,
+    select_solo: bool,
     seek_dir: i8,
     seek_hold_sec: f32,
     seek_active: bool,
@@ -420,7 +421,19 @@ pub struct UIPodApp {
     pub lb_cached_scrobbles: u32,
     pub pending_confirms: Vec<(u32, PendingConfirm)>,
     pub sim_progress: Option<SimProgressTask>,
+    pub reader_prefs: uipod_ebook::ReaderPrefs,
+    pub reader_bookmarks: std::collections::HashMap<String, usize>,
+    pub user_books: Vec<UserBookEntry>,
     pub state_dirty: bool,
+}
+
+#[derive(Clone)]
+pub struct UserBookEntry {
+    pub file_name: String,
+    pub icon_tag: String,
+    pub size_label: String,
+    pub key: String,
+    pub doc: uipod_ebook::EbookDoc,
 }
 
 impl UIPodApp {
@@ -496,6 +509,7 @@ impl UIPodApp {
             a_deferred: false,
             a_hold_sec: 0.0,
             a_hold_fired: false,
+            select_solo: false,
             seek_dir: 0,
             seek_hold_sec: 0.0,
             seek_active: false,
@@ -516,8 +530,114 @@ impl UIPodApp {
             lb_cached_scrobbles: 2,
             pending_confirms: Vec::new(),
             sim_progress: None,
+            reader_prefs: uipod_ebook::ReaderPrefs::default(),
+            reader_bookmarks: std::collections::HashMap::new(),
+            user_books: Vec::new(),
             state_dirty: true,
         }
+    }
+
+    pub fn sync_reader_persistence(&mut self) {
+        if let Some(ActivePlugin::TextViewer(ref mut tv)) = self.active_plugin {
+            let (prefs, key_opt, off) = tv.persistence_snapshot();
+            self.reader_prefs = prefs;
+            if let Some(k) = key_opt {
+                self.reader_bookmarks.insert(k, off);
+            }
+        }
+    }
+
+    pub fn launch_about_viewer(&mut self) -> ActivePlugin {
+        let key = uipod_ebook::fnv1a_book_key("/tmp/uipod/about.txt");
+        let saved = self.reader_bookmarks.get(&key).copied().unwrap_or(0);
+        ActivePlugin::TextViewer(crate::plugins::TextViewerApp::new_about(
+            self.reader_prefs,
+            saved,
+            self.uk,
+        ))
+    }
+
+    pub fn launch_user_book_viewer(&mut self, book_idx: usize) -> Option<ActivePlugin> {
+        let entry = self.user_books.get(book_idx)?;
+        let saved = self.reader_bookmarks.get(&entry.key).copied().unwrap_or(0);
+        Some(ActivePlugin::TextViewer(
+            crate::plugins::TextViewerApp::from_doc(
+                entry.doc.clone(),
+                Some(entry.key.clone()),
+                false,
+                self.reader_prefs,
+                saved,
+            ),
+        ))
+    }
+
+    pub fn register_ebook_file(
+        &mut self,
+        file_name: &str,
+        bytes: &[u8],
+        open_now: bool,
+        ui: &mut UiEngine,
+    ) -> usize {
+        self.sync_reader_persistence();
+        let clean_name = file_name
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(file_name)
+            .trim()
+            .to_string();
+        let lower = clean_name.to_ascii_lowercase();
+        let icon_tag = if lower.ends_with(".fb2.zip") || lower.ends_with(".fb2") {
+            "FB2".to_string()
+        } else if let Some((_, ext)) = lower.rsplit_once('.') {
+            ext.to_ascii_uppercase()
+        } else {
+            "TXT".to_string()
+        };
+        let size_label = if bytes.len() >= 1024 * 1024 {
+            format!("{:.1} MB", (bytes.len() as f32) / (1024.0 * 1024.0))
+        } else {
+            format!("{} KB", (bytes.len().max(1024) + 512) / 1024)
+        };
+        let key = uipod_ebook::fnv1a_book_key(&format!("/mnt/SDCARD/Media/{clean_name}"));
+        let doc = match uipod_ebook::parse_document(&clean_name, bytes) {
+            Ok(d) => d,
+            Err(err) => {
+                let msg = err.localized_message(self.uk);
+                let now_ms = ui.hud_clock_ms();
+                ui.hud_toast("ebook_err", &msg, 2000, now_ms);
+                uipod_ebook::error_document(&clean_name, &err, self.uk)
+            }
+        };
+
+        let entry = UserBookEntry {
+            file_name: clean_name.clone(),
+            icon_tag,
+            size_label,
+            key,
+            doc,
+        };
+        let idx = if let Some(pos) = self
+            .user_books
+            .iter()
+            .position(|b| b.file_name.eq_ignore_ascii_case(&clean_name))
+        {
+            self.user_books[pos] = entry;
+            pos
+        } else {
+            self.user_books.push(entry);
+            self.user_books.len() - 1
+        };
+
+        if open_now {
+            if let Some(pl) = self.launch_user_book_viewer(idx) {
+                self.active_plugin = Some(pl);
+                if !matches!(self.stack.last(), Some(Screen::PluginActive)) {
+                    self.push_screen(Screen::PluginActive, ui);
+                }
+            }
+        }
+        self.state_dirty = true;
+        idx
     }
 
     fn spawn_confirm(
@@ -968,6 +1088,20 @@ impl UIPodApp {
     }
 
     pub fn adjust_volume(&mut self, delta: i32, ui: &mut UiEngine) {
+        // `SELECT + VOL ±` adjusts display brightness globally without triggering solo `SELECT`!
+        if (self.held_buttons & btn::SELECT) != 0 {
+            self.select_solo = false;
+            let step = if delta > 0 { 5 } else { -5 };
+            self.brightness_pct = (self.brightness_pct as i32 + step).clamp(10, 100) as u8;
+            let msg = format!(
+                "{}: {}%",
+                self.tr("Brightness", "Яскравість"),
+                self.brightness_pct
+            );
+            ui.hud_toast("brightness", &msg, 1200, self.clock_ms);
+            self.state_dirty = true;
+            return;
+        }
         self.volume_step = (self.volume_step + delta).clamp(0, 40);
         let norm = self.volume_step as f32 / 40.0;
         ui.hud_volume(norm, self.clock_ms);
@@ -985,31 +1119,36 @@ impl UIPodApp {
             self.held_buttons = 0;
             self.b_deferred = false;
             self.a_deferred = false;
+            self.select_solo = false;
         }
         self.state_dirty = true;
     }
 
     fn is_context_aware_screen(&self) -> bool {
-        matches!(
-            self.stack.last(),
+        match self.stack.last() {
+            Some(Screen::PluginActive) => matches!(
+                self.active_plugin,
+                Some(ActivePlugin::TextViewer(ref tv)) if tv.is_reading_body()
+            ),
             Some(
                 Screen::NowPlaying
-                    | Screen::NsfChannels { .. }
-                    | Screen::NsfContainer { .. }
-                    | Screen::NsfSfx { .. }
-                    | Screen::VideoPlayer { .. }
-                    | Screen::MainMenu { .. }
-                    | Screen::Browse { .. }
-                    | Screen::Artists { .. }
-                    | Screen::ArtistSongs { .. }
-                    | Screen::Albums { .. }
-                    | Screen::AlbumSongs { .. }
-                    | Screen::Genres { .. }
-                    | Screen::GenreSongs { .. }
-                    | Screen::AllSongs { .. }
-                    | Screen::Playlists { .. }
-            )
-        )
+                | Screen::NsfChannels { .. }
+                | Screen::NsfContainer { .. }
+                | Screen::NsfSfx { .. }
+                | Screen::VideoPlayer { .. }
+                | Screen::MainMenu { .. }
+                | Screen::Browse { .. }
+                | Screen::Artists { .. }
+                | Screen::ArtistSongs { .. }
+                | Screen::Albums { .. }
+                | Screen::AlbumSongs { .. }
+                | Screen::Genres { .. }
+                | Screen::GenreSongs { .. }
+                | Screen::AllSongs { .. }
+                | Screen::Playlists { .. },
+            ) => true,
+            _ => false,
+        }
     }
 
     pub(crate) fn nsf_container_name_for_track(t: &Track) -> Option<String> {
@@ -1059,6 +1198,9 @@ impl UIPodApp {
             } else if !t.is_sfx {
                 out.push(BrowseMusicItem::Track(i));
             }
+        }
+        for b_idx in 0..self.user_books.len() {
+            out.push(BrowseMusicItem::UserBook(b_idx));
         }
         out.push(BrowseMusicItem::AboutTxt);
         out
@@ -1172,7 +1314,7 @@ impl UIPodApp {
                 match self.browse_music_items().get(*sel)? {
                     BrowseMusicItem::Track(idx) => Some(*idx),
                     BrowseMusicItem::NsfContainer { play_idx, .. } => *play_idx,
-                    BrowseMusicItem::AboutTxt => None,
+                    BrowseMusicItem::UserBook(_) | BrowseMusicItem::AboutTxt => None,
                 }
             }
             Screen::NsfContainer { file_name, sel } => {
@@ -1271,6 +1413,16 @@ impl UIPodApp {
                     false
                 }
             }
+            Some(Screen::PluginActive) => {
+                if let Some(ActivePlugin::TextViewer(ref mut tv)) = self.active_plugin {
+                    if tv.open_options_menu() {
+                        self.emit_click();
+                        self.state_dirty = true;
+                        return true;
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }
@@ -1278,6 +1430,7 @@ impl UIPodApp {
     fn go_home(&mut self, ui: &mut UiEngine) {
         self.cancel_seek_if_active();
         self.emit_click();
+        self.sync_reader_persistence();
         self.active_plugin = None;
         if matches!(self.stack.last(), Some(Screen::MainMenu { .. })) && self.stack.len() == 1 {
             return;
@@ -1305,6 +1458,15 @@ impl UIPodApp {
         let ctx_aware = self.is_context_aware_screen();
 
         let mut immediate = mask;
+
+        // Defer `SELECT` to solo release so `SELECT + VOL ±` brightness never triggers solo `SELECT`!
+        if (mask & btn::SELECT) != 0 {
+            immediate &= !btn::SELECT;
+            self.select_solo = true;
+        }
+        if (mask & !btn::SELECT) != 0 {
+            self.select_solo = false;
+        }
 
         // `B` uses `650 ms` `tp_hold` (`Hold B` -> Main Menu, tap on release) everywhere except
         // Keyboard and gameplay plugins where `B` is an immediate action/jump button!
@@ -1352,6 +1514,13 @@ impl UIPodApp {
             }
             self.b_hold_fired = false;
             self.b_hold_sec = 0.0;
+        }
+
+        if (mask & btn::SELECT) != 0 {
+            if self.select_solo && !self.hold_locked {
+                self.pending_pressed |= btn::SELECT;
+            }
+            self.select_solo = false;
         }
 
         if (mask & btn::A) != 0 && self.a_deferred {
@@ -1521,7 +1690,11 @@ impl UIPodApp {
                     _ => PluginId::TextViewer,
                 };
                 let pool = self.track_quiz_pool();
-                self.active_plugin = Some(ActivePlugin::launch(pid, &pool, self.pos_ms));
+                self.active_plugin = Some(if pid == PluginId::TextViewer {
+                    self.launch_about_viewer()
+                } else {
+                    ActivePlugin::launch(pid, &pool, self.pos_ms)
+                });
                 self.stack = vec![
                     Screen::MainMenu { sel: 1 },
                     Screen::ExtrasMenu { sel: 0 },
@@ -1866,6 +2039,7 @@ impl UIPodApp {
             } else {
                 PluginAction::Continue
             };
+            self.sync_reader_persistence();
             match act {
                 PluginAction::Exit => {
                     self.emit_click();
@@ -1899,12 +2073,28 @@ impl UIPodApp {
                     self.audio_playing = true;
                     let next = (self.current_track + 1) % self.tracks.len().max(1);
                     self.emit_play_track(next);
+                    if let Some(t) = self.tracks.get(next) {
+                        ui.hud_toast(
+                            "plugin_toast",
+                            &format!("» {} — {}", t.artist, t.title),
+                            1500,
+                            self.clock_ms,
+                        );
+                    }
                 }
                 PluginAction::PrevTrack => {
                     self.audio_playing = true;
                     let prev =
                         (self.current_track + self.tracks.len() - 1) % self.tracks.len().max(1);
                     self.emit_play_track(prev);
+                    if let Some(t) = self.tracks.get(prev) {
+                        ui.hud_toast(
+                            "plugin_toast",
+                            &format!("« {} — {}", t.artist, t.title),
+                            1500,
+                            self.clock_ms,
+                        );
+                    }
                 }
                 PluginAction::Continue => {}
             }
@@ -2083,9 +2273,10 @@ impl UIPodApp {
 
             Screen::Browse { path, mut sel } => {
                 let music_items = self.browse_music_items();
+                let nb_books = self.user_books.len();
                 let count = match path.as_str() {
-                    "/mnt/SDCARD" => 3,
-                    "/mnt/SDCARD/Media" => 2,
+                    "/mnt/SDCARD" => 3 + nb_books,
+                    "/mnt/SDCARD/Media" => 2 + nb_books,
                     _ => music_items.len(),
                 };
                 if self.nav_list(pressed, &mut sel, count.max(1), ui) {
@@ -2098,7 +2289,7 @@ impl UIPodApp {
                             let play_target = match item {
                                 BrowseMusicItem::NsfContainer { play_idx, .. } => *play_idx,
                                 BrowseMusicItem::Track(idx) => Some(*idx),
-                                BrowseMusicItem::AboutTxt => None,
+                                BrowseMusicItem::UserBook(_) | BrowseMusicItem::AboutTxt => None,
                             };
                             if let Some(idx) = play_target {
                                 self.emit_click();
@@ -2122,12 +2313,14 @@ impl UIPodApp {
                                 ui,
                             ),
                             1 => self.push_screen(Screen::PluginsHub { sel: 0 }, ui),
+                            idx if idx >= 2 && idx < 2 + nb_books => {
+                                if let Some(pl) = self.launch_user_book_viewer(idx - 2) {
+                                    self.active_plugin = Some(pl);
+                                    self.push_screen(Screen::PluginActive, ui);
+                                }
+                            }
                             _ => {
-                                self.active_plugin = Some(ActivePlugin::launch(
-                                    PluginId::TextViewer,
-                                    &[],
-                                    self.pos_ms,
-                                ));
+                                self.active_plugin = Some(self.launch_about_viewer());
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
@@ -2139,12 +2332,14 @@ impl UIPodApp {
                                 },
                                 ui,
                             ),
+                            idx if idx >= 1 && idx < 1 + nb_books => {
+                                if let Some(pl) = self.launch_user_book_viewer(idx - 1) {
+                                    self.active_plugin = Some(pl);
+                                    self.push_screen(Screen::PluginActive, ui);
+                                }
+                            }
                             _ => {
-                                self.active_plugin = Some(ActivePlugin::launch(
-                                    PluginId::TextViewer,
-                                    &[],
-                                    self.pos_ms,
-                                ));
+                                self.active_plugin = Some(self.launch_about_viewer());
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
@@ -2162,12 +2357,14 @@ impl UIPodApp {
                                 self.emit_play_track(*idx);
                                 self.push_screen(Screen::NowPlaying, ui);
                             }
+                            Some(BrowseMusicItem::UserBook(b_idx)) => {
+                                if let Some(pl) = self.launch_user_book_viewer(*b_idx) {
+                                    self.active_plugin = Some(pl);
+                                    self.push_screen(Screen::PluginActive, ui);
+                                }
+                            }
                             _ => {
-                                self.active_plugin = Some(ActivePlugin::launch(
-                                    PluginId::TextViewer,
-                                    &[],
-                                    self.pos_ms,
-                                ));
+                                self.active_plugin = Some(self.launch_about_viewer());
                                 self.push_screen(Screen::PluginActive, ui);
                             }
                         },
@@ -2313,11 +2510,7 @@ impl UIPodApp {
                             self.push_screen(Screen::VisualizerActive, ui);
                         }
                         _ => {
-                            self.active_plugin = Some(ActivePlugin::launch(
-                                PluginId::TextViewer,
-                                &pool,
-                                self.pos_ms,
-                            ));
+                            self.active_plugin = Some(self.launch_about_viewer());
                             self.push_screen(Screen::PluginActive, ui);
                         }
                     }
@@ -2805,11 +2998,7 @@ impl UIPodApp {
                         6 if !is_dir => self.push_screen(Screen::VisualizersMenu { sel: 0 }, ui),
                         7 if !is_dir => self.push_screen(Screen::PowerMenu { sel: 0 }, ui),
                         8 if !is_dir => {
-                            self.active_plugin = Some(ActivePlugin::launch(
-                                PluginId::TextViewer,
-                                &[],
-                                self.pos_ms,
-                            ));
+                            self.active_plugin = Some(self.launch_about_viewer());
                             self.push_screen(Screen::PluginActive, ui);
                         }
                         9 if !is_dir => {
@@ -4405,10 +4594,11 @@ impl UIPodApp {
         }
 
         if matches!(top, Screen::PluginActive) {
-            let hdr = self
+            let title_s = self
                 .active_plugin
                 .as_ref()
-                .map(|pl| self.header_state(pl.title(self.uk)));
+                .map(|pl| pl.title(self.uk));
+            let hdr = title_s.as_deref().map(|ts| self.header_state(ts));
             if let (Some(ref mut pl), Some(hdr)) = (&mut self.active_plugin, hdr) {
                 pl.render(ui, self.theme, &hdr, self.uk, win_w, win_h);
                 ui.present_fbo_transition(
@@ -4453,15 +4643,45 @@ impl UIPodApp {
 
             Screen::Browse { path, sel } => {
                 let items = match path.as_str() {
-                    "/mnt/SDCARD" => vec![
-                        ("Media".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
-                        ("Plugins".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
-                        ("about.txt".to_string(), FileIconKind::Text("TXT".into()), OwnedRight::Value("6 KB".into())),
-                    ],
-                    "/mnt/SDCARD/Media" => vec![
-                        ("Music".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
-                        ("about.txt".to_string(), FileIconKind::Text("TXT".into()), OwnedRight::Value("6 KB".into())),
-                    ],
+                    "/mnt/SDCARD" => {
+                        let mut rows = vec![
+                            ("Media".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
+                            ("Plugins".to_string(), FileIconKind::Folder, OwnedRight::Chevron),
+                        ];
+                        for b in &self.user_books {
+                            rows.push((
+                                b.file_name.clone(),
+                                FileIconKind::from_tag(&b.icon_tag),
+                                OwnedRight::Value(b.size_label.clone()),
+                            ));
+                        }
+                        rows.push((
+                            "about.txt".to_string(),
+                            FileIconKind::Text("TXT".into()),
+                            OwnedRight::Value("6 KB".into()),
+                        ));
+                        rows
+                    }
+                    "/mnt/SDCARD/Media" => {
+                        let mut rows = vec![(
+                            "Music".to_string(),
+                            FileIconKind::Folder,
+                            OwnedRight::Chevron,
+                        )];
+                        for b in &self.user_books {
+                            rows.push((
+                                b.file_name.clone(),
+                                FileIconKind::from_tag(&b.icon_tag),
+                                OwnedRight::Value(b.size_label.clone()),
+                            ));
+                        }
+                        rows.push((
+                            "about.txt".to_string(),
+                            FileIconKind::Text("TXT".into()),
+                            OwnedRight::Value("6 KB".into()),
+                        ));
+                        rows
+                    }
                     _ => self
                         .browse_music_items()
                         .into_iter()
@@ -4481,6 +4701,14 @@ impl UIPodApp {
                                     format!("{}.{}", t.title, t.codec.to_lowercase()),
                                     FileIconKind::from_tag(&t.codec),
                                     OwnedRight::Value(fmt_ms(t.duration_ms)),
+                                )
+                            }
+                            BrowseMusicItem::UserBook(b_idx) => {
+                                let b = &self.user_books[b_idx];
+                                (
+                                    b.file_name.clone(),
+                                    FileIconKind::from_tag(&b.icon_tag),
+                                    OwnedRight::Value(b.size_label.clone()),
                                 )
                             }
                             BrowseMusicItem::AboutTxt => (
@@ -5887,6 +6115,7 @@ pub(crate) enum BrowseMusicItem {
         play_idx: Option<usize>,
     },
     Track(usize),
+    UserBook(usize),
     AboutTxt,
 }
 
@@ -6141,5 +6370,86 @@ mod phase3_tests {
         let chosen_uri = app.tracks[m1].uri.clone().unwrap();
         app.user_playlist_uris.push(chosen_uri);
         assert_eq!(app.user_playlist_uris, vec!["/Music/Mega Man 2.nsf#1"]);
+    }
+
+    #[test]
+    fn solo_select_disambiguation_and_ebook_reader_toc_footnote_music_parity() {
+        let mut app = UIPodApp::new();
+
+        // 1. Holding `SELECT` + pressing another button cancels `select_solo` so release emits nothing!
+        app.button_down(btn::SELECT);
+        assert_eq!(app.pending_pressed & btn::SELECT, 0);
+        app.button_down(btn::UP);
+        app.button_up(btn::UP);
+        app.button_up(btn::SELECT);
+        assert_eq!(app.pending_pressed & btn::SELECT, 0);
+
+        // 2. Solo `SELECT` press + release emits `btn::SELECT` cleanly on release
+        app.pending_pressed = 0;
+        app.button_down(btn::SELECT);
+        assert_eq!(app.pending_pressed & btn::SELECT, 0);
+        app.button_up(btn::SELECT);
+        assert_eq!(app.pending_pressed & btn::SELECT, btn::SELECT);
+
+        // 3. Verify `TextViewerApp` TOC jump (`MENU -> Chapters -> A`), `SELECT` mode toggle, & `L2`/`R2`/`START`
+        let md = "# Chapter 1\n\nIntro line[^1].\n\n# Chapter 2\n\nSecond chapter text.\n\n[^1]: Footnote popup content.\n";
+        let doc = uipod_ebook::parse_document("test.md", md.as_bytes()).unwrap();
+        let mut pl = crate::plugins::ActivePlugin::TextViewer(
+            crate::plugins::TextViewerApp::from_doc(
+                doc.clone(),
+                Some("k".into()),
+                false,
+                uipod_ebook::ReaderPrefs::default(),
+                0,
+            ),
+        );
+        let snap = crate::plugins::AudioSnapshot {
+            playing: false,
+            track_title: "",
+            pos_ms: 0,
+            dur_ms: 0,
+            sample_rate: 48_000,
+        };
+        assert_eq!(
+            pl.update(0.016, btn::START, 0, &[], snap, false),
+            PluginAction::TogglePlayPause
+        );
+        assert_eq!(
+            pl.update(0.016, btn::L2, 0, &[], snap, false),
+            PluginAction::PrevTrack
+        );
+        assert_eq!(
+            pl.update(0.016, btn::R2, 0, &[], snap, false),
+            PluginAction::NextTrack
+        );
+
+        // Open `MENU` -> `Chapters` (row 0) -> Down to Chapter 2 -> `A` jumps to Chapter 2!
+        let _ = pl.update(0.016, btn::MENU, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::A, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::DOWN, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::A, 0, &[], snap, false);
+        if let crate::plugins::ActivePlugin::TextViewer(ref mut tv) = pl {
+            let (prefs, _, off) = tv.persistence_snapshot();
+            assert_eq!(prefs.mode, uipod_ebook::ReadingMode::Paginated);
+            assert_eq!(prefs.font, uipod_ebook::ReaderFont::Sans);
+            assert_eq!(off, doc.toc[1].offset);
+            assert!(tv.is_reading_body());
+            assert!(tv.open_options_menu());
+            assert!(!tv.is_reading_body());
+        } else {
+            panic!("expected TextViewer");
+        }
+        // Row 2 (`Font`) toggles `Geologica (Sans)` <-> `Noto Serif` while preserving anchor offset!
+        let _ = pl.update(0.016, btn::DOWN, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::DOWN, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::A, 0, &[], snap, false);
+        let _ = pl.update(0.016, btn::B, 0, &[], snap, false);
+        if let crate::plugins::ActivePlugin::TextViewer(ref mut tv) = pl {
+            let (prefs, _, off) = tv.persistence_snapshot();
+            assert_eq!(prefs.font, uipod_ebook::ReaderFont::Serif);
+            assert_eq!(off, doc.toc[1].offset);
+        } else {
+            panic!("expected TextViewer");
+        }
     }
 }

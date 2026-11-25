@@ -783,6 +783,38 @@ pub extern "C" fn uipod_rs_ui_plugin_draw_scrollbar(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn uipod_rs_ui_plugin_draw_rgba_image(
+    tex_key: u64,
+    src_w: u32,
+    src_h: u32,
+    rgba_ptr: *const u8,
+    rgba_len: usize,
+    dst_x: f32,
+    dst_y: f32,
+    dst_w: f32,
+    dst_h: f32,
+    radius: f32,
+) {
+    if rgba_ptr.is_null() || src_w == 0 || src_h == 0 {
+        return;
+    }
+    let needed = (src_w as usize)
+        .saturating_mul(src_h as usize)
+        .saturating_mul(4);
+    if rgba_len < needed || needed == 0 {
+        return;
+    }
+    let rgba = std::slice::from_raw_parts(rgba_ptr, needed);
+    if let Ok(mut guard) = SYNC_ENGINE.lock() {
+        if let Some(wrap) = guard.as_mut() {
+            wrap.0.plugin_draw_rgba_image(
+                tex_key, src_w, src_h, rgba, dst_x, dst_y, dst_w, dst_h, radius,
+            );
+        }
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn uipod_rs_ui_plugin_present(fb_bgr: *mut u8) -> bool {
     if fb_bgr.is_null() {
         return false;

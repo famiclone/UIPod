@@ -1,0 +1,15 @@
+[package]
+name = "uipod-ebook"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust e-book parser, 4-shade Bayer illustration ditherer, and Paginated/Scroll layout engine (.epub, .fb2, .fb2.zip, .mobi, .md, .txt)"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "uipod_ebook"
+crate-type = ["rlib"]
+
+[dependencies]
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+png = "0.17"
+zune-jpeg = "0.5"

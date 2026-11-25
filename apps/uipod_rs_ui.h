@@ -314,6 +314,13 @@ void  uipod_rs_ui_plugin_draw_scrollbar(uint32_t bg_rgb, uint32_t fg_rgb,
                                         float x, float y, float w, float h,
                                         size_t total, size_t start,
                                         size_t visible);
+void  uipod_rs_ui_plugin_draw_rgba_image(uint64_t tex_key,
+                                         uint32_t src_w, uint32_t src_h,
+                                         const uint8_t *rgba_ptr,
+                                         size_t rgba_len,
+                                         float dst_x, float dst_y,
+                                         float dst_w, float dst_h,
+                                         float radius);
 bool  uipod_rs_ui_plugin_present(uint8_t *fb_bgr);
 bool  uipod_rs_ui_plugin_present_gpu(uint32_t win_w, uint32_t win_h);
 bool  uipod_rs_ui_present_video_overlay_gpu(uint32_t win_w,

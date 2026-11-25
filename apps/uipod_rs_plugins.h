@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 8u
+#define UIPOD_PLUGIN_API_VERSION 9u
 
 enum uipod_plugin_category
 {
@@ -212,6 +212,15 @@ struct UIPodPluginApi
     /* Unified Track Intelligence Extension (v8+) */
     bool     (*audio_get_track_analysis)(struct UIPodPluginTrackAnalysis *out);
     bool     (*audio_get_live_telemetry)(struct UIPodPluginLiveTelemetry *out);
+
+    /* GPU Nearest-Neighbor RGBA Image Blitter Extension (v9+) */
+    void     (*canvas_draw_rgba_image)(uint64_t tex_key,
+                                       uint32_t src_w, uint32_t src_h,
+                                       const uint8_t *rgba_ptr,
+                                       size_t rgba_len,
+                                       float dst_x, float dst_y,
+                                       float dst_w, float dst_h,
+                                       float radius);
 };
 
 struct UIPodPluginInfoC

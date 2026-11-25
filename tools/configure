@@ -880,7 +880,7 @@ rhhconf () {
     # UIPod GPU UI & native 4-shade visualizer link pure-Rust `libuipod_ffi.a` + GLES/EGL.
     rsffi="$rootdir/target/aarch64-unknown-linux-gnu/release/libuipod_ffi.a"
     gllibs="-lGLESv2 -lEGL"
-    LDOPTS="$rsffi -lm -ldl -lrt -L/usr/lib -lSDL2 -lpthread $gllibs"
+    LDOPTS="$rsffi -lgcc_s -lm -ldl -lrt -L/usr/lib -lSDL2 -lpthread $gllibs"
 
     rbdir="/tmp/uipod"
     bindir="/tmp/uipod"
@@ -897,7 +897,7 @@ androidhhconf () {
     GCCOPTS="$GCCOPTS -fPIC -I$adeps/include -Wno-unused-command-line-argument -Wno-ignored-optimization-argument -Wno-unknown-warning-option -Wno-incompatible-pointer-types -Wno-int-conversion"
     GLOBAL_LDOPTS="`echo "$GLOBAL_LDOPTS" | sed 's/-Wl,-z,defs//g'` -L$adeps/lib"
     SHARED_LDFLAGS="-shared -lm -lc"
-    LDOPTS="-shared -Wl,-soname,libmain.so -Wl,--no-undefined -Wl,-Bsymbolic $rsffi $adeps/lib/libssl.a $adeps/lib/libcrypto.a -L$adeps/lib -lSDL2 -lGLESv2 -lEGL -llog -landroid -lm -ldl"
+    LDOPTS="-shared -Wl,-soname,libmain.so -Wl,--no-undefined -Wl,-Bsymbolic $rsffi $adeps/lib/libssl.a $adeps/lib/libcrypto.a -L$adeps/lib -lSDL2 -lGLESv2 -lEGL -llog -landroid -lunwind -lm -ldl"
 
     rbdir="/data/data/dev.famiclone.uipod/files/uipod"
     bindir="/data/data/dev.famiclone.uipod/files/uipod"

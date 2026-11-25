@@ -54,6 +54,8 @@
 
 extern void retrohh_cpu_hold_dynamic(void);
 extern void retrohh_cpu_release_dynamic(void);
+extern const char *handle_special_dirs(const char *dir, unsigned flags,
+                                       char *buf, const size_t bufsize);
 extern unsigned pcm_viz_latest(int16_t *out, unsigned max_frames);
 extern unsigned pcm_viz_read_synced(int16_t *out, unsigned max_frames,
                                     unsigned *sample_rate_out);
@@ -63,10 +65,11 @@ extern unsigned int pcm_alsa_output_delay_us(void);
 #define SDCARD_PLUGINS_DIR    UIPOD_SDCARD_ROOT "/Plugins/UIPod"
 #define PLUGIN_HOLD_B_TICKS   (65 * HZ / 100)
 #define MAX_CAT_PLUGINS       128
-#define MAX_PLUGIN_MENU_ITEMS 32
+#define MAX_PLUGIN_MENU_ITEMS 4096
 
 static long s_b_press_tick        = 0;
 static bool s_b_hold_fired        = false;
+static bool s_select_solo         = false;
 static bool s_active_menu_driven  = false;
 static bool s_menu_on_screen      = false;
 static bool s_prev_menu_cancelled = false;
@@ -356,6 +359,19 @@ static void host_canvas_draw_scrollbar(float x, float y, float w, float h,
                                       x, y, w, h, total, start, visible);
 }
 
+static void host_canvas_draw_rgba_image(uint64_t tex_key,
+                                        uint32_t src_w, uint32_t src_h,
+                                        const uint8_t *rgba_ptr,
+                                        size_t rgba_len,
+                                        float dst_x, float dst_y,
+                                        float dst_w, float dst_h,
+                                        float radius)
+{
+    uipod_rs_ui_plugin_draw_rgba_image(tex_key, src_w, src_h,
+                                       rgba_ptr, rgba_len,
+                                       dst_x, dst_y, dst_w, dst_h, radius);
+}
+
 static void present_canvas_to_fb_cb(void *ctx)
 {
     (void)ctx;
@@ -502,12 +518,12 @@ struct plugin_sys_menu_row
 
 struct plugin_sys_menu_page
 {
-    struct uipod_page          base;
-    struct gui_synclist        lists;
-    char                       title_buf[128];
-    struct plugin_sys_menu_row rows[MAX_PLUGIN_MENU_ITEMS];
-    int                        count;
-    int32_t                    chosen; /* >= 0 selected, -1 cancelled, -2 force-exit */
+    struct uipod_page           base;
+    struct gui_synclist         lists;
+    char                        title_buf[128];
+    struct plugin_sys_menu_row *rows;
+    int                         count;
+    int32_t                     chosen; /* >= 0 selected, -1 cancelled, -2 force-exit */
 };
 
 static const char *sys_menu_get_name(int sel, void *data, char *buf, size_t buf_len)
@@ -597,6 +613,12 @@ static int32_t host_show_menu(const char *title,
     strlcpy(mp->title_buf, safe_title, sizeof(mp->title_buf));
 
     int n = (count > MAX_PLUGIN_MENU_ITEMS) ? MAX_PLUGIN_MENU_ITEMS : (int)count;
+    mp->rows = calloc((size_t)n, sizeof(*mp->rows));
+    if (!mp->rows)
+    {
+        free(mp);
+        return -1;
+    }
     mp->count  = n;
     mp->chosen = -2; /* Remains -2 if exited via Hold-B Home or USB/Poweroff */
 
@@ -619,7 +641,7 @@ static int32_t host_show_menu(const char *title,
                                strcmp(s_last_menu_title, mp->title_buf) == 0;
 
     mp->base.vt               = &sys_menu_vtable;
-    mp->base.context          = s_has_presented_frame
+    mp->base.context          = (s_active_menu_driven && s_has_presented_frame)
                                     ? (CONTEXT_PLUGIN | CONTEXT_LIST)
                                     : CONTEXT_LIST;
     mp->base.allowed          = sys_menu_allowed;
@@ -665,7 +687,9 @@ static int32_t host_show_menu(const char *title,
     action_wait_for_release();
     s_b_press_tick = 0;
     s_b_hold_fired = false;
+    s_select_solo  = false;
 
+    free(mp->rows);
     free(mp);
     return res;
 }
@@ -696,6 +720,7 @@ static void process_single_button_event(long ev, struct UIPodPluginInput *out)
 #if defined(BUTTON_VOL_UP) && defined(BUTTON_VOL_DOWN)
     if ((base & (BUTTON_VOL_UP | BUTTON_VOL_DOWN)) != 0)
     {
+        s_select_solo = false;
         if (!(ev & BUTTON_REL))
         {
 #if defined(BUTTON_SELECT) && defined(HAVE_BACKLIGHT_BRIGHTNESS)
@@ -707,6 +732,27 @@ static void process_single_button_event(long ev, struct UIPodPluginInput *out)
         }
         return;
     }
+#endif
+
+#ifdef BUTTON_SELECT
+    if (base == BUTTON_SELECT)
+    {
+        /* Defer SELECT to solo release so `SELECT + VOL ±` screen brightness
+         * never accidentally triggers an in-plugin SELECT action! */
+        if (!(ev & (BUTTON_REPEAT | BUTTON_REL)))
+        {
+            s_select_solo = true;
+        }
+        else if (ev & BUTTON_REL)
+        {
+            if (s_select_solo)
+                out->pressed |= (uint32_t)BUTTON_SELECT;
+            s_select_solo = false;
+        }
+        return;
+    }
+    if (!(ev & BUTTON_REL) && base != 0)
+        s_select_solo = false;
 #endif
 
     if (!s_active_menu_driven && base == BUTTON_B)
@@ -852,19 +898,31 @@ static void host_audio_toggle_play_pause(void)
 
 static void host_audio_next(void)
 {
+    if (!(audio_status() & AUDIO_STATUS_PLAY))
+    {
+        playlist_resume_saved();
+        pump_background_threads();
+    }
     if (audio_status() & AUDIO_STATUS_PLAY)
     {
         audio_next();
-        pump_background_threads();
+        for (int i = 0; i < 8; i++)
+            yield();
     }
 }
 
 static void host_audio_prev(void)
 {
+    if (!(audio_status() & AUDIO_STATUS_PLAY))
+    {
+        playlist_resume_saved();
+        pump_background_threads();
+    }
     if (audio_status() & AUDIO_STATUS_PLAY)
     {
         audio_prev();
-        pump_background_threads();
+        for (int i = 0; i < 8; i++)
+            yield();
     }
 }
 
@@ -1045,15 +1103,31 @@ static const struct UIPodPluginApi s_host_api = {
     .audio_get_apu_telemetry = host_audio_get_apu_telemetry,
     .audio_get_track_analysis= uipod_track_intel_get_analysis,
     .audio_get_live_telemetry= uipod_track_intel_get_live,
+    .canvas_draw_rgba_image  = host_canvas_draw_rgba_image,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */
 
+static const char *resolve_vfs_to_host_path(const char *path,
+                                            char *buf,
+                                            size_t buf_sz)
+{
+    if (!path || !path[0])
+        return path;
+    const char *resolved = handle_special_dirs(path, 0, buf, buf_sz);
+    return (resolved && resolved[0]) ? resolved : path;
+}
+
 static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
 {
+    char host_path_buf[MAX_PATH];
+    const char *real_open_path = resolve_vfs_to_host_path(
+        open_path, host_path_buf, sizeof(host_path_buf));
+
     s_b_press_tick        = 0;
     s_b_hold_fired        = false;
-    s_active_menu_driven  = uipod_rs_plugins_is_menu_driven(plugin_id, open_path);
+    s_select_solo         = false;
+    s_active_menu_driven  = uipod_rs_plugins_is_menu_driven(plugin_id, real_open_path);
     s_menu_on_screen      = false;
     s_prev_menu_cancelled = false;
     s_gpu_fbo_unsynced    = false;
@@ -1086,12 +1160,12 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
     int32_t rc;
     if (plugin_id && plugin_id[0])
     {
-        rc = uipod_rs_plugins_run_by_id(plugin_id, &s_host_api, open_path,
+        rc = uipod_rs_plugins_run_by_id(plugin_id, &s_host_api, real_open_path,
                                         err, sizeof(err));
     }
     else
     {
-        rc = uipod_rs_plugins_open_viewer(open_path, &s_host_api,
+        rc = uipod_rs_plugins_open_viewer(real_open_path, &s_host_api,
                                           err, sizeof(err));
     }
 
@@ -1124,6 +1198,11 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
         splashf(HZ * 3 / 2, "%s: %s", str(LANG_UIPOD_PLUGIN_ERROR), err);
         uipod_transition_suppress_next();
     }
+    else if (rc == -3)
+    {
+        splash(HZ * 3 / 2, str(LANG_UIPOD_PLUGIN_ERROR));
+        uipod_transition_suppress_next();
+    }
     else if (!uipod_home_pending)
     {
         uipod_transition_arm_back();
@@ -1135,12 +1214,15 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
 
 void uipod_plugins_init(void)
 {
+    char bundled_buf[MAX_PATH];
+    const char *bundled_real = resolve_vfs_to_host_path(
+        BUNDLED_PLUGINS_DIR, bundled_buf, sizeof(bundled_buf));
 #ifdef __ANDROID__
     const char *nlibdir = getenv("UIPOD_NATIVE_LIB_DIR");
-    uipod_rs_plugins_init((nlibdir && nlibdir[0]) ? nlibdir : BUNDLED_PLUGINS_DIR,
+    uipod_rs_plugins_init((nlibdir && nlibdir[0]) ? nlibdir : bundled_real,
                           SDCARD_PLUGINS_DIR);
 #else
-    uipod_rs_plugins_init(BUNDLED_PLUGINS_DIR, SDCARD_PLUGINS_DIR);
+    uipod_rs_plugins_init(bundled_real, SDCARD_PLUGINS_DIR);
 #endif
 }
 
@@ -1153,8 +1235,10 @@ bool uipod_plugins_can_open_file(const char *path)
 {
     if (!path || !path[0])
         return false;
-    return uipod_rs_plugins_is_plugin_file(path) ||
-           uipod_rs_plugins_has_viewer(path);
+    char host_buf[MAX_PATH];
+    const char *real_path = resolve_vfs_to_host_path(path, host_buf, sizeof(host_buf));
+    return uipod_rs_plugins_is_plugin_file(real_path) ||
+           uipod_rs_plugins_has_viewer(real_path);
 }
 
 bool uipod_plugins_open_file(const char *path)

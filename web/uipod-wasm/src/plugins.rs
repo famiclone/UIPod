@@ -175,21 +175,25 @@ impl ActivePlugin {
             PluginId::Game2048 => Self::Game2048(Plugin2048::new()),
             PluginId::BrickBreaker => Self::BrickBreaker(BrickBreakerPlugin::new()),
             PluginId::Stopwatch => Self::Stopwatch(StopwatchApp::new()),
-            PluginId::TextViewer => Self::TextViewer(TextViewerApp::new(ABOUT_MANUAL_TEXT)),
+            PluginId::TextViewer => Self::TextViewer(TextViewerApp::new_about(
+                uipod_ebook::ReaderPrefs::default(),
+                0,
+                false,
+            )),
         }
     }
 
-    pub fn title(&self, uk: bool) -> &'static str {
+    pub fn title(&self, uk: bool) -> String {
         match self {
-            Self::BeatStack(_) => if uk { "Біт Стек" } else { "Beat Stack" },
-            Self::MusicQuiz(_) => if uk { "Вгадай мелодію" } else { "Music Quiz" },
-            Self::SoundRacer(_) => "Sound Racer",
-            Self::Tetris(_) => if uk { "Тетріс" } else { "Tetris" },
-            Self::Snake(_) => if uk { "Змійка" } else { "Snake" },
-            Self::Game2048(_) => "2048",
-            Self::BrickBreaker(_) => if uk { "Цеглинки" } else { "Brick Breaker" },
-            Self::Stopwatch(s) => s.title(uk),
-            Self::TextViewer(_) => if uk { "Про UIPod" } else { "About UIPod" },
+            Self::BeatStack(_) => (if uk { "Біт Стек" } else { "Beat Stack" }).to_string(),
+            Self::MusicQuiz(_) => (if uk { "Вгадай мелодію" } else { "Music Quiz" }).to_string(),
+            Self::SoundRacer(_) => "Sound Racer".to_string(),
+            Self::Tetris(_) => (if uk { "Тетріс" } else { "Tetris" }).to_string(),
+            Self::Snake(_) => (if uk { "Змійка" } else { "Snake" }).to_string(),
+            Self::Game2048(_) => "2048".to_string(),
+            Self::BrickBreaker(_) => (if uk { "Цеглинки" } else { "Brick Breaker" }).to_string(),
+            Self::Stopwatch(s) => s.title(uk).to_string(),
+            Self::TextViewer(v) => v.title(uk),
         }
     }
 
@@ -262,7 +266,7 @@ impl ActivePlugin {
             }
             Self::TextViewer(v) => {
                 flush_plugin_splash_to_hud(ui, &mut v.splash);
-                v.render(ui, theme, header, uk);
+                v.render(ui, theme, header, uk, win_w, win_h);
             }
         }
     }
@@ -3087,100 +3091,101 @@ impl StopwatchApp {
 }
 
 /* ============================================================================
- * 6. TEXT VIEWER — 1:1 with `plugins/text-viewer/src/lib.rs`
+ * 6. TEXT VIEWER / E-BOOK READER — 1:1 with `plugins/text-viewer/src/lib.rs`
  * ========================================================================== */
-const TV_FONTS: [f32; 3] = [26.0, 32.0, 40.0];
-const TV_SPACINGS: [f32; 3] = [1.22, 1.38, 1.56];
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReaderMenuState {
+    Closed,
+    Options { sel: usize },
+    Chapters { sel: usize },
+}
 
 pub struct TextViewerApp {
-    raw: String,
-    lines: Vec<(String, bool)>,
-    scroll: usize,
-    bookmark: usize,
-    size_idx: usize,
-    spacing_idx: usize,
-    wrapped_for_size: Option<usize>,
-    hold_accum: f32,
-    menu: SubMenuMode,
+    doc: uipod_ebook::EbookDoc,
+    book_key: Option<String>,
+    is_about_manual: bool,
+    pub prefs: uipod_ebook::ReaderPrefs,
+    view: uipod_ebook::ReaderViewState,
+    img_cache: uipod_ebook::DitheredImageCache,
+    scroll_vel: f32,
+    clock_ms: u64,
+    menu: ReaderMenuState,
     splash: Option<(String, f32)>,
 }
 
 impl TextViewerApp {
-    fn new(raw: &str) -> Self {
+    pub fn new_about(prefs: uipod_ebook::ReaderPrefs, saved_offset: usize, uk: bool) -> Self {
+        let doc = uipod_ebook::parse_document("about.txt", ABOUT_MANUAL_TEXT.as_bytes())
+            .unwrap_or_else(|e| uipod_ebook::error_document("about.txt", &e, uk));
+        Self::from_doc(
+            doc,
+            Some(uipod_ebook::fnv1a_book_key("/tmp/uipod/about.txt")),
+            true,
+            prefs,
+            saved_offset,
+        )
+    }
+
+    pub fn from_doc(
+        doc: uipod_ebook::EbookDoc,
+        book_key: Option<String>,
+        is_about_manual: bool,
+        prefs: uipod_ebook::ReaderPrefs,
+        saved_offset: usize,
+    ) -> Self {
+        let mut view = uipod_ebook::ReaderViewState::new(saved_offset);
+        let init_clock = 1_000u64;
+        view.ui_hidden = prefs.hide_ui;
         Self {
-            raw: raw.to_string(),
-            lines: Vec::new(),
-            scroll: 0,
-            bookmark: 0,
-            size_idx: 1,
-            spacing_idx: 1,
-            wrapped_for_size: None,
-            hold_accum: 0.0,
-            menu: SubMenuMode::None,
+            doc,
+            book_key,
+            is_about_manual,
+            prefs,
+            view,
+            img_cache: uipod_ebook::DitheredImageCache::new(16),
+            scroll_vel: 0.0,
+            clock_ms: init_clock,
+            menu: ReaderMenuState::Closed,
             splash: None,
         }
     }
 
-    fn ensure_wrapped(&mut self, ui: &mut UiEngine) {
-        if self.wrapped_for_size == Some(self.size_idx) && !self.lines.is_empty() {
-            return;
+    pub fn title(&self, uk: bool) -> String {
+        if self.is_about_manual {
+            tr(uk, "About UIPod", "Про UIPod").to_string()
+        } else {
+            self.doc.title.clone()
         }
-        let font_px = TV_FONTS[self.size_idx];
-        let max_w = 1024.0 - 64.0 - 26.0;
-        let mut out = Vec::new();
-        for raw_line in self.raw.lines() {
-            let trimmed_end = raw_line.trim_end_matches('\r');
-            if trimmed_end.trim().is_empty() {
-                out.push((String::new(), false));
-                continue;
-            }
-            let (clean, heading) = if let Some(rest) = trimmed_end.strip_prefix("# ") {
-                (rest.trim(), true)
-            } else if let Some(rest) = trimmed_end.strip_prefix("## ") {
-                (rest.trim(), true)
-            } else {
-                (trimmed_end, false)
-            };
-            let wt = if heading { 3 } else { 0 };
-            let mut cur = String::new();
-            for word in clean.split_whitespace() {
-                let cand = if cur.is_empty() {
-                    word.to_string()
-                } else {
-                    format!("{cur} {word}")
-                };
-                if ui.plugin_measure_text(&cand, font_px, wt) <= max_w {
-                    cur = cand;
-                } else {
-                    if !cur.is_empty() {
-                        out.push((std::mem::take(&mut cur), heading));
-                    }
-                    cur = word.to_string();
-                }
-            }
-            if !cur.is_empty() {
-                out.push((cur, heading));
-            }
-        }
-        if out.is_empty() {
-            out.push((String::from("(Empty file)"), false));
-        }
-        self.lines = out;
-        self.wrapped_for_size = Some(self.size_idx);
-        let vis = self.visible_rows();
-        self.scroll = self.scroll.min(self.lines.len().saturating_sub(vis));
     }
 
-    fn row_step(&self) -> f32 {
-        (TV_FONTS[self.size_idx] * TV_SPACINGS[self.spacing_idx]).round()
+    pub fn persistence_snapshot(&mut self) -> (uipod_ebook::ReaderPrefs, Option<String>, usize) {
+        self.view.refresh_anchor_from_mode(self.prefs.mode);
+        (
+            self.prefs,
+            self.book_key.clone(),
+            self.view.anchor_offset,
+        )
     }
 
-    fn visible_rows(&self) -> usize {
-        let usable_h = 768.0 - (CONTENT_TOP_Y + 8.0) - 24.0;
-        ((usable_h / self.row_step()).floor() as usize).max(3)
+    pub fn is_reading_body(&self) -> bool {
+        matches!(self.menu, ReaderMenuState::Closed) && self.view.open_footnote_idx.is_none()
+    }
+
+    pub fn open_options_menu(&mut self) -> bool {
+        if !self.is_reading_body() {
+            return false;
+        }
+        self.scroll_vel = 0.0;
+        self.view.refresh_anchor_from_mode(self.prefs.mode);
+        self.menu = ReaderMenuState::Options { sel: 0 };
+        true
     }
 
     fn update(&mut self, dt: f32, pressed: u32, held: u32, uk: bool) -> PluginAction {
+        let step_ms = ((dt.clamp(0.0, 0.2) * 1000.0).round() as u64).max(1);
+        self.clock_ms = self.clock_ms.saturating_add(step_ms);
+        self.view.tick_auto_hide(&self.prefs, self.clock_ms);
+
         if let Some((_, ref mut rem)) = self.splash {
             *rem -= dt;
             if *rem <= 0.0 {
@@ -3188,211 +3193,879 @@ impl TextViewerApp {
             }
         }
 
+        // Background music controls work globally inside Reader & Reader Options
+        if (pressed & btn::START) != 0 {
+            return PluginAction::TogglePlayPause;
+        }
+        if (pressed & btn::L2) != 0 {
+            return PluginAction::PrevTrack;
+        }
+        if (pressed & btn::R2) != 0 {
+            return PluginAction::NextTrack;
+        }
+
         match self.menu {
-            SubMenuMode::Main { mut sel } => {
-                let (back, act, _) = nav_menu_input(pressed, &mut sel, 6);
-                self.menu = SubMenuMode::Main { sel };
-                if back {
-                    self.menu = SubMenuMode::None;
+            ReaderMenuState::Chapters { mut sel } => {
+                let count = self.doc.toc.len();
+                if count == 0 || (pressed & (btn::B | btn::MENU)) != 0 {
+                    self.menu = ReaderMenuState::Options { sel: 0 };
                     return PluginAction::Click;
                 }
-                if act && (pressed & btn::A) != 0 {
-                    let vis = self.visible_rows();
-                    let max_s = self.lines.len().saturating_sub(vis);
-                    match sel {
-                        0 => self.menu = SubMenuMode::None,
-                        1 => {
-                            self.scroll = 0;
-                            self.menu = SubMenuMode::None;
+                if (pressed & btn::UP) != 0 {
+                    sel = (sel + count - 1) % count;
+                    self.menu = ReaderMenuState::Chapters { sel };
+                    return PluginAction::Click;
+                }
+                if (pressed & btn::DOWN) != 0 {
+                    sel = (sel + 1) % count;
+                    self.menu = ReaderMenuState::Chapters { sel };
+                    return PluginAction::Click;
+                }
+                if (pressed & (btn::LEFT | btn::L1)) != 0 {
+                    sel = sel.saturating_sub(LIST_VISIBLE_ROWS);
+                    self.menu = ReaderMenuState::Chapters { sel };
+                    return PluginAction::Click;
+                }
+                if (pressed & (btn::RIGHT | btn::R1)) != 0 {
+                    sel = (sel + LIST_VISIBLE_ROWS).min(count - 1);
+                    self.menu = ReaderMenuState::Chapters { sel };
+                    return PluginAction::Click;
+                }
+                if (pressed & btn::A) != 0 {
+                    if let Some(target) = self.doc.toc.get(sel) {
+                        self.view.open_footnote_idx = None;
+                        self.view.sync_to_anchor(target.offset);
+                        if self.prefs.hide_ui {
+                            self.view.note_backward_motion(&self.prefs, self.clock_ms);
                         }
-                        2 => {
-                            self.scroll = max_s;
-                            self.menu = SubMenuMode::None;
-                        }
-                        3 => {
-                            self.bookmark = self.scroll;
-                            self.splash = Some((
-                                tr(uk, "Bookmark saved", "Закладку збережено").into(),
-                                0.75,
-                            ));
-                            self.menu = SubMenuMode::None;
-                        }
-                        4 => self.menu = SubMenuMode::Options { sel: 0 },
-                        _ => return PluginAction::Exit,
                     }
+                    self.menu = ReaderMenuState::Closed;
                     return PluginAction::Click;
                 }
                 return PluginAction::Continue;
             }
-            SubMenuMode::Options { mut sel } => {
-                let (back, act, _) = nav_menu_input(pressed, &mut sel, 2);
-                self.menu = SubMenuMode::Options { sel };
+            ReaderMenuState::Options { mut sel } => {
+                let (back, act, _) = nav_menu_input(pressed, &mut sel, 10);
+                self.menu = ReaderMenuState::Options { sel };
                 if back {
-                    self.menu = SubMenuMode::Main { sel: 4 };
+                    self.menu = ReaderMenuState::Closed;
                     return PluginAction::Click;
                 }
                 if act {
                     match sel {
-                        0 => {
-                            self.size_idx = (self.size_idx + 1) % TV_FONTS.len();
-                            self.wrapped_for_size = None;
+                        0 if (pressed & btn::A) != 0 => {
+                            if self.doc.toc.is_empty() {
+                                self.splash = Some((
+                                    tr(uk, "No chapters", "Немає розділів").into(),
+                                    1.1,
+                                ));
+                            } else {
+                                let active = self.view.active_toc_index(&self.doc);
+                                self.menu = ReaderMenuState::Chapters { sel: active };
+                            }
                         }
-                        _ => {
-                            self.spacing_idx = (self.spacing_idx + 1) % TV_SPACINGS.len();
+                        1 => {
+                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            let spot = self.view.anchor_offset;
+                            self.prefs.mode = self.prefs.mode.toggle();
+                            self.view.sync_to_anchor(spot);
                         }
+                        2 => {
+                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.prefs.font = self.prefs.font.toggle();
+                            self.view.invalidate_layout();
+                        }
+                        3 => {
+                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.prefs.size_idx =
+                                (self.prefs.size_idx + 1) % uipod_ebook::READER_FONT_SIZES.len();
+                            self.view.invalidate_layout();
+                        }
+                        4 => {
+                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.prefs.spacing_idx = (self.prefs.spacing_idx + 1)
+                                % uipod_ebook::READER_LINE_SPACINGS.len();
+                            self.view.invalidate_layout();
+                        }
+                        5 => {
+                            self.view.refresh_anchor_from_mode(self.prefs.mode);
+                            self.prefs.hide_ui = !self.prefs.hide_ui;
+                            self.view.ui_hidden = self.prefs.hide_ui;
+                            self.view.ui_reveal_until_ms = 0;
+                            self.view.invalidate_layout();
+                        }
+                        6 => {
+                            self.prefs.progress_display = self.prefs.progress_display.toggle();
+                        }
+                        7 if (pressed & btn::A) != 0 => {
+                            self.view.open_footnote_idx = None;
+                            self.view.sync_to_anchor(0);
+                            self.menu = ReaderMenuState::Closed;
+                        }
+                        8 if (pressed & btn::A) != 0 => {
+                            self.view.open_footnote_idx = None;
+                            self.view.sync_to_anchor(self.doc.total_chars);
+                            self.menu = ReaderMenuState::Closed;
+                        }
+                        9 if (pressed & btn::A) != 0 => {
+                            return PluginAction::Exit;
+                        }
+                        _ => {}
                     }
                     return PluginAction::Click;
                 }
                 return PluginAction::Continue;
             }
-            SubMenuMode::None => {}
+            ReaderMenuState::Closed => {}
+        }
+
+        let vis_fns = self.view.visible_footnotes(self.prefs.mode);
+
+        // Footnote popup card interaction (`B` closes card first without exiting Reader!)
+        if self.view.open_footnote_idx.is_some() {
+            if (pressed & btn::B) != 0 {
+                self.view.open_footnote_idx = None;
+                self.view.footnote_scroll_line = 0;
+                return PluginAction::Click;
+            }
+            if (pressed & btn::UP) != 0 {
+                self.view.footnote_scroll_line = self.view.footnote_scroll_line.saturating_sub(1);
+                return PluginAction::Continue;
+            }
+            if (pressed & btn::DOWN) != 0 {
+                self.view.footnote_scroll_line = self.view.footnote_scroll_line.saturating_add(1);
+                return PluginAction::Continue;
+            }
+            if (pressed & btn::A) != 0 {
+                if vis_fns.len() > 1 {
+                    self.view.focused_fn_slot = (self.view.focused_fn_slot + 1) % vis_fns.len();
+                    self.view.open_footnote_idx = vis_fns.get(self.view.focused_fn_slot).copied();
+                    self.view.footnote_scroll_line = 0;
+                } else {
+                    self.view.open_footnote_idx = None;
+                    self.view.footnote_scroll_line = 0;
+                }
+                return PluginAction::Click;
+            }
+            return PluginAction::Continue;
         }
 
         if (pressed & btn::B) != 0 {
             return PluginAction::Exit;
         }
         if (pressed & btn::MENU) != 0 {
-            self.menu = SubMenuMode::Main { sel: 0 };
+            self.scroll_vel = 0.0;
+            self.view.refresh_anchor_from_mode(self.prefs.mode);
+            self.menu = ReaderMenuState::Options { sel: 0 };
             return PluginAction::Click;
         }
-        if (pressed & btn::START) != 0 {
-            return PluginAction::TogglePlayPause;
+        if (pressed & btn::SELECT) != 0 {
+            self.view.refresh_anchor_from_mode(self.prefs.mode);
+            let spot = self.view.anchor_offset;
+            self.prefs.mode = self.prefs.mode.toggle();
+            self.view.sync_to_anchor(spot);
+            self.scroll_vel = 0.0;
+            let toast = match self.prefs.mode {
+                uipod_ebook::ReadingMode::Paginated => {
+                    tr(uk, "Reading Mode: Pages (↔)", "Режим: Сторінки (↔)")
+                }
+                uipod_ebook::ReadingMode::Scroll => {
+                    tr(uk, "Reading Mode: Scroll (↕)", "Режим: Прокрутка (↕)")
+                }
+            };
+            self.splash = Some((toast.into(), 1.2));
+            return PluginAction::Click;
+        }
+        if (pressed & btn::A) != 0 && !vis_fns.is_empty() {
+            let fn_idx = vis_fns[self.view.focused_fn_slot.min(vis_fns.len() - 1)];
+            self.view.open_footnote_idx = Some(fn_idx);
+            self.view.footnote_scroll_line = 0;
+            return PluginAction::Click;
         }
         if (pressed & btn::X) != 0 {
-            self.size_idx = (self.size_idx + 1) % TV_FONTS.len();
-            self.wrapped_for_size = None;
+            self.view.refresh_anchor_from_mode(self.prefs.mode);
+            self.prefs.size_idx =
+                (self.prefs.size_idx + 1) % uipod_ebook::READER_FONT_SIZES.len();
+            self.view.invalidate_layout();
             return PluginAction::Click;
         }
 
-        let vis = self.visible_rows();
-        let max_scroll = self.lines.len().saturating_sub(vis);
-        if (pressed & btn::UP) != 0 {
-            self.scroll = self.scroll.saturating_sub(1);
-            self.hold_accum = 0.0;
-        } else if (pressed & btn::DOWN) != 0 {
-            self.scroll = (self.scroll + 1).min(max_scroll);
-            self.hold_accum = 0.0;
-        } else if (pressed & (btn::LEFT | btn::L1)) != 0 {
-            self.scroll = self.scroll.saturating_sub(vis);
-        } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
-            self.scroll = (self.scroll + vis).min(max_scroll);
-        }
-
-        if (held & (btn::UP | btn::DOWN)) != 0 {
-            self.hold_accum += dt;
-            if self.hold_accum > 0.24 {
-                self.hold_accum -= 0.055;
-                if (held & btn::UP) != 0 {
-                    self.scroll = self.scroll.saturating_sub(1);
-                } else {
-                    self.scroll = (self.scroll + 1).min(max_scroll);
+        match self.prefs.mode {
+            uipod_ebook::ReadingMode::Paginated => {
+                if (pressed & (btn::LEFT | btn::L1)) != 0 {
+                    if self.view.step_page(-1, &self.prefs, self.clock_ms) {
+                        return PluginAction::Click;
+                    }
+                } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
+                    if self.view.step_page(1, &self.prefs, self.clock_ms) {
+                        return PluginAction::Click;
+                    }
+                } else if (pressed & btn::UP) != 0 {
+                    if vis_fns.len() > 1 && self.view.focused_fn_slot > 0 {
+                        self.view.focused_fn_slot -= 1;
+                    } else {
+                        let _ = self.view.step_page(-1, &self.prefs, self.clock_ms);
+                    }
+                } else if (pressed & btn::DOWN) != 0 {
+                    if vis_fns.len() > 1 && self.view.focused_fn_slot + 1 < vis_fns.len() {
+                        self.view.focused_fn_slot += 1;
+                    } else {
+                        let _ = self.view.step_page(1, &self.prefs, self.clock_ms);
+                    }
                 }
             }
-        } else {
-            self.hold_accum = 0.0;
+            uipod_ebook::ReadingMode::Scroll => {
+                let line_step = (uipod_ebook::READER_FONT_SIZES[self.prefs.size_idx]
+                    * uipod_ebook::READER_LINE_SPACINGS[self.prefs.spacing_idx])
+                    .round();
+                if (pressed & (btn::LEFT | btn::L1)) != 0 {
+                    self.scroll_vel = 0.0;
+                    let _ = self.view.scroll_by_px(
+                        -(self.view.viewport_h - line_step).max(line_step),
+                        &self.prefs,
+                        self.clock_ms,
+                    );
+                } else if (pressed & (btn::RIGHT | btn::R1)) != 0 {
+                    self.scroll_vel = 0.0;
+                    let _ = self.view.scroll_by_px(
+                        (self.view.viewport_h - line_step).max(line_step),
+                        &self.prefs,
+                        self.clock_ms,
+                    );
+                } else if (held & btn::UP) != 0 {
+                    let target_v = -560.0;
+                    self.scroll_vel =
+                        (self.scroll_vel + (target_v - self.scroll_vel) * (dt * 9.0).min(1.0))
+                            .min(-220.0);
+                    let delta = if (pressed & btn::UP) != 0 && self.scroll_vel.abs() < 260.0 {
+                        -line_step
+                    } else {
+                        self.scroll_vel * dt
+                    };
+                    let _ = self.view.scroll_by_px(delta, &self.prefs, self.clock_ms);
+                } else if (held & btn::DOWN) != 0 {
+                    let target_v = 560.0;
+                    self.scroll_vel =
+                        (self.scroll_vel + (target_v - self.scroll_vel) * (dt * 9.0).min(1.0))
+                            .max(220.0);
+                    let delta = if (pressed & btn::DOWN) != 0 && self.scroll_vel.abs() < 260.0 {
+                        line_step
+                    } else {
+                        self.scroll_vel * dt
+                    };
+                    let _ = self.view.scroll_by_px(delta, &self.prefs, self.clock_ms);
+                } else if (pressed & btn::UP) != 0 {
+                    let _ = self.view.scroll_by_px(-line_step, &self.prefs, self.clock_ms);
+                } else if (pressed & btn::DOWN) != 0 {
+                    let _ = self.view.scroll_by_px(line_step, &self.prefs, self.clock_ms);
+                } else if self.scroll_vel.abs() > 1.0 {
+                    self.scroll_vel *= (1.0 - dt * 14.0).max(0.0);
+                    if self.scroll_vel.abs() < 12.0 {
+                        self.scroll_vel = 0.0;
+                    } else {
+                        let _ =
+                            self.view
+                                .scroll_by_px(self.scroll_vel * dt, &self.prefs, self.clock_ms);
+                    }
+                }
+            }
         }
 
         PluginAction::Continue
     }
 
-    fn render(&mut self, ui: &mut UiEngine, t: ThemeColors, header: &HeaderState<'_>, uk: bool) {
-        self.ensure_wrapped(ui);
-
+    fn render(
+        &mut self,
+        ui: &mut UiEngine,
+        t: ThemeColors,
+        header: &HeaderState<'_>,
+        uk: bool,
+        win_w: u32,
+        win_h: u32,
+    ) {
         match self.menu {
-            SubMenuMode::Main { sel } => {
+            ReaderMenuState::Options { sel } => {
+                let chap_val = if self.doc.toc.is_empty() {
+                    tr(uk, "No chapters", "Немає розділів").to_string()
+                } else {
+                    self.doc.toc.len().to_string()
+                };
+                let mode_lbl = match self.prefs.mode {
+                    uipod_ebook::ReadingMode::Paginated => tr(uk, "Pages (↔)", "Сторінки (↔)"),
+                    uipod_ebook::ReadingMode::Scroll => tr(uk, "Scroll (↕)", "Прокрутка (↕)"),
+                };
+                let font_lbl = match self.prefs.font {
+                    uipod_ebook::ReaderFont::Sans => {
+                        tr(uk, "Geologica (Sans)", "Geologica (Без засічок)")
+                    }
+                    uipod_ebook::ReaderFont::Serif => {
+                        tr(uk, "Noto Serif", "Noto Serif (Із засічками)")
+                    }
+                };
+                let sz_lbl = match self.prefs.size_idx {
+                    0 => tr(uk, "Small", "Малий"),
+                    1 => tr(uk, "Medium", "Середній"),
+                    2 => tr(uk, "Large", "Великий"),
+                    _ => tr(uk, "Extra Large", "Дуже великий"),
+                };
+                let sp_lbl = match self.prefs.spacing_idx {
+                    0 => tr(uk, "Compact", "Щільний"),
+                    1 => tr(uk, "Normal", "Звичайний"),
+                    _ => tr(uk, "Relaxed", "Широкий"),
+                };
+                let hide_lbl = if self.prefs.hide_ui {
+                    tr(uk, "On", "Увімк")
+                } else {
+                    tr(uk, "Off", "Вимк")
+                };
+                let prog_lbl = match self.prefs.progress_display {
+                    uipod_ebook::ProgressDisplay::Percent => tr(uk, "Percent", "Відсотки"),
+                    uipod_ebook::ProgressDisplay::Pages => tr(uk, "Pages", "Сторінки"),
+                };
+                let chap_row = PluginMenuRow {
+                    label: tr(uk, "Chapters", "Розділи").to_string(),
+                    right: Some(chap_val),
+                    has_chevron: !self.doc.toc.is_empty(),
+                };
                 let rows = [
-                    PluginMenuRow::action(tr(uk, "Continue Reading", "Продовжити читання")),
-                    PluginMenuRow::action(tr(uk, "Jump to Top", "На початок")),
-                    PluginMenuRow::action(tr(uk, "Jump to Bottom", "У кінець")),
-                    PluginMenuRow::action(tr(uk, "Save Bookmark", "Зберегти закладку")),
-                    PluginMenuRow::submenu(tr(uk, "Options", "Налаштування")),
+                    chap_row,
+                    PluginMenuRow::option(tr(uk, "Reading Mode", "Режим читання"), mode_lbl),
+                    PluginMenuRow::option(tr(uk, "Font", "Шрифт"), font_lbl),
+                    PluginMenuRow::option(tr(uk, "Font Size", "Розмір шрифту"), sz_lbl),
+                    PluginMenuRow::option(
+                        tr(uk, "Line Spacing", "Міжрядковий інтервал"),
+                        sp_lbl,
+                    ),
+                    PluginMenuRow::option(tr(uk, "Hide UI", "Ховати UI"), hide_lbl),
+                    PluginMenuRow::option(
+                        tr(uk, "Progress Label", "Індикатор прогресу"),
+                        prog_lbl,
+                    ),
+                    PluginMenuRow::action(tr(uk, "Go to Beginning", "На початок")),
+                    PluginMenuRow::action(tr(uk, "Go to End", "У кінець")),
                     PluginMenuRow::action(tr(uk, "Exit", "Вихід")),
                 ];
                 render_native_plugin_menu(
                     ui,
                     t,
                     header,
-                    tr(uk, "About UIPod", "Про UIPod"),
+                    tr(uk, "Reader Options", "Опції читалки"),
                     &rows,
                     sel,
                 );
                 return;
             }
-            SubMenuMode::Options { sel } => {
-                let sz = match self.size_idx {
-                    0 => tr(uk, "Small", "Малий"),
-                    1 => tr(uk, "Medium", "Середній"),
-                    _ => tr(uk, "Large", "Великий"),
+            ReaderMenuState::Chapters { sel } => {
+                let active_idx = self.view.active_toc_index(&self.doc);
+                let total_chars = self.doc.total_chars.max(1);
+                let total = self.doc.toc.len();
+                let vis = LIST_VISIBLE_ROWS;
+                let sel_clamped = sel.min(total.saturating_sub(1));
+                let start = if total <= vis {
+                    0
+                } else {
+                    sel_clamped
+                        .saturating_sub(vis / 2)
+                        .min(total.saturating_sub(vis))
                 };
-                let sp = match self.spacing_idx {
-                    0 => tr(uk, "Compact", "Щільний"),
-                    1 => tr(uk, "Normal", "Звичайний"),
-                    _ => tr(uk, "Relaxed", "Широкий"),
+                let end = (start + vis).min(total);
+                let mut labels = Vec::with_capacity(end - start);
+                let mut vals = Vec::with_capacity(end - start);
+                for (i, ch) in self.doc.toc[start..end].iter().enumerate() {
+                    let abs_i = start + i;
+                    let indent = match ch.level {
+                        0 => "",
+                        1 => "· ",
+                        2 => "  · ",
+                        _ => "    · ",
+                    };
+                    let act_mark = if abs_i == active_idx { "▸ " } else { "" };
+                    labels.push(format!("{act_mark}{indent}{}", ch.title));
+                    let pct = ((ch.offset * 100) / total_chars).min(100);
+                    vals.push(format!("{pct}%"));
+                }
+                let list_rows: Vec<ListRow<'_>> = labels
+                    .iter()
+                    .zip(vals.iter())
+                    .enumerate()
+                    .map(|(i, (l, v))| ListRow {
+                        label: l.as_str(),
+                        selected: start + i == sel_clamped,
+                        file_icon: FileIconKind::None,
+                        right: RightAccessory::Value(v.as_str()),
+                    })
+                    .collect();
+                let mut hdr = *header;
+                hdr.title = tr(uk, "Chapters", "Розділи");
+                let state = ListScreenState {
+                    theme: t,
+                    header: hdr,
+                    rows: list_rows,
+                    total_items: total,
+                    start_item: start,
+                    visible_items: vis,
                 };
-                let rows = [
-                    PluginMenuRow::option(tr(uk, "Font Size", "Розмір шрифту"), sz),
-                    PluginMenuRow::option(tr(uk, "Line Spacing", "Міжрядковий інтервал"), sp),
-                ];
-                render_native_plugin_menu(
-                    ui,
-                    t,
-                    header,
-                    tr(uk, "Options", "Налаштування"),
-                    &rows,
-                    sel,
-                );
+                ui.render_list_to_fbo(&state);
                 return;
             }
-            SubMenuMode::None => {}
+            ReaderMenuState::Closed => {}
         }
 
-        let total = self.lines.len();
-        let vis = self.visible_rows();
-        let pct = if total <= vis {
-            100
-        } else {
-            ((self.scroll * 100) / (total - vis)).min(100)
-        };
-        let pct_str = format!("{pct}%");
+        let chrome_vis = self.view.is_chrome_visible(&self.prefs, self.clock_ms);
         let mut hdr = *header;
-        hdr.legend = &pct_str;
+        hdr.legend = "";
+        let (sw, sh) = ui.plugin_begin_ex(
+            t,
+            t.bg_rgb,
+            if chrome_vis { Some(&hdr) } else { None },
+            win_w,
+            win_h,
+            true,
+        );
 
-        ui.plugin_begin(t, t.bg_rgb, Some(&hdr));
+        self.view
+            .ensure_layout(&self.doc, &self.prefs, sw, sh, |txt, sz, wt| {
+                ui.plugin_measure_text(txt, sz, wt)
+            });
 
-        let font_px = TV_FONTS[self.size_idx];
-        let step = self.row_step();
-        let top_y = CONTENT_TOP_Y + 8.0;
-        for (i, (txt, is_h)) in self.lines.iter().skip(self.scroll).take(vis).enumerate() {
-            if txt.is_empty() {
-                continue;
+        let vis_fns = self.view.visible_footnotes(self.prefs.mode);
+        if !vis_fns.is_empty() && self.view.focused_fn_slot >= vis_fns.len() {
+            self.view.focused_fn_slot = 0;
+        }
+        let focused_fn = vis_fns.get(self.view.focused_fn_slot).copied();
+        let spec = &uipod_ebook::READER_SPEC;
+
+        match self.prefs.mode {
+            uipod_ebook::ReadingMode::Paginated => {
+                let page_top_y = self.view.viewport_top_y;
+                if let Some(pg) = self.view.pages.get(self.view.current_page).copied() {
+                    let mut y = page_top_y;
+                    for it in &self.view.items[pg.start_item..pg.end_item] {
+                        draw_wasm_reader_item(
+                            ui,
+                            &self.doc,
+                            &mut self.img_cache,
+                            t,
+                            self.view.col_x,
+                            self.view.col_w,
+                            y,
+                            it.height,
+                            &it.kind,
+                            focused_fn,
+                        );
+                        y += it.height;
+                    }
+                }
             }
-            let cy = top_y + (i as f32 + 0.5) * step;
+            uipod_ebook::ReadingMode::Scroll => {
+                let clip_top = self.view.viewport_top_y - 4.0;
+                let clip_bot = sh - spec.bottom_strip_h;
+                let base_y = self.view.viewport_top_y;
+                let start_idx = match self.view.items.binary_search_by(|it| {
+                    (base_y + it.y_scroll + it.height - self.view.scroll_px)
+                        .partial_cmp(&clip_top)
+                        .unwrap_or(core::cmp::Ordering::Equal)
+                }) {
+                    Ok(i) | Err(i) => i.saturating_sub(1),
+                };
+                for it in &self.view.items[start_idx..] {
+                    let sy = base_y + it.y_scroll - self.view.scroll_px;
+                    if sy > clip_bot {
+                        break;
+                    }
+                    if sy + it.height < clip_top {
+                        continue;
+                    }
+                    if chrome_vis && sy < spec.header_content_top_y - 8.0 {
+                        continue;
+                    }
+                    draw_wasm_reader_item(
+                        ui,
+                        &self.doc,
+                        &mut self.img_cache,
+                        t,
+                        self.view.col_x,
+                        self.view.col_w,
+                        sy,
+                        it.height,
+                        &it.kind,
+                        focused_fn,
+                    );
+                }
+            }
+        }
+
+        // Bottom full-width progress bar stays permanently visible at all times
+        {
+            let (prog, readout) = self.view.progress_metrics(&self.prefs);
+            let strip_y = sh - spec.bottom_strip_h;
+            ui.plugin_fill_rect(0.0, strip_y, sw, spec.bottom_strip_h, 0.0, t.bg_rgb);
+            let cy = strip_y + spec.bottom_strip_h * 0.5 + 1.0;
+            let mx = spec.screen_margin_x;
+            let lbl_w = ui.plugin_measure_text(&readout, spec.progress_label_font, 2);
             ui.plugin_draw_text(
-                32.0,
+                mx,
                 cy,
-                txt,
-                font_px,
-                if *is_h { 3 } else { 0 },
+                &readout,
+                spec.progress_label_font,
+                2,
                 0,
-                t.fg_rgb,
+                t.fg2_rgb,
             );
+            let bar_x = (mx + lbl_w + spec.progress_label_gap).round();
+            let bar_w = (sw - mx - bar_x).max(64.0);
+            let bar_h = spec.progress_bar_h;
+            let bar_y = (cy - bar_h * 0.5).round();
+            ui.plugin_stroke_rect(
+                bar_x,
+                bar_y,
+                bar_w,
+                bar_h,
+                spec.progress_bar_radius,
+                spec.progress_bar_stroke,
+                t.fg1_rgb,
+            );
+            let inset = spec.progress_bar_inset;
+            let fill_w = ((bar_w - inset * 2.0).max(0.0) * prog.clamp(0.0, 1.0)).round();
+            let inner_h = (bar_h - inset * 2.0).max(4.0);
+            if fill_w >= 2.0 {
+                ui.plugin_fill_rect(
+                    bar_x + inset,
+                    bar_y + inset,
+                    fill_w,
+                    inner_h,
+                    inner_h * 0.5,
+                    t.fg_rgb,
+                );
+            }
         }
 
-        if total > vis {
-            ui.plugin_draw_scrollbar(
+        if let Some(open_fn) = self.view.open_footnote_idx {
+            draw_wasm_footnote_card(
+                ui,
+                &self.doc,
+                &mut self.view,
                 t,
-                1024.0 - 46.0,
-                top_y,
-                14.0,
-                (vis as f32) * step,
-                total,
-                self.scroll,
-                vis,
+                sw,
+                sh,
+                uk,
+                self.prefs.font,
+                open_fn,
+                vis_fns.len(),
             );
         }
-
-        let _ = &self.splash;
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_wasm_reader_item(
+    ui: &mut UiEngine,
+    doc: &uipod_ebook::EbookDoc,
+    img_cache: &mut uipod_ebook::DitheredImageCache,
+    t: ThemeColors,
+    col_x: f32,
+    col_w: f32,
+    top_y: f32,
+    item_h: f32,
+    kind: &uipod_ebook::VisualItemKind,
+    focused_fn: Option<usize>,
+) {
+    let spec = &uipod_ebook::READER_SPEC;
+    match kind {
+        uipod_ebook::VisualItemKind::Spacer | uipod_ebook::VisualItemKind::PageBreak => {}
+        uipod_ebook::VisualItemKind::TextLine {
+            segments,
+            is_quote,
+            is_code,
+            ..
+        } => {
+            if *is_code {
+                ui.plugin_fill_rect(
+                    col_x - spec.code_pad_x,
+                    top_y + 1.0,
+                    col_w + spec.code_pad_x * 2.0,
+                    (item_h - 2.0).max(4.0),
+                    4.0,
+                    t.fg1_rgb,
+                );
+            }
+            if *is_quote {
+                ui.plugin_fill_rect(col_x + 4.0, top_y, spec.quote_bar_w, item_h, 2.0, t.fg2_rgb);
+            }
+            let cy = top_y + item_h * 0.5;
+            for seg in segments {
+                let sx = col_x + seg.x_rel;
+                if let Some(fn_idx) = seg.footnote_idx {
+                    let is_focused = focused_fn == Some(fn_idx);
+                    let pill_h = (seg.font_size + 8.0).min(item_h - 2.0);
+                    let pill_y = cy - pill_h * 0.5;
+                    let pill_w = (seg.width - 2.0).max(16.0);
+                    if is_focused {
+                        ui.plugin_fill_rect(
+                            sx + 1.0,
+                            pill_y,
+                            pill_w,
+                            pill_h,
+                            spec.footnote_pill_radius,
+                            t.fg_rgb,
+                        );
+                        ui.plugin_draw_text(
+                            sx + 1.0 + pill_w * 0.5,
+                            cy,
+                            &seg.text,
+                            seg.font_size,
+                            3,
+                            1,
+                            t.bg_rgb,
+                        );
+                    } else {
+                        ui.plugin_fill_rect(
+                            sx + 1.0,
+                            pill_y,
+                            pill_w,
+                            pill_h,
+                            spec.footnote_pill_radius,
+                            t.fg1_rgb,
+                        );
+                        ui.plugin_stroke_rect(
+                            sx + 1.0,
+                            pill_y,
+                            pill_w,
+                            pill_h,
+                            spec.footnote_pill_radius,
+                            2.0,
+                            t.fg2_rgb,
+                        );
+                        ui.plugin_draw_text(
+                            sx + 1.0 + pill_w * 0.5,
+                            cy,
+                            &seg.text,
+                            seg.font_size,
+                            3,
+                            1,
+                            t.fg_rgb,
+                        );
+                    }
+                } else {
+                    if seg.style == uipod_ebook::InlineStyle::Code && !*is_code {
+                        let bh = (seg.font_size + 6.0).min(item_h - 2.0);
+                        ui.plugin_fill_rect(
+                            sx - 2.0,
+                            cy - bh * 0.5,
+                            seg.width + 4.0,
+                            bh,
+                            4.0,
+                            t.fg1_rgb,
+                        );
+                    }
+                    let color = match seg.style {
+                        uipod_ebook::InlineStyle::Italic if !*is_code => t.fg2_rgb,
+                        _ if *is_quote => t.fg2_rgb,
+                        _ => t.fg_rgb,
+                    };
+                    ui.plugin_draw_text(sx, cy, &seg.text, seg.font_size, seg.weight, 0, color);
+                }
+            }
+        }
+        uipod_ebook::VisualItemKind::Illustration {
+            image_idx,
+            disp_w,
+            disp_h,
+            caption,
+        } => {
+            let iw = *disp_w as f32;
+            let ih = *disp_h as f32;
+            let ix = (col_x + (col_w - iw) * 0.5).round();
+            let iy = (top_y + spec.image_v_pad).round();
+            if let Some(entry) = img_cache.get_or_rasterize(
+                doc,
+                *image_idx,
+                *disp_w,
+                *disp_h,
+                t.bg_rgb,
+                t.fg_rgb,
+                t.fg1_rgb,
+                t.fg2_rgb,
+            ) {
+                ui.plugin_draw_rgba_image(
+                    entry.tex_key,
+                    entry.width,
+                    entry.height,
+                    &entry.rgba,
+                    ix,
+                    iy,
+                    iw,
+                    ih,
+                    spec.image_corner_radius,
+                );
+                ui.plugin_stroke_rect(
+                    ix,
+                    iy,
+                    iw,
+                    ih,
+                    spec.image_corner_radius,
+                    spec.image_border_stroke,
+                    t.fg1_rgb,
+                );
+            }
+            if !caption.is_empty() {
+                ui.plugin_draw_text(
+                    col_x + col_w * 0.5,
+                    iy + ih + 16.0,
+                    caption,
+                    20.0,
+                    1,
+                    1,
+                    t.fg2_rgb,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_wasm_footnote_card(
+    ui: &mut UiEngine,
+    doc: &uipod_ebook::EbookDoc,
+    view: &mut uipod_ebook::ReaderViewState,
+    t: ThemeColors,
+    sw: f32,
+    sh: f32,
+    uk: bool,
+    font: uipod_ebook::ReaderFont,
+    fn_idx: usize,
+    total_vis_fns: usize,
+) {
+    let Some(note) = doc.footnotes.get(fn_idx) else {
+        return;
+    };
+    let spec = &uipod_ebook::READER_SPEC;
+    let card_w = (sw - spec.fn_card_margin_x * 2.0).min(spec.fn_card_max_w);
+    let inner_w = (card_w - spec.fn_card_pad_x * 2.0).max(160.0);
+    let body_fsz = spec.fn_body_font;
+    let line_h = (body_fsz * 1.36).round();
+    let body_style = font.style_flag();
+
+    let wrapped = uipod_ebook::wrap_footnote_lines(&note.paragraphs, body_fsz, inner_w, |txt, sz, w| {
+        ui.plugin_measure_text(txt, sz, w | body_style)
+    });
+
+    let max_card_h = (sh * spec.fn_card_max_h_ratio).clamp(220.0, 520.0);
+    let header_band_h = 50.0;
+    let footer_band_h = 40.0;
+    let max_body_lines =
+        (((max_card_h - header_band_h - footer_band_h) / line_h).floor() as usize).max(2);
+    let vis_lines = wrapped.len().min(max_body_lines);
+    let max_scroll = wrapped.len().saturating_sub(vis_lines);
+    if view.footnote_scroll_line > max_scroll {
+        view.footnote_scroll_line = max_scroll;
+    }
+
+    let card_h = header_band_h + (vis_lines as f32) * line_h + footer_band_h;
+    let card_x = ((sw - card_w) * 0.5).round();
+    let card_y = ((sh - card_h) * 0.5).round();
+
+    ui.plugin_fill_rect(
+        card_x + 6.0,
+        card_y + 6.0,
+        card_w,
+        card_h,
+        spec.fn_card_radius,
+        t.fg1_rgb,
+    );
+    ui.plugin_fill_rect(card_x, card_y, card_w, card_h, spec.fn_card_radius, t.bg_rgb);
+    ui.plugin_stroke_rect(
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        spec.fn_card_radius,
+        spec.fn_card_stroke,
+        t.fg_rgb,
+    );
+
+    let title_str = format!("{} {}", tr(uk, "Footnote", "Виноска"), note.title);
+    ui.plugin_draw_text(
+        card_x + spec.fn_card_pad_x,
+        card_y + 26.0,
+        &title_str,
+        spec.fn_title_font,
+        3,
+        0,
+        t.fg_rgb,
+    );
+    if max_scroll > 0 {
+        let sc_lbl = format!(
+            "{}/{}",
+            view.footnote_scroll_line + vis_lines,
+            wrapped.len()
+        );
+        ui.plugin_draw_text(
+            card_x + card_w - spec.fn_card_pad_x,
+            card_y + 26.0,
+            &sc_lbl,
+            spec.fn_hint_font,
+            2,
+            2,
+            t.fg2_rgb,
+        );
+    }
+    ui.plugin_draw_line(
+        card_x + spec.fn_card_pad_x,
+        card_y + header_band_h - 4.0,
+        card_x + card_w - spec.fn_card_pad_x,
+        card_y + header_band_h - 4.0,
+        2.0,
+        t.fg1_rgb,
+    );
+
+    let body_top = card_y + header_band_h + 2.0;
+    for (i, line) in wrapped
+        .iter()
+        .skip(view.footnote_scroll_line)
+        .take(vis_lines)
+        .enumerate()
+    {
+        if line.is_empty() {
+            continue;
+        }
+        ui.plugin_draw_text(
+            card_x + spec.fn_card_pad_x,
+            body_top + (i as f32 + 0.5) * line_h,
+            line,
+            body_fsz,
+            body_style,
+            0,
+            t.fg_rgb,
+        );
+    }
+
+    let hint = if total_vis_fns > 1 && max_scroll > 0 {
+        tr(
+            uk,
+            "Up/Down: Scroll  ·  A: Next Note  ·  B: Close",
+            "Вгору/Вниз: Прокрутка  ·  A: Наст. виноска  ·  B: Закрити",
+        )
+    } else if total_vis_fns > 1 {
+        tr(uk, "A: Next Note  ·  B: Close", "A: Наст. виноска  ·  B: Закрити")
+    } else if max_scroll > 0 {
+        tr(
+            uk,
+            "Up/Down: Scroll  ·  B: Close",
+            "Вгору/Вниз: Прокрутка  ·  B: Закрити",
+        )
+    } else {
+        tr(uk, "B: Close", "B: Закрити")
+    };
+    ui.plugin_draw_text(
+        card_x + card_w * 0.5,
+        card_y + card_h - 20.0,
+        hint,
+        spec.fn_hint_font,
+        2,
+        1,
+        t.fg2_rgb,
+    );
 }
 
 /* ============================================================================

@@ -30,6 +30,7 @@ use uipod_track_intel::{
 };
 use uipod_ui::{ThemeColors, UiEngine, VizEngine, VIZ_PRESETS};
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
 use crate::app::{UIPodApp, AUTOEQ_PRESETS};
@@ -70,6 +71,7 @@ pub struct UIPodWasm {
 
 #[wasm_bindgen]
 impl UIPodWasm {
+    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: web_sys::HtmlCanvasElement) -> Result<UIPodWasm, JsValue> {
         let ui = UiEngine::new_from_html_canvas(&canvas)
@@ -179,9 +181,21 @@ impl UIPodWasm {
         );
     }
 
-    /// Hot-loads `NotoSansJP-Regular.ttf` fallback bytes behind `Geologica` without blocking boot.
+    /// Hot-loads `NotoSansCJK-Regular.ttf` fallback bytes behind `Geologica` without blocking boot.
     pub fn load_cjk_font(&mut self, bytes: &[u8]) -> bool {
         self.ui.add_cjk_fallback_bytes(bytes).is_ok()
+    }
+
+    /// Hot-loads `NotoSerifCJK-Regular.ttf` fallback bytes behind `Noto Serif` without blocking boot.
+    pub fn load_serif_cjk_font(&mut self, bytes: &[u8]) -> bool {
+        self.ui.add_serif_cjk_fallback_bytes(bytes).is_ok()
+    }
+
+    /// Registers an `.epub`, `.fb2`, `.fb2.zip`, `.mobi`, `.md`, or `.txt` file into the Web Simulator's
+    /// virtual SD card (`Main -> Browse`) and optionally opens it immediately in the E-Book Reader.
+    pub fn register_ebook_file(&mut self, file_name: &str, bytes: &[u8], open_now: bool) -> usize {
+        self.app
+            .register_ebook_file(file_name, bytes, open_now, &mut self.ui)
     }
 
     /* ---- Hardware Inputs (TrimUI Brick) ---- */

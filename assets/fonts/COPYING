@@ -1,8 +1,10 @@
-Licenses for the fonts UIPod ships.  Three faces are distributed: Geologica
-(embedded as static Regular/Medium/SemiBold/Bold .ttf weights in `uipod-ui`),
-NotoSansJP-Regular.ttf (runtime CJK/Japanese vector fallback font), and
-Schumacher Clean (the fallback Rockbox system font, compiled into the binary
-from 08-Schumacher-Clean.bdf).
+Licenses for the fonts UIPod ships.  Five font families/faces are distributed:
+1) Geologica (embedded as static Regular/Medium/SemiBold/Bold .ttf weights in `uipod-ui`),
+2) Noto Serif (embedded as static Regular/Bold/Italic/BoldItalic .ttf faces in `uipod-ui`),
+3) NotoSansCJK-Regular.ttf (runtime Pan-CJK + Cyrillic/Ukrainian vector sans-serif font),
+4) NotoSerifCJK-Regular.ttf (runtime Pan-CJK Mincho/Songti vector serif fallback font),
+5) Schumacher Clean (the fallback Rockbox system font, compiled into the binary from
+   08-Schumacher-Clean.bdf).
 
 ----- Geologica (Geologica-{Regular,Medium,SemiBold,Bold}.ttf) ----
 
@@ -99,13 +101,18 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
------ Noto Sans JP (NotoSansJP-Regular.ttf runtime CJK fallback) ----
+----- Noto Sans, Noto Sans CJK, Noto Serif & Noto Serif CJK ----
 
-Copyright 2014-2023 Adobe (http://www.adobe.com/), Google LLC.
+Copyright 2014-2024 Google LLC, Adobe (http://www.adobe.com/).
 Noto is a trademark of Google LLC.
 
-NotoSansJP-Regular.ttf is licensed under the SIL Open Font License, Version 1.1
-(copied in full above; see https://github.com/notofonts/noto-cjk).
+NotoSansCJK-Regular.ttf (combining Noto Sans Latin/Cyrillic/Ukrainian and Noto Sans CJK
+Japanese, Simplified Chinese, Traditional Chinese, and Korean Hangul glyphs),
+NotoSerif-{Regular,Bold,Italic,BoldItalic}.ttf (Noto Serif Latin/Greek/Cyrillic including
+complete Ukrainian Cyrillic), and NotoSerifCJK-Regular.ttf (Noto Serif CJK Japanese,
+Simplified Chinese, Traditional Chinese, and Korean Hangul glyphs) are licensed under
+the SIL Open Font License, Version 1.1 (copied in full above; see
+https://github.com/notofonts/noto-cjk and https://github.com/notofonts/latin-greek-cyrillic).
 
 ----- Schumacher Clean (built-in system font) ----
 

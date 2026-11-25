@@ -12,6 +12,7 @@ members = [
     "crates/uipod-listenbrainz",
     "crates/uipod-plugin-sdk",
     "crates/uipod-plugins",
+    "crates/uipod-ebook",
     "crates/uipod-ffi",
     "plugins/brick-breaker",
     "plugins/uipod-2048",
@@ -30,4 +31,4 @@ members = [
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"

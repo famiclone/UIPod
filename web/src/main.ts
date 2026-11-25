@@ -107,11 +107,20 @@ async function boot(): Promise<void> {
     return;
   }
 
-  void fetch('./fonts/NotoSansJP-Regular.ttf')
+  void fetch('./fonts/NotoSansCJK-Regular.ttf')
     .then((res) => (res.ok ? res.arrayBuffer() : null))
     .then((buf) => {
       if (buf && buf.byteLength > 0) {
         uipod.load_cjk_font(new Uint8Array(buf));
+      }
+    })
+    .catch(() => {});
+
+  void fetch('./fonts/NotoSerifCJK-Regular.ttf')
+    .then((res) => (res.ok ? res.arrayBuffer() : null))
+    .then((buf) => {
+      if (buf && buf.byteLength > 0) {
+        uipod.load_serif_cjk_font(new Uint8Array(buf));
       }
     })
     .catch(() => {});
@@ -655,17 +664,32 @@ async function boot(): Promise<void> {
       uipod.register_soundfont(sf2File.name, sf2Bytes);
     }
 
+    // Register `.epub`, `.fb2`, `.fb2.zip`, `.mobi`, `.prc`, `.azw`, `.md`, `.txt`, `.lrc`, `.log` books/docs
+    const ebookFiles = list.filter(
+      (f) =>
+        /\.fb2\.zip$/i.test(f.name) ||
+        /\.(epub|fb2|mobi|prc|azw|md|markdown|txt|lrc|log|nfo|cfg|ini|json|cue)$/i.test(f.name),
+    );
+
     const m3uFiles = list.filter((f) => /\.(m3u|m3u8)$/i.test(f.name));
     const audioFiles = list
       .filter(
         (f) =>
           !/\.(m3u|m3u8|gsflib|sf2)$/i.test(f.name) &&
+          !ebookFiles.includes(f) &&
           (f.type.startsWith('audio/') ||
             /\.(mp3|flac|wav|ogg|opus|m4a|aac|nsf|nsfe|gsf|minigsf|mid|midi|kar|rmi)$/i.test(
               f.name,
             )),
       )
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    for (let i = 0; i < ebookFiles.length; i++) {
+      const bookFile = ebookFiles[i];
+      const bookBytes = new Uint8Array(await bookFile.arrayBuffer());
+      const openImmediately = audioFiles.length === 0 && i === ebookFiles.length - 1;
+      uipod.register_ebook_file(bookFile.name, bookBytes, openImmediately);
+    }
 
     const coverFile = list.find((f) => f.type.startsWith('image/'));
     const coverBytes = coverFile ? new Uint8Array(await coverFile.arrayBuffer()) : undefined;
@@ -1011,6 +1035,8 @@ async function boot(): Promise<void> {
     KeyC: 'X',
     KeyV: 'Y',
     Space: 'START',
+    ShiftLeft: 'SELECT',
+    ShiftRight: 'SELECT',
     KeyM: 'MENU',
     KeyQ: 'L1',
     KeyE: 'R1',

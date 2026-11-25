@@ -45,6 +45,16 @@ static FONT_GEOLOGICA_SEMIBOLD: &[u8] =
     include_bytes!("../../../assets/fonts/Geologica-SemiBold.ttf");
 static FONT_GEOLOGICA_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Geologica-Bold.ttf");
 
+/// Editorial book serif family (`Noto Serif` Regular/Bold/Italic/BoldItalic, `SIL OFL 1.1`)
+/// covering Latin + complete Cyrillic (including Ukrainian `Ґ, ґ, Є, є, І, і, Ї, ї`).
+static FONT_NOTO_SERIF_REGULAR: &[u8] =
+    include_bytes!("../../../assets/fonts/NotoSerif-Regular.ttf");
+static FONT_NOTO_SERIF_BOLD: &[u8] = include_bytes!("../../../assets/fonts/NotoSerif-Bold.ttf");
+static FONT_NOTO_SERIF_ITALIC: &[u8] =
+    include_bytes!("../../../assets/fonts/NotoSerif-Italic.ttf");
+static FONT_NOTO_SERIF_BOLD_ITALIC: &[u8] =
+    include_bytes!("../../../assets/fonts/NotoSerif-BoldItalic.ttf");
+
 /// In `femtovg`'s `OpenGl` backend, `RenderTarget::Image` without `FLIP_Y` maps canvas `y = 0`
 /// to the top of the FBO (`gl_y = height - 1`), so `glReadPixels` row `0` is the bottom scanline.
 const FBO_ORIGIN_BOTTOM: bool = true;
@@ -202,10 +212,15 @@ pub struct UiEngine {
     fonts_medium: Vec<FontId>,
     fonts_semibold: Vec<FontId>,
     fonts_bold: Vec<FontId>,
+    serif_regular: Vec<FontId>,
+    serif_bold: Vec<FontId>,
+    serif_italic: Vec<FontId>,
+    serif_bold_italic: Vec<FontId>,
     readback_rgba: Vec<u8>,
     art_image: Option<ImageId>,
     art_hash: Option<u64>,
     art_rgba_scratch: Vec<RGBA8>,
+    plugin_images: Vec<(u64, u32, u32, ImageId)>,
     last_theme: ThemeColors,
     hud_stack: HudStack,
 }
@@ -273,22 +288,50 @@ impl UiEngine {
             .add_font_mem(FONT_GEOLOGICA_BOLD)
             .map_err(|e| format!("Geologica-Bold load failed: {e:?}"))?;
 
+        let s_reg = canvas
+            .add_font_mem(FONT_NOTO_SERIF_REGULAR)
+            .map_err(|e| format!("NotoSerif-Regular load failed: {e:?}"))?;
+        let s_bold = canvas
+            .add_font_mem(FONT_NOTO_SERIF_BOLD)
+            .map_err(|e| format!("NotoSerif-Bold load failed: {e:?}"))?;
+        let s_ital = canvas
+            .add_font_mem(FONT_NOTO_SERIF_ITALIC)
+            .map_err(|e| format!("NotoSerif-Italic load failed: {e:?}"))?;
+        let s_bi = canvas
+            .add_font_mem(FONT_NOTO_SERIF_BOLD_ITALIC)
+            .map_err(|e| format!("NotoSerif-BoldItalic load failed: {e:?}"))?;
+
         #[cfg(not(target_arch = "wasm32"))]
-        let cjk_id = cjk_font_path.and_then(|p| {
-            if p.exists() {
-                canvas.add_font(p).ok()
-            } else {
-                None
+        let (cjk_id, cjk_serif_id) = match cjk_font_path {
+            Some(p) => {
+                let sans_cjk = if p.exists() {
+                    canvas.add_font(p).ok()
+                } else {
+                    None
+                };
+                let serif_cjk = p
+                    .parent()
+                    .map(|dir| dir.join("NotoSerifCJK-Regular.ttf"))
+                    .and_then(|sp| if sp.exists() { canvas.add_font(&sp).ok() } else { None })
+                    .or(sans_cjk);
+                (sans_cjk, serif_cjk)
             }
-        });
+            None => (None, None),
+        };
         #[cfg(target_arch = "wasm32")]
-        let cjk_id: Option<FontId> = {
+        let (cjk_id, cjk_serif_id): (Option<FontId>, Option<FontId>) = {
             let _ = cjk_font_path;
-            None
+            (None, None)
         };
 
         let make_chain = |primary: FontId| -> Vec<FontId> {
             match cjk_id {
+                Some(fallback) => vec![primary, fallback],
+                None => vec![primary],
+            }
+        };
+        let make_serif_chain = |primary: FontId| -> Vec<FontId> {
+            match cjk_serif_id {
                 Some(fallback) => vec![primary, fallback],
                 None => vec![primary],
             }
@@ -317,10 +360,15 @@ impl UiEngine {
             fonts_medium: make_chain(f_med),
             fonts_semibold: make_chain(f_semi),
             fonts_bold: make_chain(f_bold),
+            serif_regular: make_serif_chain(s_reg),
+            serif_bold: make_serif_chain(s_bold),
+            serif_italic: make_serif_chain(s_ital),
+            serif_bold_italic: make_serif_chain(s_bi),
             readback_rgba: vec![0u8; WIDTH * HEIGHT * 4],
             art_image: None,
             art_hash: None,
             art_rgba_scratch: vec![RGBA8::new(0, 0, 0, 255); 256 * 256],
+            plugin_images: Vec::new(),
             last_theme: ThemeColors::default(),
             hud_stack: HudStack::default(),
         };
@@ -341,7 +389,7 @@ impl UiEngine {
         Ok(engine)
     }
 
-    /// Registers an in-memory CJK fallback `.ttf` (e.g. `NotoSansJP-Regular.ttf` fetched
+    /// Registers an in-memory CJK fallback `.ttf` (e.g. `NotoSansCJK-Regular.ttf` fetched
     /// asynchronously in `uipod-wasm`) behind all four `Geologica` weights.
     pub fn add_cjk_fallback_bytes(&mut self, font_bytes: &[u8]) -> Result<(), String> {
         let fallback = self
@@ -353,6 +401,36 @@ impl UiEngine {
             &mut self.fonts_medium,
             &mut self.fonts_semibold,
             &mut self.fonts_bold,
+        ] {
+            chain.truncate(1);
+            chain.push(fallback);
+        }
+        // Provide immediate CJK fallback behind Serif too until `NotoSerifCJK-Regular.ttf` loads
+        for sc in [
+            &mut self.serif_regular,
+            &mut self.serif_bold,
+            &mut self.serif_italic,
+            &mut self.serif_bold_italic,
+        ] {
+            if sc.len() == 1 {
+                sc.push(fallback);
+            }
+        }
+        Ok(())
+    }
+
+    /// Registers an in-memory Mincho/Songti CJK Serif fallback `.ttf` (`NotoSerifCJK-Regular.ttf`)
+    /// behind all four `Noto Serif` faces (`Regular`, `Bold`, `Italic`, `BoldItalic`).
+    pub fn add_serif_cjk_fallback_bytes(&mut self, font_bytes: &[u8]) -> Result<(), String> {
+        let fallback = self
+            .canvas
+            .add_font_mem(font_bytes)
+            .map_err(|e| format!("CJK Serif fallback font load failed: {e:?}"))?;
+        for chain in [
+            &mut self.serif_regular,
+            &mut self.serif_bold,
+            &mut self.serif_italic,
+            &mut self.serif_bold_italic,
         ] {
             chain.truncate(1);
             chain.push(fallback);
@@ -2880,11 +2958,22 @@ impl UiEngine {
 
     #[inline]
     fn font_chain_by_weight(&self, weight: u8) -> Vec<FontId> {
-        match weight {
-            0 => self.fonts_regular.clone(),
-            1 => self.fonts_medium.clone(),
-            2 => self.fonts_semibold.clone(),
-            _ => self.fonts_bold.clone(),
+        if (weight & 0x08) != 0 {
+            let is_italic = (weight & 0x04) != 0;
+            let is_bold = (weight & 0x03) >= 2;
+            match (is_bold, is_italic) {
+                (false, false) => self.serif_regular.clone(),
+                (true, false) => self.serif_bold.clone(),
+                (false, true) => self.serif_italic.clone(),
+                (true, true) => self.serif_bold_italic.clone(),
+            }
+        } else {
+            match weight & 0x03 {
+                0 => self.fonts_regular.clone(),
+                1 => self.fonts_medium.clone(),
+                2 => self.fonts_semibold.clone(),
+                _ => self.fonts_bold.clone(),
+            }
         }
     }
 
@@ -3080,6 +3169,67 @@ impl UiEngine {
             pal.fg1,
             pal.fg,
         );
+    }
+
+    /// Uploads (or reuses via 16-slot LRU cache) a pre-dithered `RGBA8` image and draws it
+    /// with crisp `ImageFlags::NEAREST` sampling onto the active plugin GPU canvas.
+    #[allow(clippy::too_many_arguments)]
+    pub fn plugin_draw_rgba_image(
+        &mut self,
+        tex_key: u64,
+        src_w: u32,
+        src_h: u32,
+        rgba: &[u8],
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
+        radius: f32,
+    ) {
+        if src_w == 0 || src_h == 0 || dst_w <= 0.5 || dst_h <= 0.5 {
+            return;
+        }
+        let needed = (src_w as usize)
+            .saturating_mul(src_h as usize)
+            .saturating_mul(4);
+        if rgba.len() < needed {
+            return;
+        }
+
+        let img_id = if let Some(pos) = self
+            .plugin_images
+            .iter()
+            .position(|&(k, w, h, _)| k == tex_key && w == src_w && h == src_h)
+        {
+            let entry = self.plugin_images.remove(pos);
+            let id = entry.3;
+            self.plugin_images.push(entry);
+            id
+        } else {
+            let mut pixels = Vec::with_capacity((src_w as usize) * (src_h as usize));
+            for px in rgba[..needed].chunks_exact(4) {
+                pixels.push(RGBA8::new(px[0], px[1], px[2], px[3]));
+            }
+            let img_ref = ImgRef::new(&pixels, src_w as usize, src_h as usize);
+            let Ok(new_id) = self.canvas.create_image(img_ref, ImageFlags::NEAREST) else {
+                return;
+            };
+            if self.plugin_images.len() >= 16 {
+                let (_, _, _, old_id) = self.plugin_images.remove(0);
+                self.canvas.delete_image(old_id);
+            }
+            self.plugin_images.push((tex_key, src_w, src_h, new_id));
+            new_id
+        };
+
+        let paint = Paint::image(img_id, dst_x, dst_y, dst_w, dst_h, 0.0, 1.0);
+        let mut path = VgPath::new();
+        if radius > 0.5 {
+            path.rounded_rect(dst_x, dst_y, dst_w, dst_h, radius);
+        } else {
+            path.rect(dst_x, dst_y, dst_w, dst_h);
+        }
+        self.canvas.fill_path(&path, &paint);
     }
 
     pub fn plugin_present_into_bgr(&mut self, fb_bgr: &mut [u8]) {
@@ -4014,17 +4164,26 @@ mod tests {
     #[test]
     fn geologica_and_noto_cjk_fallback_cover_en_ua_and_cjk_without_overlap_drift() {
         let noto_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/fonts/NotoSansJP-Regular.ttf");
-        let noto_bytes = std::fs::read(&noto_path).expect("read NotoSansJP-Regular.ttf");
+            .join("../../assets/fonts/NotoSansCJK-Regular.ttf");
+        let noto_bytes = std::fs::read(&noto_path).expect("read NotoSansCJK-Regular.ttf");
+        let serif_cjk_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fonts/NotoSerifCJK-Regular.ttf");
+        let serif_cjk_bytes =
+            std::fs::read(&serif_cjk_path).expect("read NotoSerifCJK-Regular.ttf");
 
         // Verify valid static TrueType sfnt (`0x00010000`) and non-empty font tables
         assert_eq!(&noto_bytes[..4], &[0x00, 0x01, 0x00, 0x00]);
+        assert_eq!(&serif_cjk_bytes[..4], &[0x00, 0x01, 0x00, 0x00]);
         assert!(FONT_GEOLOGICA_REGULAR.len() > 50_000);
         assert!(FONT_GEOLOGICA_SEMIBOLD.len() > 50_000);
+        assert!(FONT_NOTO_SERIF_REGULAR.len() > 150_000);
+        assert!(FONT_NOTO_SERIF_BOLD.len() > 150_000);
+        assert!(FONT_NOTO_SERIF_ITALIC.len() > 150_000);
+        assert!(FONT_NOTO_SERIF_BOLD_ITALIC.len() > 150_000);
 
         // Parse CMAP Format 4 / 12 via minimal big-endian SFNT walker to prove exact glyph resolution:
         // Geologica covers EN + UA (`Касета`) and yields 0 (`.notdef`) for CJK (`カセット`, `音楽`, `「」`),
-        // which then fall through cleanly to `NotoSansJP-Regular.ttf`!
+        // which then fall through cleanly to `NotoSansCJK-Regular.ttf`!
         fn has_glyph_in_ttf(ttf: &[u8], cp: u32) -> bool {
             let num_tables = u16::from_be_bytes([ttf[4], ttf[5]]) as usize;
             let mut cmap_off = None;
@@ -4114,23 +4273,47 @@ mod tests {
             false
         }
 
-        // Primary Geologica handles EN + UA Cyrillic (`Касета`, `Ї`, `Є`, `Ґ`)
-        for ch in "UIPod Касета ЇЄҐ 0123456789".chars().filter(|c| !c.is_whitespace()) {
+        // Primary Geologica, Noto Serif (Regular/Bold/Italic/BoldItalic), and NotoSansCJK-Regular.ttf
+        // all cover full EN + UA Cyrillic (`ҐґЄєІіЇї`)
+        for ch in "UIPod Касета Привіт ҐґЄєІіЇї 0123456789".chars().filter(|c| !c.is_whitespace()) {
             assert!(
                 has_glyph_in_ttf(FONT_GEOLOGICA_SEMIBOLD, ch as u32),
                 "Geologica missing expected EN/UA glyph {ch:?}"
             );
+            for (name, face) in [
+                ("NotoSerif-Regular", FONT_NOTO_SERIF_REGULAR),
+                ("NotoSerif-Bold", FONT_NOTO_SERIF_BOLD),
+                ("NotoSerif-Italic", FONT_NOTO_SERIF_ITALIC),
+                ("NotoSerif-BoldItalic", FONT_NOTO_SERIF_BOLD_ITALIC),
+            ] {
+                assert!(
+                    has_glyph_in_ttf(face, ch as u32),
+                    "{name} missing expected EN/UA Cyrillic glyph {ch:?}"
+                );
+            }
+            assert!(
+                has_glyph_in_ttf(&noto_bytes, ch as u32),
+                "NotoSansCJK-Regular.ttf missing expected EN/UA Cyrillic glyph {ch:?}"
+            );
         }
 
-        // CJK (`カセット`, Hiragana `あいう`, Kanji `音楽`, quotes `「」`, fullwidth `Ａ`) fall back cleanly to NotoSansJP
-        for ch in "カセットあいう音楽日本語「」Ａ".chars() {
+        // Full Pan-CJK (JP Kana/Kanji, Simplified Chinese, Traditional Chinese, Korean Hangul, CJK punctuation)
+        for ch in "カセットあいう音楽日本語简体中文阅读器书签繁體中文閱讀器書籤한국어노래읽기설정「」『』・【】Ａ".chars() {
             assert!(
                 !has_glyph_in_ttf(FONT_GEOLOGICA_SEMIBOLD, ch as u32),
-                "Expected {ch:?} to bypass Geologica to CJK fallback"
+                "Expected {ch:?} to bypass Geologica to NotoSansCJK fallback"
+            );
+            assert!(
+                !has_glyph_in_ttf(FONT_NOTO_SERIF_REGULAR, ch as u32),
+                "Expected {ch:?} to bypass NotoSerif-Regular to NotoSerifCJK fallback"
             );
             assert!(
                 has_glyph_in_ttf(&noto_bytes, ch as u32),
-                "NotoSansJP-Regular.ttf missing CJK glyph {ch:?}"
+                "NotoSansCJK-Regular.ttf missing CJK glyph {ch:?}"
+            );
+            assert!(
+                has_glyph_in_ttf(&serif_cjk_bytes, ch as u32),
+                "NotoSerifCJK-Regular.ttf missing CJK glyph {ch:?}"
             );
         }
     }

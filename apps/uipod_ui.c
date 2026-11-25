@@ -434,6 +434,9 @@ const struct uipod_svg_icon *uipod_svg_for_path(const char *path, bool is_dir)
 
     const char *slash = strrchr(path, '/');
     const char *base  = slash ? slash + 1 : path;
+    size_t blen = strlen(base);
+    if (blen > 8 && strcasecmp(base + blen - 8, ".fb2.zip") == 0)
+        return uipod_svg_tag("fb2");
     const char *dot   = strrchr(base, '.');
     if (!dot || dot == base || !dot[1])
         return NULL;
