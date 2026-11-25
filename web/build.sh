@@ -8,7 +8,7 @@ mkdir -p "$ROOT/public/fonts"
 cp "$ROOT/../assets/fonts/NotoSansJP-Regular.ttf" "$ROOT/public/fonts/NotoSansJP-Regular.ttf"
 
 echo ">> 1/2 Building uipod-wasm (Rust -> WebAssembly / WebGL2)..."
-(cd "$ROOT/uipod-wasm" && wasm-pack build --target web --no-opt --out-dir ../src/wasm-pkg)
+(cd "$ROOT/uipod-wasm" && wasm-pack build --target web --out-dir ../src/wasm-pkg)
 
 echo ">> 2/2 Building UIPod web landing page (TypeScript + Vite)..."
 (cd "$ROOT" && npm run build)

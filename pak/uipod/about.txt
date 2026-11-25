@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.9.1
+Version: v0.9.2
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
