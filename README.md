@@ -1,5 +1,11 @@
 # UIPod
 
+
+
+<img width="1134" height="1333" alt="image" src="https://github.com/user-attachments/assets/b21de4e2-341f-4e27-92a1-7eb61e183a6e" />
+
+
+
 An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for **TrimUI Brick / NextUI**, **Android handhelds**, and the **Web**.
 [**Live Web Simulator**](https://famiclone.dev/UIPod) · [**Latest Release**](https://github.com/famiclone/UIPod/releases/latest)
 
