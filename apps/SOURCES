@@ -45,6 +45,7 @@ uipod_midi.c
 uipod_dj.c
 uipod_track_intel.c
 uipod_video.c
+uipod_daemon.c
 playlist.c
 playlist_catalog.c
 playlist_viewer.c

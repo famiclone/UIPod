@@ -82,6 +82,7 @@ void retrohh_charge_limit_cycle(int dir)   { (void)dir; }
 #include "powermgmt.h"
 #include "panic.h"
 #include "sysfs.h"
+#include "window-sdl.h"
 
 #include "tick.h"
 #include "kernel.h"      /* sleep(), HZ                 */
@@ -256,10 +257,17 @@ unsigned int power_input_status(void)
 
         if (path)
             sysfs_get_int(path, &now);
-        if (!now != !present)
-            usb_transfer_edge(now);
-        present = now;
-        usb_copy_track(present);
+        if (!sdl_window_is_headless())
+        {
+            if (!now != !present)
+                usb_transfer_edge(now);
+            present = now;
+            usb_copy_track(present);
+        }
+        else
+        {
+            present = now;
+        }
     }
     return present ? POWER_INPUT_USB_CHARGER : POWER_INPUT_NONE;
 }
@@ -352,6 +360,8 @@ static unsigned cpu_holds;
 
 static void cpu_apply(void)
 {
+    if (sdl_window_is_headless())
+        return;
     if (cpu_holds & CPU_HOLD_COPY)
         cpu_set_freq(CPU_COPY_KHZ);
     else if ((cpu_holds & CPU_HOLD_VISUALIZER) || cpu_choice_khz <= 0)

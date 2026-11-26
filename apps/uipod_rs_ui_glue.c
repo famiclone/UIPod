@@ -39,6 +39,7 @@
 #include "uipod_rs_ui.h"
 #include "uipod_svg.h"
 #include "uipod_ui.h"
+#include "uipod_visualizer.h"
 #include "window-sdl.h"
 
 static uint8_t s_header_source_override = UIPOD_SRC_ICON_NONE;
@@ -632,6 +633,9 @@ bool uipod_gpu_ui_ensure_ready(void)
     sdl_gl_set_gpu_repaint_fn(uipod_gpu_present_current_fbo);
     sdl_gl_make_current();
 
+    if (!sdl_gl_get_context())
+        return false;
+
     if (uipod_rs_ui_is_ready())
         return true;
 
@@ -640,6 +644,20 @@ bool uipod_gpu_ui_ensure_ready(void)
     const char *resolved = handle_special_dirs(raw_font, 0, font_real, sizeof(font_real));
     return uipod_rs_ui_init(sdl_gl_get_proc_address,
                             (resolved && resolved[0]) ? resolved : raw_font);
+}
+
+void uipod_gpu_teardown_gl(void)
+{
+    s_capturing_transition = false;
+    s_captured_transition_frame = false;
+    s_hud_was_animating = false;
+    uipod_visualizer_notify_gl_dropped();
+    sdl_gl_set_gpu_active(false);
+    if (sdl_gl_get_context())
+    {
+        sdl_gl_make_current();
+        uipod_rs_ui_drop_gl_context();
+    }
 }
 
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,

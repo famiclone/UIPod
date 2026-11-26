@@ -41,6 +41,8 @@ SDL_Window   *sdlWindow;
 
 static bool window_adjustment_needed;
 double display_zoom = 1;
+static int s_saved_win_w = SIM_LCD_WIDTH;
+static int s_saved_win_h = SIM_LCD_HEIGHT;
 
 /* When the GPU visualizer is running it owns the GL context and the window;
  * suppress the normal LCD presentation so other Rockbox threads' lcd_update()
@@ -149,7 +151,7 @@ void sdl_gl_make_current(void)
     extern void sdl_android_pump_events(void);
     sdl_android_pump_events();
 #endif
-    if (gl_ctx)
+    if (sdlWindow && gl_ctx)
         SDL_GL_MakeCurrent(sdlWindow, gl_ctx);
 }
 
@@ -276,12 +278,16 @@ bool sdl_gl_get_video_through(int *out_overlay_rows)
  * visualizer's own preset transitions, applied to the Now Playing image). */
 void sdl_gl_present_lcd_fade(float fade)
 {
+    if (!sdlWindow || !gl_ctx)
+        return;
     sdl_gl_make_current();
     gl_present_lcd_fade(sim_lcd_surface, fade, 0);
 }
 
 void sdl_gl_present_lcd_fade_rgb(float fade, uint32_t target_rgb)
 {
+    if (!sdlWindow || !gl_ctx)
+        return;
     sdl_gl_make_current();
     gl_present_lcd_fade(sim_lcd_surface, fade, target_rgb);
 }
@@ -322,6 +328,8 @@ static void get_window_dimensions(int *w, int *h)
 
 void sdl_window_render(void)
 {
+    if (!sdlWindow || !gl_ctx)
+        return;   /* headless background daemon mode */
     if (uipod_viz_active)
         return;   /* visualizer owns the GL context/window right now */
     if (lcd_panel_is_dark())
@@ -340,7 +348,7 @@ bool sdl_window_adjust(void)
 {
     int w, h;
 
-    if (!window_adjustment_needed)
+    if (!sdlWindow || !gl_ctx || !window_adjustment_needed)
         return false;
     window_adjustment_needed = false;
 
@@ -392,9 +400,14 @@ void sdl_window_setup(void)
     flags |= SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_RESIZABLE;
 #endif
 
+    s_saved_win_w = (int)(width * (display_zoom > 0 ? display_zoom : 1.0));
+    s_saved_win_h = (int)(height * (display_zoom > 0 ? display_zoom : 1.0));
+    if (s_saved_win_w < 1) s_saved_win_w = SIM_LCD_WIDTH;
+    if (s_saved_win_h < 1) s_saved_win_h = SIM_LCD_HEIGHT;
+
     if ((sdlWindow = SDL_CreateWindow(UI_TITLE, SDL_WINDOWPOS_CENTERED,
-                                   SDL_WINDOWPOS_CENTERED, width * display_zoom,
-                                   height * display_zoom , flags)) == NULL)
+                                   SDL_WINDOWPOS_CENTERED, s_saved_win_w,
+                                   s_saved_win_h, flags)) == NULL)
         panicf("%s", SDL_GetError());
     if ((gl_ctx = SDL_GL_CreateContext(sdlWindow)) == NULL)
         panicf("SDL_GL_CreateContext: %s", SDL_GetError());
@@ -410,4 +423,108 @@ void sdl_window_setup(void)
 
     display_zoom = 0; /* reset to 0 unless/until user requests a scale level change */
     window_mutex = SDL_CreateMutex();
+}
+
+static volatile bool s_headless_bg = false;
+
+bool sdl_window_is_headless(void)
+{
+    return s_headless_bg;
+}
+
+void sdl_window_teardown_for_background(void)
+{
+    s_headless_bg = true;
+    if (window_mutex)
+        SDL_LockMutex(window_mutex);
+
+    s_gpu_active = false;
+    video_through = false;
+    video_overlay_rows = 0;
+
+    if (sdlWindow && gl_ctx)
+    {
+        SDL_GL_MakeCurrent(sdlWindow, gl_ctx);
+        if (gl_lcd_tex)
+        {
+            glDeleteTextures(1, &gl_lcd_tex);
+            gl_lcd_tex = 0;
+        }
+        if (gl_vbo)
+        {
+            glDeleteBuffers(1, &gl_vbo);
+            gl_vbo = 0;
+        }
+        if (gl_prog)
+        {
+            glDeleteProgram(gl_prog);
+            gl_prog = 0;
+        }
+        gl_tex_w = gl_tex_h = 0;
+        SDL_GL_MakeCurrent(sdlWindow, NULL);
+        SDL_GL_DeleteContext(gl_ctx);
+        gl_ctx = NULL;
+    }
+
+    if (sdlWindow)
+    {
+        SDL_DestroyWindow(sdlWindow);
+        sdlWindow = NULL;
+    }
+
+    if (window_mutex)
+        SDL_UnlockMutex(window_mutex);
+
+    SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
+}
+
+bool sdl_window_reattach_from_background(void)
+{
+    if (sdlWindow && gl_ctx)
+        return true;
+
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0)
+        return false;
+
+    if (window_mutex)
+        SDL_LockMutex(window_mutex);
+
+    Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL;
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+
+    sdlWindow = SDL_CreateWindow(UI_TITLE, SDL_WINDOWPOS_CENTERED,
+                                 SDL_WINDOWPOS_CENTERED,
+                                 s_saved_win_w, s_saved_win_h, flags);
+    if (!sdlWindow)
+    {
+        if (window_mutex)
+            SDL_UnlockMutex(window_mutex);
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return false;
+    }
+
+    gl_ctx = SDL_GL_CreateContext(sdlWindow);
+    if (!gl_ctx)
+    {
+        SDL_DestroyWindow(sdlWindow);
+        sdlWindow = NULL;
+        if (window_mutex)
+            SDL_UnlockMutex(window_mutex);
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return false;
+    }
+
+    SDL_GL_MakeCurrent(sdlWindow, gl_ctx);
+    SDL_GL_SetSwapInterval(1);
+    gl_init_present();
+    s_headless_bg = false;
+
+    if (window_mutex)
+        SDL_UnlockMutex(window_mutex);
+    return true;
 }

@@ -212,6 +212,18 @@ const fn decode_is_fx(raw: u8) -> bool {
     (raw & 0x80) != 0
 }
 
+/// Drops all cached OpenGL ES 3.0 textures, FBOs, shaders, and font atlases
+/// (`SYNC_VIZ` + `SYNC_ENGINE`) prior to `SDL_GL_DeleteContext` on background minimize.
+#[no_mangle]
+pub extern "C" fn uipod_rs_ui_drop_gl_context() {
+    if let Ok(mut vg) = SYNC_VIZ.lock() {
+        *vg = None;
+    }
+    if let Ok(mut eg) = SYNC_ENGINE.lock() {
+        *eg = None;
+    }
+}
+
 /// Initializes the global Rust GPU UI engine on the active OpenGL ES 3.0 context.
 #[no_mangle]
 pub unsafe extern "C" fn uipod_rs_ui_init(

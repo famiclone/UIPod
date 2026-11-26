@@ -38,6 +38,7 @@
 #include "audio.h"
 #include "dir.h"
 #include "uipod_folders.h"
+#include "uipod_daemon.h"
 #include "uipod_library_browse.h"
 #include "uipod_playlists.h"
 #include "uipod_mainmenu.h"
@@ -248,6 +249,28 @@ MENUITEM_RETURNVALUE_CHEVRON(songs_item, ID2P(LANG_UIPOD_SONGS), GO_TO_UIPOD_SON
 MENUITEM_RETURNVALUE(shuffle_item, ID2P(LANG_UIPOD_SHUFFLE_ALL), GO_TO_UIPOD_SHUFFLE,
                      item_callback, Icon_Audio);
 
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+static int root_minimize_fn(void)
+{
+    uipod_daemon_request_minimize();
+    (void)uipod_daemon_poll(true);
+    return 0;
+}
+
+static int root_quit_fn(void)
+{
+    uipod_daemon_quit();
+    return 0;
+}
+
+MENUITEM_FUNCTION_DYNTEXT(minimize_item, 0, root_minimize_fn,
+                          uipod_daemon_minimize_label, NULL, NULL,
+                          NULL, Icon_NOICON);
+MENUITEM_FUNCTION_DYNTEXT(quit_item, 0, root_quit_fn,
+                          uipod_daemon_quit_label, NULL, NULL,
+                          NULL, Icon_NOICON);
+#endif
+
 struct menu_item_ex root_menu_;
 static struct menu_callback_with_desc root_menu_desc = {
         item_callback, ID2P(LANG_ROCKBOX_TITLE), Icon_Rockbox };
@@ -270,7 +293,7 @@ static struct menu_table menu_table[] = {
     { "wps", &wps_item },
 };
 #define MAX_MENU_ITEMS (sizeof(menu_table) / sizeof(struct menu_table))
-static struct menu_item_ex *root_menu__[MAX_MENU_ITEMS];
+static struct menu_item_ex *root_menu__[MAX_MENU_ITEMS + 2];
 
 
 void root_menu_load_from_cfg(void* setting, char *value)
@@ -459,6 +482,10 @@ static int uipod_root_run(int last)
     ROOT_ADD(uipod_mainmenu_is_enabled(UIPOD_MM_SHUFFLE),    &shuffle_item);
     ROOT_ADD(true, &menu_);          /* Settings    */
     ROOT_ADD(true, &wps_item);       /* Now Playing */
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+    ROOT_ADD(true, &minimize_item);  /* Minimize to Background */
+    ROOT_ADD(true, &quit_item);      /* Quit UIPod             */
+#endif
 #undef ROOT_ADD
 
     root_menu_.flags = MENU_HAS_DESC | MT_MENU | MENU_ITEM_COUNT(n);

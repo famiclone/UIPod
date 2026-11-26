@@ -54,8 +54,20 @@ void trimpod_alsa_volume_overwritten(void);
  * audiohw_close() during shutdown. */
 void pcm_alsa_shutdown(void);
 
+#include <stdbool.h>
+
 /* How long audio handed to the output now takes to be heard, as last
  * measured; the video player's sound is timed against it. */
 unsigned int pcm_alsa_output_delay_us(void);
+
+/* Force shared ALSA `Playback` (`dmix`) output so NextUI / `minarch.elf` can
+ * play game audio simultaneously without `EBUSY` on `hw:0,0`. */
+void pcm_alsa_set_background_shared(bool force_shared);
+
+/* Switch UIPod volume driver between foreground hardware+software split and
+ * background pure-software PCM attenuation (leaving hardware master volume to
+ * NextUI `keymon.elf` while `MENU + Up/Down` adjusts UIPod music independently). */
+void trimpod_alsa_set_background_mode(bool background_mode);
+void trimpod_alsa_adjust_bg_volume(int delta_steps);
 
 #endif /* _TRIMPOD_ALSA_H */

@@ -121,6 +121,10 @@ static snd_ctl_elem_value_t *dv_val = NULL;
 static snd_ctl_elem_value_t *dac_val = NULL;
 static bool dv_open_tried = false;
 static bool overwritten;        /* NextUI set its volume since ours */
+static volatile bool s_background_sw_mode = false;
+static volatile int  s_bg_music_vol_cb = 0; /* tenth-dB (-480..0; -480 = mute) */
+static int           s_saved_fg_vol_l = -18;
+static int           s_saved_fg_vol_r = -18;
 
 /* One open attempt; on failure software carries the whole volume range. */
 static void hw_dv_open(void)
@@ -459,6 +463,16 @@ void audiohw_set_volume(int vol_l, int vol_r)
 
     vol_l = clamp_volume(vol_l);
     vol_r = clamp_volume(vol_r);
+    s_saved_fg_vol_l = vol_l;
+    s_saved_fg_vol_r = vol_r;
+
+    if (s_background_sw_mode)
+    {
+        int bg_cb = s_bg_music_vol_cb;
+        int sw = (bg_cb <= -480) ? PCM_MUTE_LEVEL : bg_cb;
+        pcm_set_master_volume(sw, sw);
+        return;
+    }
 
     /* Held across the whole body: the PCM writer thread can free the config
      * tree these handles came from at any moment. */
@@ -538,6 +552,39 @@ void audiohw_set_volume(int vol_l, int vol_r)
     int rem_r = att_r == INT_MAX ? PCM_MUTE_LEVEL : -((att_r - hw_mdb + 50) / 100);
 
     pcm_set_master_volume(rem_l, rem_r);
+}
+
+void trimpod_alsa_set_background_mode(bool background_mode)
+{
+    if (s_background_sw_mode == background_mode)
+        return;
+    s_background_sw_mode = background_mode;
+    if (background_mode)
+    {
+        int bg_cb = s_bg_music_vol_cb;
+        int sw = (bg_cb <= -480) ? PCM_MUTE_LEVEL : bg_cb;
+        pcm_set_master_volume(sw, sw);
+    }
+    else
+    {
+        overwritten = true;
+        audiohw_set_volume(s_saved_fg_vol_l, s_saved_fg_vol_r);
+    }
+}
+
+void trimpod_alsa_adjust_bg_volume(int delta_steps)
+{
+    int next = s_bg_music_vol_cb + delta_steps * 20; /* 2.0 dB per step */
+    if (next > 0)
+        next = 0;
+    if (next < -480)
+        next = -480;
+    s_bg_music_vol_cb = next;
+    if (s_background_sw_mode)
+    {
+        int sw = (next <= -480) ? PCM_MUTE_LEVEL : next;
+        pcm_set_master_volume(sw, sw);
+    }
 }
 
 /* shutdown_hw() calls this after audio_stop(); stopping the writer here is what

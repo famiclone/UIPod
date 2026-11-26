@@ -54,6 +54,9 @@
 
 static int btn = 0;    /* Hopefully keeps track of currently pressed keys... */
 static int released;   /* buttons released since the last button_read_device */
+static volatile bool s_min_chord_active = false;
+static volatile bool s_min_chord_latched = false;
+static Uint32        s_reattach_guard_until_ms = 0;
 
 
 int sdl_app_has_input_focus = 1;
@@ -792,6 +795,42 @@ static void open_input_fds(void)
     input_fds[WATCH_SLOT] = (struct pollfd){ .fd = watch, .events = POLLIN };
 }
 
+static void close_input_fds(void)
+{
+    for (int i = NODE_SLOT; i < num_input_fds; i++)
+    {
+        if (input_fds[i].fd >= 0)
+        {
+            if (input_headset[i])
+                (void)ioctl(input_fds[i].fd, EVIOCGRAB, 0);
+            close(input_fds[i].fd);
+            input_fds[i].fd = -1;
+        }
+        input_headset[i] = false;
+    }
+    num_input_fds = NODE_SLOT;
+
+    if (input_fds[WATCH_SLOT].fd >= 0)
+    {
+        close(input_fds[WATCH_SLOT].fd);
+        input_fds[WATCH_SLOT].fd = -1;
+    }
+    settings_wd = -1;
+
+    for (int i = 0; i < 2; i++)
+    {
+        if (wake_pipe[i] >= 0)
+        {
+            close(wake_pipe[i]);
+            wake_pipe[i] = -1;
+        }
+    }
+    input_fds[WAKE_SLOT].fd = -1;
+    headset_held = 0;
+    tap.down = tap.pending = false;
+    tap.taps = 0;
+}
+
 static void post_event(long id, intptr_t data)
 {
     sim_enter_irq_handler();
@@ -984,6 +1023,35 @@ void gui_message_loop(void)
     }
 
     close_joysticks();
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+    close_input_fds();
+#endif
+    btn = 0;
+    released = 0;
+    power_key_held = false;
+    power_down_tick = 0;
+}
+
+bool sdl_button_take_minimize_chord(void)
+{
+    if (!s_min_chord_latched)
+        return false;
+    s_min_chord_latched = false;
+    return true;
+}
+
+bool sdl_button_menu_or_start_held(void)
+{
+    return (btn & (BUTTON_MENU | BUTTON_START)) != 0;
+}
+
+void sdl_button_arm_reattach_guard(uint32_t duration_ms)
+{
+    btn = 0;
+    released = 0;
+    s_min_chord_active = false;
+    s_min_chord_latched = false;
+    s_reattach_guard_until_ms = SDL_GetTicks() + duration_ms;
 }
 
 
@@ -1055,6 +1123,26 @@ int button_read_device(void)
         btn &= BUTTON_VOL_MASK;
     }
 
+    /* Intercept `MENU + START` chord cleanly before either button's release edge
+     * can trigger a context menu or Play/Pause toggle. */
+#if defined(BUTTON_MENU) && defined(BUTTON_START)
+    if (!hold_button_state &&
+        (btn & (BUTTON_MENU | BUTTON_START)) == (BUTTON_MENU | BUTTON_START))
+    {
+        if (!s_min_chord_active)
+        {
+            s_min_chord_active = true;
+            s_min_chord_latched = true;
+        }
+    }
+    if (s_min_chord_active)
+    {
+        released &= ~(BUTTON_MENU | BUTTON_START);
+        if ((btn & (BUTTON_MENU | BUTTON_START)) == 0)
+            s_min_chord_active = false;
+    }
+#endif
+
     /* Every release reads as up for two polls, even if the button is already
      * down again: button_read() drops one-poll changes, and a lost release
      * merges fast taps into one hold that auto-repeats. */
@@ -1069,6 +1157,25 @@ int button_read_device(void)
     /* Volume rocker arrives as joystick buttons 14/13 (folded into btn by
      * event_handler, like every other gamepad key) -- no separate read here. */
     int result = btn & ~up_mask;
+#if defined(BUTTON_MENU) && defined(BUTTON_START)
+    if (s_min_chord_active)
+    {
+        up_mask &= ~(BUTTON_MENU | BUTTON_START);
+        result &= ~(BUTTON_MENU | BUTTON_START);
+    }
+#endif
+    if (s_reattach_guard_until_ms != 0)
+    {
+        if (!SDL_TICKS_PASSED(SDL_GetTicks(), s_reattach_guard_until_ms))
+        {
+            up_mask &= ~(BUTTON_A | BUTTON_B | BUTTON_START | BUTTON_MENU);
+            result &= ~(BUTTON_A | BUTTON_B | BUTTON_START | BUTTON_MENU);
+        }
+        else
+        {
+            s_reattach_guard_until_ms = 0;
+        }
+    }
     if (up_polls && --up_polls == 0)
         up_mask = 0;
 

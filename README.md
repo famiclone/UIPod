@@ -34,13 +34,13 @@ An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for 
 - **10 four-shade audio visualizers** including Cassette Deck, Analog VU Meter, Sonic Vortex, and Phosphor Scope, with optional palette inversion.
 - **4-Shade E-Book Reader** for `.epub`, `.fb2`, `.mobi`, `.md`, and `.txt` with chapters, footnotes, dithered illustrations, and Sans/Serif fonts.
 - Built-in games & tools: **DJ Mixer** (live dual-deck mixing with beat sync, loops, and DJ filter), **Beat Stack**, **Music Quiz**, **Sound Racer**, **Pulsar Vanguard**, **Tetris**, **Snake**, **Brick Breaker**, **2048**, **Stopwatch**, and **LCD Plasma**.
-- Live USB-C MTP file transfer during playback, Android screen-off background audio, Sleep Timer, and TrimUI Brick charge limit.
+- TrimUI Brick background music mode while gaming in NextUI, Android screen-off audio, live USB-C MTP, Sleep Timer, and charge limit.
 
 ## Installation
 
-- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.10.3-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
-- **Android Handhelds:** Install `UIPod-v0.10.3-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
-- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.10.3-web.zip`).
+- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.11.0-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
+- **Android Handhelds:** Install `UIPod-v0.11.0-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
+- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.11.0-web.zip`).
 
 ## Controls
 
@@ -54,6 +54,7 @@ An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for 
 | **Y** | Toggle Audio Visualizer on Now Playing (`Y` or `B` returns to Now Playing) |
 | **START** | Global Play / Pause (or Pause Menu inside games) |
 | **MENU** | Context menu; opens Settings on Main Menu; Reader Options in Text Viewer |
+| **MENU + START** | Minimize to background on TrimUI Brick / NextUI (in background: **MENU + L2 / R2** skips tracks, **MENU + Up / Down** adjusts music volume, **MENU + START** toggles Play / Pause) |
 | **L1 / R1** | Prev / Next track (or Quick Cut when DJ Crossfade is active); Page Up / Down in lists |
 | **L2 / R2** | Prev / Next chapter; switch Visualizer preset; skip track in Reader, Beat Stack, Sound Racer & Pulsar Vanguard |
 | **SELECT / SELECT + VOL ±** | Toggle Paginated ↔ Scroll mode in Reader (solo tap); **SELECT + VOL ±** adjusts screen brightness anywhere |

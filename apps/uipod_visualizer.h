@@ -45,4 +45,7 @@ bool uipod_visualizer_maybe_autostart(void);
  * A toggles the highlighted preset; Hold A / MENU opens Preview; B leaves. */
 int uipod_visualizer_menu(void);
 
+/* Marks the visualizer GLES3 pipeline uninitialized when the GL context is torn down. */
+void uipod_visualizer_notify_gl_dropped(void);
+
 #endif /* UIPOD_VISUALIZER_H */

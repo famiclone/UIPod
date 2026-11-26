@@ -95,6 +95,7 @@ void backlight_hw_complete_wake(void)
 #include "lcd.h"                /* lcd_set_panel_dark: stop presenting while dark */
 #include "backlight-target.h"
 #include "system-sdl.h"
+#include "window-sdl.h"
 #include "sysfs.h"
 #include "panic.h"
 
@@ -315,6 +316,8 @@ void backlight_hw_complete_wake(void)
 
 void backlight_hw_on(void)
 {
+    if (sdl_window_is_headless())
+        return;
     if (!s_worker_ready)
     {
         if (last_bl != 1)
@@ -348,6 +351,8 @@ void backlight_hw_on(void)
 
 void backlight_hw_off(void)
 {
+    if (sdl_window_is_headless())
+        return;
     /* Mark dark immediately on the Rockbox thread so SDL/GL stops swapping
      * before the worker disables the panel's TCON scanout. */
     lcd_set_panel_dark(true);
@@ -370,6 +375,8 @@ void backlight_hw_off(void)
 
 void backlight_hw_brightness(int brightness)
 {
+    if (sdl_window_is_headless())
+        return;
     /* cap range, just in case */
     if (brightness > MAX_BRIGHTNESS_SETTING)
         brightness = MAX_BRIGHTNESS_SETTING;

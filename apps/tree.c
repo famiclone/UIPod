@@ -385,6 +385,10 @@ static int dirbrowse(void)
             uipod_idle_to_wps();          /* the loop-top home check exits */
         bool do_restore_display = true;
         switch ( button ) {
+            case ACTION_REDRAW:
+                restore = do_restore_display;
+                break;
+
             case ACTION_STD_OK:
                 /* nothing to do if no files to display */
                 if ( numentries == 0 )

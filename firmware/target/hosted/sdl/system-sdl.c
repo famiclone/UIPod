@@ -132,19 +132,46 @@ void sdl_sys_quit(void)
     sys_poweroff();
 }
 
-void power_off(void)
+void sdl_event_thread_stop(void)
 {
-    /* Shut down SDL event loop */
+#if !defined(__APPLE__) && !defined(__ANDROID__)
+    if (!evt_thread)
+        return;
     SDL_Event event;
     memset(&event, 0, sizeof(SDL_Event));
     event.type = SDL_USEREVENT;
     SDL_PushEvent(&event);
     gui_message_loop_wake();
-    /* wait for event thread to finish */
+    SDL_WaitThread(evt_thread, NULL);
+    evt_thread = NULL;
+#endif
+}
+
+bool sdl_event_thread_start(void)
+{
+#if !defined(__APPLE__) && !defined(__ANDROID__)
     if (evt_thread)
-        SDL_WaitThread(evt_thread, NULL);
+        return true;
+    SDL_sem *s = SDL_CreateSemaphore(0);
+    if (!s)
+        return false;
+    evt_thread = SDL_CreateThread(sdl_event_thread, NULL, s);
+    if (!evt_thread)
+    {
+        SDL_DestroySemaphore(s);
+        return false;
+    }
+    SDL_SemWait(s);
+    SDL_DestroySemaphore(s);
+    return true;
+#else
+    return true;
+#endif
+}
 
-
+void power_off(void)
+{
+    sdl_event_thread_stop();
     sim_do_exit();
 }
 
@@ -363,6 +390,10 @@ void sys_handle_argv(int argc, char *argv[])
             {
                     debug_buttons = true;
                     printf("Printing background button clicks.\n");
+            }
+            else if (!strcmp("--daemon", argv[x]) || !strcmp("--client", argv[x]))
+            {
+                /* Handled by uipod_daemon_early_main() prior to init() */
             }
             else if (!strcmp("--audiodev", argv[x]))
             {

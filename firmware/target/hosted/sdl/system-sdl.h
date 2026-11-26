@@ -54,6 +54,8 @@ void sim_kernel_shutdown(void);
 void sys_poweroff(void);
 void sys_handle_argv(int argc, char *argv[]);
 void gui_message_loop(void);
+void sdl_event_thread_stop(void);
+bool sdl_event_thread_start(void);
 void sim_do_exit(void) NORETURN_ATTR;
 void sdl_sys_quit(void);
 

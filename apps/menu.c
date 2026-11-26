@@ -426,6 +426,11 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
 
         /* query audio status to see if it changed */
         redraw_lists = query_audio_status(&old_audio_status);
+        if (action == ACTION_REDRAW)
+        {
+            redraw_lists = true;
+            action = ACTION_NONE;
+        }
 #ifdef HAVE_BACKLIGHT_BRIGHTNESS
         if (global_settings.brightness != old_brightness)
         {

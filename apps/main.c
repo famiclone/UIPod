@@ -64,6 +64,7 @@
 #include "uipod_lastfm.h"
 #include "uipod_listenbrainz.h"
 #include "uipod_downloads.h"
+#include "uipod_daemon.h"
 #include "uipod_track_intel.h"
 #include "uipod_plugins.h"
 #include "menus/exported_menus.h"
@@ -134,6 +135,7 @@ __attribute__((visibility("default")))
 int main(int argc, char *argv[]) INIT_ATTR MAIN_NORETURN_ATTR ;
 int main(int argc, char *argv[])
 {
+    uipod_daemon_early_main(argc, argv);
     sys_handle_argv(argc, argv);
 #else
 int main(void) INIT_ATTR MAIN_NORETURN_ATTR;
@@ -239,6 +241,7 @@ static void init(void)
     settings_load();
     uipod_theme_sync_startup();
     settings_apply(true);
+    uipod_daemon_post_audio_init();
     /* UIPod: m4b chapters ride the cuesheet engine, so force it on (the
      * setting is unexposed and stale configs may say off; must precede
      * audio_init so the scratch buffer reserves the cuesheet slot), and load

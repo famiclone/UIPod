@@ -171,6 +171,7 @@ static volatile bool dev_playing;   /* Rockbox has handed us a buffer */
 static bool open_shared;            /* the device is the "Playback" dmix bus */
 static bool open_direct_hw;         /* direct "hw:0,0" 48 kHz exclusive mode */
 static volatile bool s_want_direct_hw = true;
+static volatile bool s_force_shared_dmix = false;
 static bool s_direct_hw_fallback;
 static int  s_direct_busy_retries;
 static int cur_route;               /* sink audiomon last published */
@@ -196,6 +197,27 @@ static void close_click_dmix_sync(void)
         s_click_pcm = NULL;
     }
     pthread_mutex_unlock(&click_pcm_mtx);
+}
+
+static bool alsa_recover_xrun_or_suspend(snd_pcm_t *pcm, int err)
+{
+    if (err == -ESTRPIPE)
+    {
+        int r = -EAGAIN;
+        for (int tries = 0; tries < 25; tries++)
+        {
+            r = snd_pcm_resume(pcm);
+            if (r != -EAGAIN)
+                break;
+            SDL_Delay(10);
+        }
+        if (r < 0)
+            r = snd_pcm_prepare(pcm);
+        return r >= 0;
+    }
+    if (err == -EPIPE || err == -EINTR)
+        return snd_pcm_recover(pcm, err, 1) >= 0;
+    return false;
 }
 
 /* Bluetooth uses bt_pipe and leaves `handle` NULL, so every "do we have an
@@ -234,8 +256,10 @@ static int set_hwparams(snd_pcm_t *pcm, unsigned long sampr)
         buffer_size = MIX_FRAME_SAMPLES * 2 * 4;
         period_size = MIX_FRAME_SAMPLES * 2;
     } else {
-        buffer_size = MIX_FRAME_SAMPLES * 4;
-        period_size = MIX_FRAME_SAMPLES;
+        /* >= 85 ms buffer headroom on shared `Playback` (`dmix`) so `minarch.elf`
+         * ROM loading / SD card I/O bursts never cause background audio XRUNs. */
+        period_size = (MIX_FRAME_SAMPLES >= 1024) ? MIX_FRAME_SAMPLES : 1024;
+        buffer_size = period_size * 4;
     }
 
     err = snd_pcm_hw_params_any(pcm, params);
@@ -552,7 +576,7 @@ static bool dev_open(void)
         name = usb;
         route = TRIMPOD_SINK_USB;
     }
-    else if (s_want_direct_hw && !s_direct_hw_fallback)
+    else if (s_want_direct_hw && !s_direct_hw_fallback && !s_force_shared_dmix)
     {
         /* Release UIPod's own click dmix handle first so hw:0,0 is never busy */
         close_click_dmix_sync();
@@ -1277,11 +1301,8 @@ static bool writer_step(snd_pcm_uframes_t *pending_rem,
         return true;                    /* timeout; re-check the flags */
     if (err < 0)
     {
-        if (err == -EPIPE)
-        {
-            snd_pcm_recover(handle, err, 1);
+        if (alsa_recover_xrun_or_suspend(handle, err))
             return true;
-        }
         dev_lost(snd_strerror(err));
         return false;
     }
@@ -1289,11 +1310,8 @@ static bool writer_step(snd_pcm_uframes_t *pending_rem,
     space = snd_pcm_avail_update(handle);
     if (space < 0)
     {
-        if (space == -EPIPE)
-        {
-            snd_pcm_recover(handle, space, 1);
+        if (alsa_recover_xrun_or_suspend(handle, (int)space))
             return true;
-        }
         dev_lost(snd_strerror(space));
         return false;
     }
@@ -1333,11 +1351,8 @@ static bool writer_step(snd_pcm_uframes_t *pending_rem,
         }
         if (n == 0 || n == -EAGAIN)
             break;                      /* no room after all; go re-wait */
-        if (n == -EPIPE || n == -ESTRPIPE)
-        {
-            snd_pcm_recover(handle, n, 1);
+        if (alsa_recover_xrun_or_suspend(handle, (int)n))
             break;
-        }
         dev_lost(snd_strerror(n));
         return false;
     }
@@ -1407,7 +1422,7 @@ static int writer_fn(void *param)
 
         if (dev_is_open() && open_route == TRIMPOD_SINK_SPEAKER && !audiodev)
         {
-            bool want_direct = s_want_direct_hw && !s_direct_hw_fallback;
+            bool want_direct = s_want_direct_hw && !s_direct_hw_fallback && !s_force_shared_dmix;
             if (open_direct_hw != want_direct)
             {
                 dev_close();
@@ -1819,7 +1834,7 @@ bool pcm_alsa_menu_click(void)
 
     if (!audiodev && cur_route == TRIMPOD_SINK_SPEAKER)
     {
-        if (open_direct_hw || (s_want_direct_hw && !s_direct_hw_fallback))
+        if (open_direct_hw || (s_want_direct_hw && !s_direct_hw_fallback && !s_force_shared_dmix))
         {
             __atomic_store_n(&s_direct_click_pos, 0, __ATOMIC_RELEASE);
             if (writer_wake)
@@ -1916,6 +1931,15 @@ unsigned int pcm_alsa_output_delay_us(void)
 
 void pcm_alsa_wake_writer(void)
 {
+    if (writer_wake)
+        SDL_SemPost(writer_wake);
+}
+
+void pcm_alsa_set_background_shared(bool force_shared)
+{
+    if (s_force_shared_dmix == force_shared)
+        return;
+    s_force_shared_dmix = force_shared;
     if (writer_wake)
         SDL_SemPost(writer_wake);
 }

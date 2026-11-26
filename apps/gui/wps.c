@@ -60,6 +60,7 @@
 #include "playlist_viewer.h"
 #include "wps.h"
 #include "uipod_visualizer.h"
+#include "uipod_daemon.h"
 #include "uipod_nowplaying.h"
 #include "uipod_midi.h"
 #include "uipod_nsf_ui.h"
@@ -523,7 +524,7 @@ static int wps_page_poll(struct uipod_page *p, int timeout)
  * is an inline knob: LEFT/RIGHT (or A) cycle Off/5/10.../90 min and arm the
  * timer live; the value shows minutes left.  Opened like the context menu
  * (gwps_leave_wps -> menu -> restore) so it themes. */
-enum { NP_PAUSE = 0, NP_SHUFFLE, NP_ADD_TO_PLAYLIST, NP_START_VIZ, NP_SOUNDFONT };
+enum { NP_PAUSE = 0, NP_SHUFFLE, NP_ADD_TO_PLAYLIST, NP_START_VIZ, NP_SOUNDFONT, NP_MINIMIZE };
 
 static const int np_sleep_min[] = { 0, 5, 10, 15, 30, 45, 60, 75, 90 };
 #define NP_SLEEP_N ((int)(sizeof np_sleep_min / sizeof np_sleep_min[0]))
@@ -698,13 +699,24 @@ MENUITEM_RETURNVALUE(np_shuffle, ID2P(LANG_SHUFFLE), NP_SHUFFLE,
 MENUITEM_RETURNVALUE(np_addpl, ID2P(LANG_UIPOD_ADD_TO_PLAYLIST), NP_ADD_TO_PLAYLIST,
                      NULL, Icon_NOICON);
 MENUITEM_RETURNVALUE(np_viz, ID2P(LANG_UIPOD_START_VISUALIZER), NP_START_VIZ, NULL, Icon_NOICON);
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+MENUITEM_RETURNVALUE_DYNTEXT(np_minimize, NP_MINIMIZE, NULL,
+                             uipod_daemon_minimize_label, NULL, NULL, Icon_NOICON);
+#endif
 /* Repeat: an inline setting row (LEFT/RIGHT cycle, applied live to the
  * running playlist via its settings_list callback); auto-labelled. */
 MENUITEM_SETTING(np_repeat, &global_settings.repeat_mode, NULL);
 
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
+          &np_pause, &np_nsf_channels, &np_nsf_endless, &np_effects, &np_soundfont,
+          &np_shuffle, &np_repeat, &np_sleeptimer, &np_large_art, &np_addpl, &np_viz,
+          &np_minimize);
+#else
 MAKE_MENU(nowplaying_menu, ID2P(LANG_NOW_PLAYING), NULL, Icon_NOICON,
           &np_pause, &np_nsf_channels, &np_nsf_endless, &np_effects, &np_soundfont,
           &np_shuffle, &np_repeat, &np_sleeptimer, &np_large_art, &np_addpl, &np_viz);
+#endif
 
 static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                                                    int button)
@@ -749,6 +761,13 @@ static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                     uipod_playlists_pick(state->id3->path, FILE_ATTR_AUDIO);
                 else if (sel == NP_START_VIZ)
                     uipod_visualizer_run();   /* B returns to Now Playing */
+#if defined(RETRO_HANDHELD) && !defined(__ANDROID__)
+                else if (sel == NP_MINIMIZE)
+                {
+                    uipod_daemon_request_minimize();
+                    (void)uipod_daemon_poll(true);
+                }
+#endif
 
                 if (!audio_status())   /* music stopped while away -> leave WPS */
                     { w->result = GO_TO_ROOT; return UIPOD_PAGE_DONE; }

@@ -20,6 +20,7 @@
 #ifndef __WINDOWSDL_H__
 #define __WINDOWSDL_H__
 
+#include <stdbool.h>
 #include "SDL.h"
 
 extern SDL_Surface *sim_lcd_surface; /* LCD content */
@@ -38,6 +39,11 @@ void sdl_window_adjustment_needed(void);
 
 /* Creates window, GL context, and LCD surface when app launches */
 void sdl_window_setup(void);
+
+/* Tear down / recreate SDL window & GLES3 context for headless background mode */
+void sdl_window_teardown_for_background(void);
+bool sdl_window_reattach_from_background(void);
+bool sdl_window_is_headless(void);
 
 extern SDL_Window *sdlWindow;       /* the app window (GL-enabled on this target) */
 extern volatile bool uipod_viz_active; /* visualizer owns the window/context */

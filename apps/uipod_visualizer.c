@@ -53,6 +53,7 @@
 #include "kernel.h"
 #include "tick.h"
 #include "button.h"
+#include "uipod_daemon.h"
 #include "settings.h"
 #include "lang.h"
 #include "misc.h"
@@ -254,6 +255,11 @@ static void viz_request_switch(int idx, bool fast)
         viz_fade = VIZ_FADE_OUT;
         viz_fade_start = current_tick;
     }
+}
+
+void uipod_visualizer_notify_gl_dropped(void)
+{
+    viz_ready = false;
 }
 
 static bool ensure_init(void)
@@ -544,6 +550,36 @@ static void visualizer_session(int locked_idx)
         for (;;)
         {
             int act = get_action(CONTEXT_WPS, HZ / 20);
+            if (uipod_daemon_minimize_pending())
+            {
+                viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
+                viz_thread_stop = true;
+                SDL_WaitThread(rt, NULL);
+                rt = NULL;
+                sdl_gl_make_current();
+                uipod_viz_active = false;
+                backlight_set_timeout(global_settings.backlight_timeout);
+
+                (void)uipod_daemon_poll(true);
+                if (!audio_status() || !ensure_init())
+                    break;
+
+                button_clear_queue();
+                sdl_gl_make_current();
+                uipod_viz_active = true;
+                backlight_set_timeout(0);
+                activate_preset(preset_cur);
+                viz_pending_preset = -1;
+                viz_fade = VIZ_NORMAL;
+                viz_preset_tick = current_tick;
+                viz_seek_dir = 0;
+                SDL_GL_MakeCurrent(sdlWindow, NULL);
+                viz_thread_stop = false;
+                rt = SDL_CreateThread(viz_render_thread, "uipod_viz", NULL);
+                if (!rt)
+                    break;
+                continue;
+            }
             if (power_display_off())
             {
                 viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);

@@ -365,7 +365,10 @@ struct gui_synclist;
 void uipod_gpu_set_header_source(uint8_t src_icon);
 uint8_t uipod_gpu_get_header_source(void);
 
+void uipod_rs_ui_drop_gl_context(void);
+
 bool uipod_gpu_ui_ensure_ready(void);
+void uipod_gpu_teardown_gl(void);
 void uipod_gpu_fill_header(struct UIPodRsHeader *out,
                            const char *override_title);
 int  uipod_gpu_visible_list_rows(void);

@@ -35,6 +35,9 @@ void sdl_set_analog_stick_dpad_suppressed(bool suppressed);
 
 bool button_hold(void);
 void gui_message_loop_wake(void);
+bool sdl_button_take_minimize_chord(void);
+bool sdl_button_menu_or_start_held(void);
+void sdl_button_arm_reattach_guard(uint32_t duration_ms);
 #undef button_init_device
 void button_init_device(void);
 #ifdef HAVE_BUTTON_DATA

@@ -53,6 +53,7 @@
 #include "pcmbuf.h"
 #include "playlist.h"
 #include "uipod_library.h"
+#include "uipod_daemon.h"
 #include "uipod_rs_ui.h"
 #include "uipod_ui.h"      /* uipod_fullscreen_message */
 #include "trimpod_alsa.h"    /* trimpod_alsa_volume_overwritten */
@@ -363,6 +364,7 @@ static bool clean_shutdown(enum shutdown_type sd_type,
             system_flush();
         }
 
+        uipod_daemon_notify_exit();
         shutdown_hw(sd_type);
     }
     return false;

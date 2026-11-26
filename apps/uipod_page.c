@@ -160,8 +160,9 @@ void uipod_page_run(struct uipod_page *page)
             break;
         }
 
-        /* key whitelist: swallow non-allowed buttons; SYS events still pass */
-        if (!(action & SYS_EVENT) && !action_allowed(page->allowed, action))
+        /* key whitelist: swallow non-allowed buttons; SYS events & ACTION_REDRAW pass */
+        if (action != ACTION_REDRAW && !(action & SYS_EVENT) &&
+            !action_allowed(page->allowed, action))
             action = ACTION_NONE;
 
         if (page->vt->on_action &&

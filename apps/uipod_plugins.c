@@ -38,6 +38,7 @@
 #include "thread.h"
 
 #include "uipod_dj.h"
+#include "uipod_daemon.h"
 #include "uipod_keyboard.h"
 #include "uipod_library.h"
 #include "uipod_page.h"
@@ -786,10 +787,11 @@ static void process_single_button_event(long ev, struct UIPodPluginInput *out)
         return;
     }
 
-    /* MenuDriven mode: MENU or START requests the native J2ME-style system menu! */
+    /* MenuDriven mode: MENU or START release requests the native J2ME-style system
+     * menu (using BUTTON_REL so holding MENU + START cleanly minimizes first!). */
     if (s_active_menu_driven &&
         (base & (BUTTON_MENU | BUTTON_START)) != 0 &&
-        !(ev & (BUTTON_REPEAT | BUTTON_REL)))
+        (ev & BUTTON_REL) != 0)
     {
         out->menu_requested = true;
     }
@@ -807,6 +809,8 @@ static struct UIPodPluginInput host_poll_input(uint32_t timeout_ms)
 {
     struct UIPodPluginInput out;
     memset(&out, 0, sizeof(out));
+
+    (void)uipod_daemon_poll(true);
 
     if (timeout_ms == 0)
     {
@@ -838,6 +842,12 @@ static struct UIPodPluginInput host_poll_input(uint32_t timeout_ms)
                 break;
             process_single_button_event(more, &out);
         }
+    }
+
+    if (uipod_daemon_poll(true))
+    {
+        memset(&out, 0, sizeof(out));
+        return out;
     }
 
     long raw_held = button_status();

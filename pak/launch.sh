@@ -1,13 +1,15 @@
 #!/bin/sh
 # UIPod — pure-Rust GPU UI media player for the TrimUI Brick (NextUI).
 # Launches our independently-built UIPod SDL application.
-PAK_DIR="$(dirname "$0")"
+PAK_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 RBDIR="$PAK_DIR/uipod"
 RBDIR_BIND="/tmp/uipod"
 cd "$PAK_DIR" || exit 1
 
 # Rockbox stores its config/playlists under HOME; keep it on the SD card.
 HOME="$USERDATA_PATH"
+export HOME PAK_DIR
+export LD_LIBRARY_PATH="$RBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # Per-device sysfs paths (battery/backlight) + integer-ish display zoom value.
 if [ "$PLATFORM" = "tg5040" ] && [ "$DEVICE" = "brick" ]; then
@@ -68,49 +70,83 @@ fi
 # baseline.  'Soft Volume Master' is the OS softvol stage, which attenuates in
 # SOFTWARE and would re-create the quiet-passage gating, so pin it wide open.
 # All three are snapshotted and restored on exit.
+is_daemon_alive() {
+  DAEMON_PID="$(cat /tmp/uipod.pid 2>/dev/null)"
+  [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null && \
+    tr -d '\0' < "/proc/$DAEMON_PID/cmdline" 2>/dev/null | grep -q uipod
+}
+
+DAEMON_WAS_RUNNING=0
+if is_daemon_alive; then
+  DAEMON_WAS_RUNNING=1
+fi
+
 TRIMPOD_DV="$(amixer sget 'digital volume' 2>/dev/null | sed -n 's/.*Mono: \([0-9][0-9]*\).*/\1/p')"
 TRIMPOD_DAC="$(amixer sget 'DAC volume' 2>/dev/null | sed -n 's/.*Front Left: \([0-9][0-9]*\).*/\1/p')"
 TRIMPOD_SV="$(amixer sget 'Soft Volume Master' 2>/dev/null | sed -n 's/.*Front Left: \([0-9][0-9]*\).*/\1/p')"
-[ -n "$TRIMPOD_DV" ]  && amixer -q sset 'digital volume' 0   2>/dev/null
+# Only reset 'digital volume' to 0 on cold launch; on re-attach, uipod restores
+# its saved foreground volume directly without a transient 0 dB spike.
+if [ "$DAEMON_WAS_RUNNING" = "0" ]; then
+  [ -n "$TRIMPOD_DV" ] && amixer -q sset 'digital volume' 0 2>/dev/null
+fi
 [ -n "$TRIMPOD_DAC" ] && amixer -q sset 'DAC volume'     160 2>/dev/null
 [ -n "$TRIMPOD_SV" ]  && amixer -q sset 'Soft Volume Master' 255 2>/dev/null
 # Bluetooth needs nothing here: trimpod-alsa.c drives the device's own A2DP
-# volume, so the level the user leaves is the level the system keeps.
+# volume, so the level the user leaves is the level system keeps.
 # NextUI at volume 0 (or side-switch mute) ALSO latches the speaker driver's
 # hard mute (/sys/class/speaker/mute), which survives into our session and
 # silences Trimpod regardless of its own volume.  Unmute for the session and
-# restore the user's NextUI state on exit.
+# restore the user's NextUI state on full exit.
 SPK_MUTE=/sys/class/speaker/mute
-TRIMPOD_SPK_MUTE="$(cat "$SPK_MUTE" 2>/dev/null)"
-[ -n "$TRIMPOD_SPK_MUTE" ] && echo 0 > "$SPK_MUTE" 2>/dev/null
+if [ "$DAEMON_WAS_RUNNING" = "0" ]; then
+  TRIMPOD_SPK_MUTE="$(cat "$SPK_MUTE" 2>/dev/null)"
+  [ -n "$TRIMPOD_SPK_MUTE" ] && printf '%s' "$TRIMPOD_SPK_MUTE" > /tmp/uipod_orig_spk_mute 2>/dev/null
+fi
+[ -w "$SPK_MUTE" ] && echo 0 > "$SPK_MUTE" 2>/dev/null
 
 # USB file transfer: the app runs mtp.sh start/stop as USB power comes and goes,
 # so a connected computer sees the SD card over MTP; exit runs stop.
 [ -n "$MTP_GADGET" ] && export MTP_SCRIPT="$(pwd)/mtp.sh"
 
-# ALL teardown lives here so it runs on every catchable exit path -- a clean
-# binary return, or INT/TERM/HUP (e.g. NextUI stopping the pak) -- not just the
-# fall-through after the binary returns.  Idempotent and ordered: stop the app +
-# input, restore NextUI's keymon/audio/CPU, then release the bind mount.  The
-# bind mount in particular used to never be unmounted -> it leaked, surviving
-# exit and stacking on aborted runs.  (SIGKILL is uncatchable; nothing can help
-# that, but it's the only gap now.)
+SIGNAL_EXIT=0
+
 cleanup() {
-  kill -9 "$(pidof uipod)"   2>/dev/null
-  killall -9 tplayerslave ffprobe ffmpeg umtprd 2>/dev/null
+  if [ "$SIGNAL_EXIT" = "1" ] && is_daemon_alive; then
+    kill -TERM "$DAEMON_PID" 2>/dev/null
+    sleep 0.2 2>/dev/null || sleep 1
+  fi
+
   [ -n "$KEYMON_PIDS" ] && kill -CONT $KEYMON_PIDS 2>/dev/null
   [ -f /tmp/uipod_muted_vol ] && dd if=/tmp/uipod_muted_vol of=/dev/shm/SharedSettings bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
   [ -n "$TRIMPOD_DV" ] && amixer -q sset "digital volume" "$TRIMPOD_DV" 2>/dev/null
   [ -n "$TRIMPOD_DAC" ] && amixer -q sset "DAC volume" "$TRIMPOD_DAC" 2>/dev/null
   [ -n "$TRIMPOD_SV" ] && amixer -q sset "Soft Volume Master" "$TRIMPOD_SV" 2>/dev/null
-  [ -n "$TRIMPOD_SPK_MUTE" ] && echo "$TRIMPOD_SPK_MUTE" > "$SPK_MUTE" 2>/dev/null
-  [ -n "$MTP_SCRIPT" ] && sh "$MTP_SCRIPT" stop
   if [ -d "$CPUP" ] && [ -n "$TRIMPOD_OLD_GOV" ]; then
     echo 408000 > "$CPUP/scaling_min_freq"
     echo "$TRIMPOD_OLD_MAX" > "$CPUP/scaling_max_freq"
     echo "$TRIMPOD_OLD_MIN" > "$CPUP/scaling_min_freq"
     echo "$TRIMPOD_OLD_GOV" > "$CPUP/scaling_governor"
   fi
+  if [ -n "$LCD_ON_COMMAND" ]; then
+    echo "$LCD_ON_COMMAND" > "$SYSFS_BL_COMMAND" 2>/dev/null
+    echo "$BL_NAME" > "$SYSFS_BL_NAME" 2>/dev/null
+    echo 1 > "$SYSFS_BL_START" 2>/dev/null
+  fi
+
+  # If uipod minimized to background, keep the daemon and /tmp/uipod bind mount alive!
+  if is_daemon_alive; then
+    return
+  fi
+
+  kill -9 "$(pidof uipod)"   2>/dev/null
+  killall -9 tplayerslave ffprobe ffmpeg umtprd 2>/dev/null
+  rm -f /tmp/uipod.sock /tmp/uipod.pid /tmp/uipod_muted_vol 2>/dev/null
+  if [ -f /tmp/uipod_orig_spk_mute ]; then
+    ORIG_SPK_MUTE="$(cat /tmp/uipod_orig_spk_mute 2>/dev/null)"
+    [ -n "$ORIG_SPK_MUTE" ] && echo "$ORIG_SPK_MUTE" > "$SPK_MUTE" 2>/dev/null
+    rm -f /tmp/uipod_orig_spk_mute 2>/dev/null
+  fi
+  [ -n "$MTP_SCRIPT" ] && sh "$MTP_SCRIPT" stop
   # Re-enable the battery charger (AXP2202 reg 0x19 bit 1) on exit, in case the
   # in-app Charge Limit had disabled it -- guaranteed even on SIGKILL of the
   # binary, which the in-app code can't catch.  Skipped when the standalone
@@ -121,13 +157,6 @@ cleanup() {
     bcval=$(grep '^19:' "$BC_REGS" 2>/dev/null | awk '{print $2}')
     [ -n "$bcval" ] && printf '19 %02x\n' "$(( 0x$bcval | 2 ))" > "$BC_REGS" 2>/dev/null
   fi
-  # The app powers the panel off while dark; an exit from there must not hand
-  # NextUI a dead screen.  "enable" is a no-op on a panel that is already on.
-  if [ -n "$LCD_ON_COMMAND" ]; then
-    echo "$LCD_ON_COMMAND" > "$SYSFS_BL_COMMAND" 2>/dev/null
-    echo "$BL_NAME" > "$SYSFS_BL_NAME" 2>/dev/null
-    echo 1 > "$SYSFS_BL_START" 2>/dev/null
-  fi
   while mount 2>/dev/null | grep -q "$RBDIR_BIND"; do umount -l "$RBDIR_BIND" 2>/dev/null; done
   rmdir "$RBDIR_BIND" 2>/dev/null   # drop the empty mountpoint dir, not just the mount
   # tg5040: power off here (shutdown.sh); NextUI's poweroff_next reboots instead.
@@ -137,6 +166,6 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-trap 'exit' INT TERM HUP
+trap 'SIGNAL_EXIT=1; exit' INT TERM HUP
 
-"$RBDIR/uipod" --zoom "$ZOOMVAL" > "$PAK_DIR/uipod.log" 2>&1
+"$RBDIR/uipod" --client --zoom "$ZOOMVAL"

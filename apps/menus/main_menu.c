@@ -31,6 +31,7 @@
 #include "menu.h"
 #include "misc.h"
 #include "exported_menus.h"
+#include "uipod_daemon.h"
 #include "uipod_mainmenu.h"
 #include "tree.h"
 #include "storage.h"
@@ -127,10 +128,7 @@ static int uipod_about_page(void)
 
 static int uipod_exit_app(void)
 {
-    uipod_lastfm_shutdown();
-    uipod_listenbrainz_shutdown();
-    uipod_downloads_shutdown();
-    sys_poweroff();
+    uipod_daemon_quit();
     return 0;
 }
 

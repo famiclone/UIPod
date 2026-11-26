@@ -39,6 +39,9 @@
 #include "font.h"
 #include "logf.h"
 #include <time.h>
+#ifdef HAVE_SDL
+extern bool sdl_window_is_headless(void);
+#endif
 
 
 #if (BATTERY_CAPACITY_DEFAULT > 0)
@@ -1010,6 +1013,14 @@ int get_sleep_timer(void)
 static void handle_sleep_timer(void)
 {
     if (TIME_AFTER(current_tick, sleeptimer_endtick)) {
+#ifdef HAVE_SDL
+        if (sdl_window_is_headless()) {
+            /* Minimized in background: pause music without suspending handheld */
+            audio_pause();
+            set_sleep_timer(0);
+            return;
+        }
+#endif
 #ifdef HAVE_TRIMUI_DEEP_SLEEP
         /* NextUI-style deep sleep: pause, blank, suspend-to-RAM; the call blocks
          * until the power button wakes us, then we carry on (timer disarmed). */
@@ -1074,6 +1085,9 @@ void handle_auto_poweroff(void)
     }
 
     if (timeout &&
+#ifdef HAVE_SDL
+        !sdl_window_is_headless() &&
+#endif
         !usb_inserted() &&
         (audio_stat == 0 ||
          audio_stat == (AUDIO_STATUS_PLAY | AUDIO_STATUS_PAUSE)))

@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.10.3
+Version: v0.11.0
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -18,6 +18,7 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 • Y — Toggle Audio Visualizer directly from Now Playing (press Y or B inside Visualizer to return)
 • START — Play / Pause music globally (or open Pause Menu inside games)
 • MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
+• MENU + START (TrimUI Brick / NextUI) — Minimize UIPod to the background while keeping music playing across NextUI and emulators (re-open UIPod from NextUI to re-attach instantly; while minimized: MENU + R2 / L2 skips next/previous track, MENU + START toggles Play / Pause, and MENU + D-Pad Up / Down adjusts independent music volume without changing game volume)
 • VOL + / VOL - — Adjust volume (40 perceptual steps on TrimUI Brick; synced with hardware STREAM_MUSIC on Android)
 • SELECT + VOL + / VOL - — Adjust screen brightness anywhere; solo SELECT toggles Paginated / Scroll mode in Text Viewer
 • L2 / R2 — Previous / Next chapter in .m4b audiobooks & cuesheets; switch visualizer presets; skip tracks in Text Viewer, Beat Stack, Sound Racer & Pulsar Vanguard
@@ -92,6 +93,7 @@ Custom third-party .uipod plugins can be installed by placing compiled .uipod fi
 ## 6. Visualizers, USB MTP & Device Power
 
 • 4-Shade Audio Visualizers — Built-in Bayer-dithered GPU presets including Cassette Deck, Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, and LCD Plasma (press Y on Now Playing, or open Settings -> Visualizers / Now Playing -> Start Visualizer), rendered strictly in your active 4-shade theme palette (or inverted via Invert Visualizer) and synced to speaker/Bluetooth latency. Press Left/Right to skip tracks (hold to rewind/fast-forward), L2/R2 to switch visualizer presets, MENU for quick visualizer options (Invert Visualizer, Preset, Exit), START to play/pause, and Y or B to exit.
+• Minimize to Background (TrimUI Brick / NextUI) — Press MENU + START anywhere (or choose Minimize to Background on the Main Menu / Now Playing context menu) to return to NextUI and play emulator games while local, chiptune, Navidrome/Jellyfin, AutoEQ, and Smart DJ audio continues uninterrupted via shared ALSA mixing. Re-launching UIPod from NextUI instantly re-attaches the window at the exact previous screen. Choose Quit UIPod on the Main Menu (or Settings -> Exit) to stop background playback completely; if left paused/stopped in the background for 15 minutes, the daemon automatically saves state and exits to preserve battery.
 • USB MTP File Transfer — Plug in a USB-C cable to your computer while UIPod is running to mount /mnt/SDCARD over MTP without stopping playback.
 • Device & Battery Care (Settings -> Device) — Configure Auto Screen Off, Sleep Timer (deep suspend-to-RAM), CPU Governor (Powersave / Dynamic / Performance), and AXP2202 Battery Charge Limit (75%–95%).
 
