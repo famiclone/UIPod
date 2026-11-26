@@ -754,10 +754,11 @@ static bool tape_pull_one_frame(int16_t *out_l, int16_t *out_r)
  * never stopped while open -- a restart clicks -- so a private route is fed
  * silence until it closes for idle (see writer_fn). */
 static void mix_direct_click_into_period(int16_t *dst_stereo, int nframes);
-extern int32_t uipod_rs_manual_dj_is_active(void);
-extern size_t  uipod_rs_manual_dj_render_s16(int16_t *out_stereo_s16,
-                                             size_t frames,
-                                             uint32_t sample_rate);
+extern int32_t  uipod_rs_manual_dj_is_active(void);
+extern uint32_t uipod_rs_manual_dj_sample_rate(void);
+extern size_t   uipod_rs_manual_dj_render_s16(int16_t *out_stereo_s16,
+                                              size_t frames,
+                                              uint32_t sample_rate);
 
 static void pull_source_frames(int16_t *out_buf, ssize_t want_frames, unsigned int sr)
 {
@@ -1126,7 +1127,9 @@ static void copy_frames(void)
                         : (real_sample_rate
                              ? real_sample_rate
                              : (last_sample_rate ? last_sample_rate : 44100U));
-    unsigned int src_sr = last_sample_rate ? last_sample_rate : dst_sr;
+    unsigned int src_sr = uipod_rs_manual_dj_is_active()
+                        ? (unsigned int)uipod_rs_manual_dj_sample_rate()
+                        : (last_sample_rate ? last_sample_rate : dst_sr);
 
     bool active_src = dev_playing || tape_deck_fx_ff_active() ||
                       uipod_rs_manual_dj_is_active();

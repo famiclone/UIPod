@@ -19,9 +19,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use uipod_dj::{
-    prepare_streaming_deck_track, should_respect_album_gapless, CrossfadeMode, DeckAtomicControls,
-    DeckRefillWorker, DjConfig, DjTelemetry, DualDeckMixer, ManualDjCore, MaxTempoStretch,
-    MixerPhase, PlayheadSnapshot, RefillCmd, TransitionLength,
+    prepare_streaming_deck_track, register_opus_decoder_fns, should_respect_album_gapless,
+    CrossfadeMode, DeckAtomicControls, DeckRefillWorker, DjConfig, DjTelemetry, DualDeckMixer,
+    LoadedDeckTrack, ManualDjCore, MaxTempoStretch, MixerPhase, OpusHostFns, PlayheadSnapshot,
+    RefillCmd, TransitionLength,
 };
 use uipod_plugin_sdk::{
     DjCueAction, DjDeckId, DjLoopLength, DjTempoMode, PluginDjTelemetry, PluginLiveTelemetry,
@@ -925,6 +926,7 @@ const ZERO_ATOMIC_U32: AtomicU32 = AtomicU32::new(0);
 
 struct ManualDjSharedControls {
     decks: [Arc<DeckAtomicControls>; 2],
+    pending_load: [Arc<Mutex<Option<(LoadedDeckTrack, bool, u64)>>>; 2],
     crossfader_bits: Arc<AtomicU32>,
     bass_swap_enabled: Arc<AtomicBool>,
 }
@@ -932,6 +934,7 @@ struct ManualDjSharedControls {
 static MANUAL_DJ_ACTIVE: AtomicBool = AtomicBool::new(false);
 static MANUAL_DJ_SR: AtomicU32 = AtomicU32::new(48_000);
 static MANUAL_DJ_RENDER_GEN: AtomicU64 = AtomicU64::new(0);
+static MANUAL_DJ_FRAMES_SINCE_TEL: AtomicU32 = AtomicU32::new(0);
 static MANUAL_DJ_CORE: Mutex<Option<ManualDjCore>> = Mutex::new(None);
 static MANUAL_DJ_CTRLS: OnceLock<ManualDjSharedControls> = OnceLock::new();
 static MANUAL_DJ_WORKER: OnceLock<DeckRefillWorker> = OnceLock::new();
@@ -949,6 +952,10 @@ fn ensure_manual_dj_initialized(sr: u32) -> &'static ManualDjSharedControls {
         let core = guard.get_or_insert_with(|| ManualDjCore::new(sr));
         ManualDjSharedControls {
             decks: [Arc::clone(&core.controls[0]), Arc::clone(&core.controls[1])],
+            pending_load: [
+                Arc::clone(&core.pending_load[0]),
+                Arc::clone(&core.pending_load[1]),
+            ],
             crossfader_bits: Arc::clone(&core.crossfader_bits),
             bass_swap_enabled: Arc::clone(&core.bass_swap_enabled),
         }
@@ -999,22 +1006,72 @@ pub extern "C" fn uipod_rs_manual_dj_is_active() -> i32 {
 }
 
 #[no_mangle]
+pub extern "C" fn uipod_rs_manual_dj_sample_rate() -> u32 {
+    MANUAL_DJ_SR.load(Ordering::Acquire).clamp(8_000, 192_000)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn uipod_rs_manual_dj_register_opus(
+    get_size_fn: Option<unsafe extern "C" fn(i32) -> i32>,
+    init_fn: Option<unsafe extern "C" fn(*mut u8, i32, i32) -> i32>,
+    decode_fn: Option<
+        unsafe extern "C" fn(*mut u8, *const u8, i32, *mut i16, i32, i32) -> i32,
+    >,
+) {
+    if let (Some(get_size), Some(init), Some(decode)) = (get_size_fn, init_fn, decode_fn) {
+        register_opus_decoder_fns(OpusHostFns {
+            get_size,
+            init,
+            decode,
+        });
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn uipod_rs_manual_dj_session_begin(sample_rate: u32) -> i32 {
+    MANUAL_DJ_ACTIVE.store(false, Ordering::Release);
     let sr = sample_rate.clamp(8_000, 192_000);
     MANUAL_DJ_SR.store(sr, Ordering::Release);
+    MANUAL_DJ_FRAMES_SINCE_TEL.store(0, Ordering::Relaxed);
     let _ = manual_dj_worker();
+    manual_dj_worker().send(RefillCmd::ClearAll);
     let _ = ensure_manual_dj_initialized(sr);
     if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
         let core = guard.get_or_insert_with(|| ManualDjCore::new(sr));
         core.set_sample_rate(sr);
         core.reset_session();
-        let snap = core.snapshot_telemetry(true);
+        let snap = core.snapshot_telemetry(false);
         publish_manual_dj_telemetry(&snap);
-        MANUAL_DJ_ACTIVE.store(true, Ordering::Release);
         1
     } else {
         0
     }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_manual_dj_sync_playhead_ms(deck: u8, playhead_ms: u32) {
+    if !MANUAL_DJ_ACTIVE.load(Ordering::Acquire) {
+        if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
+            if let Some(ref mut core) = *guard {
+                core.sync_idle_playhead_ms(DjDeckId::from_u8(deck), playhead_ms);
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_manual_dj_session_activate(active: bool) {
+    if active {
+        if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
+            if let Some(ref mut core) = *guard {
+                core.step_idle_controls();
+                let snap = core.snapshot_telemetry(true);
+                publish_manual_dj_telemetry(&snap);
+            }
+        }
+        MANUAL_DJ_FRAMES_SINCE_TEL.store(0, Ordering::Relaxed);
+    }
+    MANUAL_DJ_ACTIVE.store(active, Ordering::Release);
 }
 
 #[no_mangle]
@@ -1030,6 +1087,7 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_session_end(
 
     if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
         if let Some(ref mut core) = *guard {
+            core.step_idle_controls();
             let snap = core.snapshot_telemetry(false);
             let dom = if snap.crossfader <= 0.5 {
                 DjDeckId::DeckA
@@ -1143,8 +1201,10 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_load_deck(
     };
 
     let sr = MANUAL_DJ_SR.load(Ordering::Acquire).max(8_000);
-    let _ = ensure_manual_dj_initialized(sr);
+    let ctrls = ensure_manual_dj_initialized(sr);
     let deck_id = DjDeckId::from_u8(deck);
+    let idx = deck_id.index();
+
     let loaded = prepare_streaming_deck_track(
         manual_dj_worker(),
         deck_id,
@@ -1154,6 +1214,7 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_load_deck(
         sr,
         dur_ms,
         eff_start_ms,
+        start_paused,
         bpm,
         first_beat_ms,
         contour,
@@ -1161,15 +1222,24 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_load_deck(
     );
     let start_frame = (((eff_start_ms as u64) * (sr as u64)) / 1000).min(loaded.total_frames);
 
-    if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
-        let core = guard.get_or_insert_with(|| ManualDjCore::new(sr));
-        core.enqueue_deck_track(deck_id, loaded, start_paused, start_frame);
-        let snap = core.snapshot_telemetry(MANUAL_DJ_ACTIVE.load(Ordering::Relaxed));
-        publish_manual_dj_telemetry(&snap);
-        true
+    // Enqueue via per-deck slot WITHOUT locking `MANUAL_DJ_CORE` so live audio callback NEVER blocks!
+    ctrls.decks[idx].reset_for_new_track(start_paused);
+    if let Ok(mut slot) = ctrls.pending_load[idx].lock() {
+        *slot = Some((loaded, start_paused, start_frame));
     } else {
-        false
+        return false;
     }
+
+    if !MANUAL_DJ_ACTIVE.load(Ordering::Acquire) {
+        if let Ok(mut guard) = MANUAL_DJ_CORE.try_lock() {
+            if let Some(ref mut core) = *guard {
+                core.step_idle_controls();
+                let snap = core.snapshot_telemetry(false);
+                publish_manual_dj_telemetry(&snap);
+            }
+        }
+    }
+    true
 }
 
 #[no_mangle]
@@ -1295,13 +1365,21 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_render_s16(
         return 0;
     }
     let sr = sample_rate.clamp(8_000, 192_000);
-    MANUAL_DJ_SR.store(sr, Ordering::Relaxed);
-    if let Ok(mut guard) = MANUAL_DJ_CORE.lock() {
+    if let Ok(mut guard) = MANUAL_DJ_CORE.try_lock() {
         if let Some(ref mut core) = *guard {
-            core.set_sample_rate(sr);
+            if core.sample_rate() != sr {
+                MANUAL_DJ_SR.store(sr, Ordering::Relaxed);
+                core.set_sample_rate(sr);
+            }
             let n = core.render_s16(out_slice);
-            let snap = core.snapshot_telemetry(true);
-            publish_manual_dj_telemetry(&snap);
+            let acc = MANUAL_DJ_FRAMES_SINCE_TEL
+                .fetch_add(n as u32, Ordering::Relaxed)
+                .saturating_add(n as u32);
+            if acc >= 384 {
+                MANUAL_DJ_FRAMES_SINCE_TEL.store(0, Ordering::Relaxed);
+                let snap = core.snapshot_telemetry(true);
+                publish_manual_dj_telemetry(&snap);
+            }
             MANUAL_DJ_RENDER_GEN.fetch_add(1, Ordering::Relaxed);
             return n;
         }
@@ -1325,11 +1403,12 @@ pub unsafe extern "C" fn uipod_rs_manual_dj_get_telemetry(
     let cur_gen = MANUAL_DJ_RENDER_GEN.load(Ordering::Relaxed);
     let prev_gen = LAST_SEEN_GEN.swap(cur_gen, Ordering::Relaxed);
 
-    // If audio sink was idle between frames, step control updates non-blockingly so paused
-    // beat-scrubbing (`L1/R1`), `SetCueHere` (`B`), & filter sweeps reflect instantaneously!
+    // Only touch `MANUAL_DJ_CORE` if the hardware audio sink has been completely idle between
+    // two 60 FPS UI polls (never contend with an actively running ALSA/SDL writer thread!).
     if cur_gen == prev_gen && MANUAL_DJ_ACTIVE.load(Ordering::Acquire) {
         if let Ok(mut guard) = MANUAL_DJ_CORE.try_lock() {
             if let Some(ref mut core) = *guard {
+                core.step_idle_controls();
                 let snap = core.snapshot_telemetry(true);
                 publish_manual_dj_telemetry(&snap);
             }

@@ -16,10 +16,12 @@ pub mod wsola;
 
 pub use cue_scanner::{analyze_pcm_f32, analyze_pcm_s16, DeckCueAnalysis};
 pub use filter::{DeckChannelStrip, OnePoleSmoother, StereoWashDelay};
+#[cfg(not(target_arch = "wasm32"))]
+pub use decoder::{register_opus_decoder_fns, OpusHostFns};
 pub use manual::{
     build_in_memory_deck_track, compute_zoomed_24_bars, evaluate_manual_crossfader,
-    BassSwapFilter, DeckAtomicControls, DeckRamStore, DjMacroFilter, LoadedDeckTrack, ManualDjCore,
-    PinnedBeatLoop, PinnedPcmWindow, RAM_CHUNK_FRAMES,
+    BassSwapFilter, DeckAtomicControls, DeckBarSnapshot, DeckRamStore, DjMacroFilter,
+    LoadedDeckTrack, ManualDjCore, PinnedBeatLoop, PinnedPcmWindow, RAM_CHUNK_FRAMES,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use manual::{prepare_streaming_deck_track, DeckRefillWorker, RefillCmd};

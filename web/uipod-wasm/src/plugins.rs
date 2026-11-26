@@ -4719,11 +4719,18 @@ impl MusicQuizGame {
 /* ============================================================================
  * 8. SOUND RACER — 1:1 with `plugins/sound-racer/src/lib.rs`
  * ========================================================================== */
-const SR_VX: f32 = 32.0;
-const SR_VY: f32 = CONTENT_TOP_Y + 42.0; // 178
-const SR_VW: f32 = 700.0;
-const SR_VH: f32 = 562.0;
-const SR_SHIP_Y: f32 = SR_VY + SR_VH - 58.0; // 682
+#[path = "../../../plugins/sound-racer/src/sprites.rs"]
+mod sprites;
+#[path = "../../../plugins/sound-racer/src/highway.rs"]
+mod highway;
+
+const SR_VX: f32 = highway::VIEW_X;
+const SR_VY: f32 = highway::VIEW_Y;
+const SR_VW: f32 = highway::VIEW_W;
+const SR_VH: f32 = highway::VIEW_H;
+const SR_OBSTACLE_MIN_Z_VIS: f32 = highway::OBSTACLE_MIN_Z_VIS;
+const SR_HIT_BLINK_DURATION_SEC: f32 = 0.42;
+const SR_HIT_BLINK_PERIOD_MS: u64 = 60;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SrBlockKind {
@@ -4752,6 +4759,7 @@ pub struct SoundRacerGame {
     lane: usize,
     ship_pos: f32,
     jump_rem: f32,
+    hit_blink_rem: f32,
     blocks: Vec<SrBlock>,
     tray: [[u8; 7]; 3],
     matched_mask: [[bool; 7]; 3],
@@ -4780,6 +4788,60 @@ pub struct SoundRacerGame {
     callout: Option<(String, f32)>,
     splash: Option<(String, f32)>,
     rng: Rng64,
+    elevation: highway::ElevationController,
+    roadside: highway::RoadsideController,
+    sprites: sprites::CarSpriteCache,
+}
+
+struct WasmRoadCanvas<'a>(&'a mut UiEngine);
+
+impl highway::RoadCanvas for WasmRoadCanvas<'_> {
+    #[inline]
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, rgb: u32) {
+        self.0.plugin_fill_rect(x, y, w, h, radius, rgb);
+    }
+
+    #[inline]
+    fn stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        stroke_w: f32,
+        rgb: u32,
+    ) {
+        self.0.plugin_stroke_rect(x, y, w, h, radius, stroke_w, rgb);
+    }
+
+    #[inline]
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, rgb: u32) {
+        self.0.plugin_fill_circle(cx, cy, r, rgb);
+    }
+
+    #[inline]
+    fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, stroke_w: f32, rgb: u32) {
+        self.0.plugin_draw_line(x0, y0, x1, y1, stroke_w, rgb);
+    }
+
+    #[inline]
+    fn draw_rgba(
+        &mut self,
+        tex_key: u64,
+        src_w: u32,
+        src_h: u32,
+        rgba: &[u8],
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
+        radius: f32,
+    ) {
+        self.0.plugin_draw_rgba_image(
+            tex_key, src_w, src_h, rgba, dst_x, dst_y, dst_w, dst_h, radius,
+        );
+    }
 }
 
 impl SoundRacerGame {
@@ -4788,6 +4850,7 @@ impl SoundRacerGame {
             lane: 1,
             ship_pos: 1.0,
             jump_rem: 0.0,
+            hit_blink_rem: 0.0,
             blocks: Vec::new(),
             tray: [[0; 7]; 3],
             matched_mask: [[false; 7]; 3],
@@ -4816,6 +4879,9 @@ impl SoundRacerGame {
             callout: None,
             splash: None,
             rng: Rng64::new(0x50AD_4ACE_CAFE_1234),
+            elevation: highway::ElevationController::new(),
+            roadside: highway::RoadsideController::new(),
+            sprites: sprites::CarSpriteCache::new(),
         }
     }
 
@@ -4823,10 +4889,13 @@ impl SoundRacerGame {
         self.score = 0;
         self.chain = 1;
         self.streak_hits = 0;
+        self.hit_blink_rem = 0.0;
         self.blocks.clear();
         self.tray = [[0; 7]; 3];
         self.matched_mask = [[false; 7]; 3];
         self.fuse_rem = None;
+        self.elevation.reset();
+        self.roadside.reset();
     }
 
     fn recompute_matches(&mut self) {
@@ -4932,96 +5001,13 @@ impl SoundRacerGame {
         Some((cleared, pts))
     }
 
-    fn project_road(z: f32, lane_offset: f32, curve: f32, intensity: f32) -> (f32, f32, f32) {
-        let vp_y = SR_VY + 74.0 + (0.5 - intensity) * 28.0;
-        let depth = (1.0 - z.clamp(0.0, 1.0)).powf(1.62);
-        let y = vp_y + depth * (SR_SHIP_Y - vp_y);
-        let scale = 0.16 + depth * 0.84;
-        let curve_x = curve * (1.0 - depth).powi(2) * 145.0;
-        let lane_w = 206.0 * scale;
-        let x = SR_VX + SR_VW * 0.5 + curve_x + lane_offset * lane_w;
-        (x, y, scale)
-    }
-
-    fn draw_highway_block(
-        ui: &mut UiEngine,
-        t: ThemeColors,
-        cx: f32,
-        cy: f32,
-        scale: f32,
-        kind: SrBlockKind,
-    ) {
-        let w = 132.0 * scale;
-        let h = 34.0 * scale;
-        let lift = 10.0 * scale;
-        let x = cx - w * 0.5;
-        let y_top = cy - h - lift;
-        let r = (5.0 * scale).max(1.5);
-        match kind {
-            SrBlockKind::Spike => {
-                let sw = w * 0.82;
-                let sx = cx - sw * 0.5;
-                ui.plugin_stroke_rect(sx, cy - h, sw, h, r, (3.2 * scale).max(1.5), t.fg_rgb);
-                let tip_y = cy - h - 18.0 * scale;
-                ui.plugin_draw_line(
-                    sx + sw * 0.15,
-                    cy - 2.0,
-                    cx,
-                    tip_y,
-                    (3.5 * scale).max(1.5),
-                    t.fg_rgb,
-                );
-                ui.plugin_draw_line(
-                    sx + sw * 0.85,
-                    cy - 2.0,
-                    cx,
-                    tip_y,
-                    (3.5 * scale).max(1.5),
-                    t.fg_rgb,
-                );
-            }
-            SrBlockKind::Heavy => {
-                ui.plugin_fill_rect(x, y_top, w, h + lift, r, t.fg_rgb);
-                if w > 18.0 {
-                    ui.plugin_fill_rect(
-                        x + w * 0.18,
-                        y_top + h * 0.36,
-                        w * 0.64,
-                        (4.5 * scale).max(1.5),
-                        0.0,
-                        t.bg_rgb,
-                    );
-                }
-            }
-            SrBlockKind::Medium => {
-                ui.plugin_fill_rect(x, y_top, w, h + lift, r, t.fg2_rgb);
-                ui.plugin_stroke_rect(x, y_top, w, h + lift, r, (2.4 * scale).max(1.2), t.fg_rgb);
-                if w > 18.0 {
-                    ui.plugin_fill_rect(
-                        x + w * 0.22,
-                        y_top + h * 0.45,
-                        w * 0.56,
-                        (4.0 * scale).max(1.5),
-                        0.0,
-                        t.bg_rgb,
-                    );
-                }
-            }
-            SrBlockKind::Light => {
-                ui.plugin_fill_rect(x, y_top, w, h + lift, r, t.fg1_rgb);
-                ui.plugin_stroke_rect(x, y_top, w, h + lift, r, (2.4 * scale).max(1.2), t.fg_rgb);
-                if w > 18.0 {
-                    let ps = (9.0 * scale).max(3.0);
-                    ui.plugin_fill_rect(
-                        cx - ps * 0.5,
-                        y_top + (h - ps) * 0.5,
-                        ps,
-                        ps,
-                        2.0,
-                        t.fg_rgb,
-                    );
-                }
-            }
+    #[inline]
+    fn to_render_kind(k: SrBlockKind) -> highway::RenderBlockKind {
+        match k {
+            SrBlockKind::Heavy => highway::RenderBlockKind::Heavy,
+            SrBlockKind::Medium => highway::RenderBlockKind::Medium,
+            SrBlockKind::Light => highway::RenderBlockKind::Light,
+            SrBlockKind::Spike => highway::RenderBlockKind::Spike,
         }
     }
 
@@ -5035,6 +5021,8 @@ impl SoundRacerGame {
     ) -> PluginAction {
         if self.track_display != audio.track_title {
             self.track_display = audio.track_title.to_string();
+            self.elevation.reset();
+            self.roadside.reset();
         }
         self.cur_pos_ms = audio.pos_ms;
         self.cur_dur_ms = audio.dur_ms;
@@ -5183,6 +5171,9 @@ impl SoundRacerGame {
         if self.jump_rem > 0.0 {
             self.jump_rem = (self.jump_rem - dt).max(0.0);
         }
+        if self.hit_blink_rem > 0.0 {
+            self.hit_blink_rem = (self.hit_blink_rem - dt).max(0.0);
+        }
         if let Some((_, ref mut rem)) = self.callout {
             *rem -= dt;
             if *rem <= 0.0 {
@@ -5199,15 +5190,20 @@ impl SoundRacerGame {
             let mut low_acc = 0.0f32;
             let mut high_acc = 0.0f32;
             let mut prev_m = 0.0f32;
+            let mut lp_slow = 0.0f32;
+            let mut low_sq = 0.0f32;
             for i in 0..frames {
                 let l = pcm[2 * i] as f32 / 32768.0;
                 let r = pcm[2 * i + 1] as f32 / 32768.0;
                 let m = 0.5 * (l + r);
                 sum_l += l * l;
                 sum_r += r * r;
+                lp_slow += 0.055 * (m - lp_slow);
+                low_sq += lp_slow * lp_slow;
                 high_acc += (m - prev_m).abs();
                 prev_m = m;
             }
+            let pcm_bass = ((low_sq / frames as f32).sqrt() * 2.15).clamp(0.0, 1.0);
             for b in 0..16 {
                 let s0 = b * chunk;
                 let s1 = ((b + 1) * chunk).min(frames);
@@ -5303,8 +5299,33 @@ impl SoundRacerGame {
             }
             self.live_kick = (self.live_kick * 0.72).max(kick_src);
 
-            let speed = 0.86 + self.intensity * 0.32;
-            self.scroll_phase = (self.scroll_phase + dt * (3.0 + self.intensity * 4.2)).fract();
+            let speed = (0.63 + self.intensity * 0.06).min(1.0 / highway::TRAVEL_TIME_S);
+            self.scroll_phase =
+                (self.scroll_phase - dt * speed * (highway::GRID_LINE_COUNT as f32)).rem_euclid(1.0);
+
+            let raw_bass = if apu_bass {
+                0.88
+            } else if live_intel.status == 1 {
+                highway::extract_bass_30_140(
+                    &live_intel.bands_5,
+                    &live_intel.spectrum_64,
+                    live_intel.kick_impulse,
+                )
+                .max(pcm_bass * 0.85)
+            } else {
+                pcm_bass
+            };
+            let seed_u32 = self.cur_pos_ms ^ (self.now_ms as u32);
+            self.elevation.update(dt, raw_bass, seed_u32);
+            self.roadside.update_with_telemetry(
+                dt,
+                speed,
+                live_intel.status == 1,
+                live_intel.beat_index,
+                live_intel.bar_beat,
+                self.live_kick,
+                seed_u32,
+            );
 
             self.spawn_cd -= dt;
             let min_gap = match self.difficulty {
@@ -5348,9 +5369,10 @@ impl SoundRacerGame {
                     if b.kind == SrBlockKind::Spike {
                         self.chain = 1;
                         self.streak_hits = 0;
+                        self.hit_blink_rem = SR_HIT_BLINK_DURATION_SEC;
                         let _ = self.push_tray(ship_lane, SrBlockKind::Spike);
                         self.callout = Some((
-                            tr(uk, "SPIKE HIT!  Chain x1", "ШИП!  Комбо скинуто").into(),
+                            tr(uk, "CRASH!  Chain x1", "АВАРІЯ!  Комбо скинуто").into(),
                             0.80,
                         ));
                     } else {
@@ -5371,7 +5393,7 @@ impl SoundRacerGame {
                     }
                     continue;
                 }
-                if b.z > -0.08 {
+                if b.z > SR_OBSTACLE_MIN_Z_VIS {
                     rem_blocks.push(b);
                 }
             }
@@ -5398,7 +5420,7 @@ impl SoundRacerGame {
     }
 
     fn render(
-        &self,
+        &mut self,
         ui: &mut UiEngine,
         t: ThemeColors,
         header: &HeaderState<'_>,
@@ -5480,6 +5502,7 @@ impl SoundRacerGame {
             SrMenu::None => {}
         }
 
+        self.sprites.ensure_tinted(t.fg_rgb, t.fg2_rgb);
         ui.plugin_begin(t, t.bg_rgb, Some(header));
 
         // Top Live Track Ribbon (`y = 132..170`, 1:1 with `plugins/sound-racer/src/lib.rs`)
@@ -5519,97 +5542,52 @@ impl SoundRacerGame {
             );
         }
 
-        // Main 3D Highway Viewport (`700 x 562`)
-        ui.plugin_stroke_rect(SR_VX, SR_VY, SR_VW, SR_VH, 10.0, 3.5, t.fg1_rgb);
-        let (vp_x, vp_y, _) = Self::project_road(1.0, 0.0, self.road_curve, self.intensity);
+        // Main 3D Highway Viewport (`700 x 562`, 1:1 shared `highway::render_highway_viewport`)
+        let mut vis: Vec<highway::VisibleBlock> = self
+            .blocks
+            .iter()
+            .filter(|b| (SR_OBSTACLE_MIN_Z_VIS..=highway::OBSTACLE_MAX_Z_VIS).contains(&b.z))
+            .map(|b| highway::VisibleBlock {
+                z: b.z.clamp(SR_OBSTACLE_MIN_Z_VIS, 1.0),
+                lane: b.lane,
+                kind: Self::to_render_kind(b.kind),
+            })
+            .collect();
+        vis.sort_unstable_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
 
-        let sun_r = 16.0 + self.live_kick * 20.0;
-        ui.plugin_fill_circle(vp_x, vp_y - 10.0, sun_r, t.fg1_rgb);
-        ui.plugin_fill_circle(vp_x, vp_y - 10.0, sun_r * 0.56, t.bg_rgb);
-
-        let sky_span = 460.0f32;
-        let bar_step = sky_span / 16.0;
-        let bar_w = bar_step - 6.0;
-        for (i, &lvl) in self.live_bars.iter().enumerate() {
-            let bx = (vp_x - sky_span * 0.5 + (i as f32) * bar_step)
-                .clamp(SR_VX + 10.0, SR_VX + SR_VW - bar_w - 10.0);
-            let bh = (4.0 + lvl * 54.0).min(vp_y - SR_VY - 10.0).max(3.0);
-            let shade = if lvl > 0.62 {
-                t.fg_rgb
-            } else if lvl > 0.30 {
-                t.fg2_rgb
-            } else {
-                t.fg1_rgb
-            };
-            ui.plugin_fill_rect(bx, vp_y - bh, bar_w, bh, 0.0, shade);
-        }
-
-        ui.plugin_draw_line(SR_VX + 8.0, vp_y, SR_VX + SR_VW - 8.0, vp_y, 2.0, t.fg1_rgb);
-
-        for i in 0..9 {
-            let z = ((i as f32 + self.scroll_phase) / 9.0).fract();
-            let (lx, ly, sc) = Self::project_road(z, -1.5, self.road_curve, self.intensity);
-            let (rx, ry, _) = Self::project_road(z, 1.5, self.road_curve, self.intensity);
-            ui.plugin_draw_line(lx, ly, rx, ry, (2.0 * sc).max(1.0), t.fg1_rgb);
-        }
-
-        for &lane_edge in &[-1.5f32, -0.5, 0.5, 1.5] {
-            let is_outer = lane_edge.abs() > 1.0;
-            let color = if is_outer { t.fg_rgb } else { t.fg2_rgb };
-            let base_w = if is_outer { 4.8 } else { 2.2 };
-            let (mut px, mut py, mut psc) =
-                Self::project_road(0.0, lane_edge, self.road_curve, self.intensity);
-            for s in 1..=8 {
-                let z1 = s as f32 / 8.0;
-                let (nx, ny, nsc) =
-                    Self::project_road(z1, lane_edge, self.road_curve, self.intensity);
-                ui.plugin_draw_line(px, py, nx, ny, (base_w * psc).max(1.3), color);
-                px = nx;
-                py = ny;
-                psc = nsc;
-            }
-        }
-
-        let mut sorted = self.blocks.clone();
-        sorted.sort_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
-        for b in &sorted {
-            let (bx, by, sc) = Self::project_road(
-                b.z.clamp(0.0, 1.0),
-                b.lane as f32 - 1.0,
-                self.road_curve,
-                self.intensity,
-            );
-            Self::draw_highway_block(ui, t, bx, by, sc, b.kind);
-        }
-
-        // Player Hovercraft Ship (`z = 0.0`)
-        let (ship_x, ship_ground_y, _) =
-            Self::project_road(0.0, self.ship_pos - 1.0, self.road_curve, self.intensity);
         let jump_frac = if self.jump_rem > 0.0 {
             let u = 1.0 - self.jump_rem / 0.36;
             (4.0 * u * (1.0 - u)).clamp(0.0, 1.0)
         } else {
             0.0
         };
-        let jump_px = jump_frac * 58.0;
-        if jump_px > 2.0 {
-            let sh_w = 88.0 * (1.0 - jump_frac * 0.35);
-            ui.plugin_fill_rect(
-                ship_x - sh_w * 0.5,
-                ship_ground_y + 6.0,
-                sh_w,
-                12.0,
-                5.0,
-                t.fg1_rgb,
-            );
-        }
-        let sy = ship_ground_y - jump_px;
-        ui.plugin_draw_line(ship_x, sy - 26.0, ship_x - 46.0, sy + 14.0, 4.5, t.fg_rgb);
-        ui.plugin_draw_line(ship_x, sy - 26.0, ship_x + 46.0, sy + 14.0, 4.5, t.fg_rgb);
-        ui.plugin_draw_line(ship_x - 46.0, sy + 14.0, ship_x + 46.0, sy + 14.0, 4.5, t.fg_rgb);
-        ui.plugin_fill_rect(ship_x - 20.0, sy - 8.0, 40.0, 22.0, 5.0, t.fg_rgb);
-        ui.plugin_fill_circle(ship_x, sy + 14.0, 5.5 + self.live_kick * 6.0, t.fg2_rgb);
-        ui.plugin_fill_rect(ship_x - 4.0, sy - 1.0, 8.0, 8.0, 2.0, t.bg_rgb);
+        let hit_blink_hidden =
+            self.hit_blink_rem > 0.0 && ((self.now_ms / SR_HIT_BLINK_PERIOD_MS) & 1) == 1;
+
+        let mut canvas = WasmRoadCanvas(ui);
+        highway::render_highway_viewport(
+            &mut canvas,
+            &self.sprites,
+            &highway::HighwayRenderInput {
+                pal: highway::Palette4 {
+                    bg: t.bg_rgb,
+                    fg: t.fg_rgb,
+                    fg1: t.fg1_rgb,
+                    fg2: t.fg2_rgb,
+                },
+                road_curve: self.road_curve,
+                scroll_phase: self.scroll_phase,
+                live_bars: &self.live_bars,
+                live_kick: self.live_kick,
+                ship_pos: self.ship_pos,
+                player_lane: self.lane,
+                jump_frac,
+                hit_blink_hidden,
+                elevation: self.elevation.snapshot(),
+                roadside: &self.roadside,
+                sorted_blocks_far_to_near: &vis,
+            },
+        );
 
         if let Some((ref txt, _)) = self.callout {
             ui.plugin_draw_text(
@@ -5732,13 +5710,7 @@ impl SoundRacerGame {
         let bot_y = tray_y + tray_h + 14.0;
         let bot_h = SR_VY + SR_VH - bot_y;
         ui.plugin_stroke_rect(rx, bot_y, rw, bot_h, 10.0, 3.5, t.fg1_rgb);
-        let slope_lbl = if self.intensity > 0.68 {
-            tr(uk, "Slope: ▼ RUSH!", "Схил: ▼ ДРАЙВ!")
-        } else if self.intensity > 0.36 {
-            tr(uk, "Slope: ► Groove", "Схил: ► Ритм")
-        } else {
-            tr(uk, "Slope: ▲ Climb", "Схил: ▲ Підйом")
-        };
+        let slope_lbl = self.elevation.slope_label(self.intensity, uk);
         ui.plugin_draw_text(rx + rw * 0.5, bot_y + 26.0, slope_lbl, 22.0, 3, 1, t.fg_rgb);
         ui.plugin_draw_text(
             rx + rw * 0.5,
@@ -8587,7 +8559,12 @@ impl DjMixerWasmPlugin {
         }
         let r_cur = self.deck_ratios[fidx];
         let tm_cur = self.tempo_mode;
-        with_wasm_manual_dj(|c| c.set_deck_tempo(focus, r_cur, tm_cur, bend));
+        with_wasm_manual_dj(|c| {
+            c.set_deck_tempo(focus, r_cur, tm_cur, bend);
+            if self.last_tel.decks[0].playing == 0 && self.last_tel.decks[1].playing == 0 {
+                c.step_idle_controls();
+            }
+        });
 
         self.last_tel = with_wasm_manual_dj(|c| c.snapshot_telemetry(true));
         if wake_audio {

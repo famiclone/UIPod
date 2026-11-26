@@ -163,6 +163,8 @@ async function boot(): Promise<void> {
     manualLoadDeckS16: (deck, trackIndex, sampleRate, pcmS16, startMs, startPaused) =>
       uipod.manual_dj_load_deck_s16(deck, trackIndex, sampleRate, pcmS16, startMs, startPaused),
     manualRenderS16: (frames, sampleRate) => uipod.manual_dj_render_s16(frames, sampleRate),
+    manualRenderF32Planar: (outL, outR, sampleRate) =>
+      uipod.manual_dj_render_f32_planar(outL, outR, sampleRate),
   };
 
   // ---- Persistent Browser Track Intelligence Cache (`IndexedDB` + `localStorage` fallback) ----

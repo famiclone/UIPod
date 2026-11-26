@@ -9,7 +9,9 @@
 #include <string.h>
 #include <strings.h>
 
+#include <SDL_loadso.h>
 #include "kernel.h"
+#include "load_code.h"
 #include "metadata.h"
 #include "pcm_mixer.h"
 #include "pcmbuf.h"
@@ -34,6 +36,8 @@
 
 extern unsigned int pcm_alsa_output_delay_us(void);
 extern void         pcm_alsa_wake_writer(void);
+extern const char  *handle_special_dirs(const char *dir, unsigned flags,
+                                        char *buf, const size_t bufsize);
 
 #define DJ_MIN_TRACK_DURATION_MS 9000UL
 #define DJ_RENDER_CHUNK_FRAMES   1024
@@ -730,16 +734,64 @@ static bool prepare_deck_local_file(const char *path, bool ui_blocking)
     return true;
 }
 
+static char s_manual_deck_vfs_path[2][MAX_PATH];
+static bool s_opus_registered = false;
+static void *s_opus_handle = NULL;
+
+static void ensure_opus_decoder_registered(void)
+{
+    if (s_opus_registered)
+        return;
+    s_opus_registered = true;
+
+    s_opus_handle = lc_open(CODECS_DIR "/opus.codec", NULL, 0);
+    if (!s_opus_handle)
+        return;
+
+    int (*fn_get_size)(int) =
+        (int (*)(int))SDL_LoadFunction(s_opus_handle, "opus_decoder_get_size");
+    int (*fn_init)(void *, int32_t, int) =
+        (int (*)(void *, int32_t, int))SDL_LoadFunction(s_opus_handle, "opus_decoder_init");
+    int (*fn_decode)(void *, const uint8_t *, int32_t, int16_t *, int, int) =
+        (int (*)(void *, const uint8_t *, int32_t, int16_t *, int, int))
+            SDL_LoadFunction(s_opus_handle, "opus_decode");
+
+    if (fn_get_size && fn_init && fn_decode)
+        uipod_rs_manual_dj_register_opus(fn_get_size, fn_init, fn_decode);
+}
+
+static const char *resolve_deck_os_path(uint8_t deck,
+                                        const char *vfs_path,
+                                        char *os_buf,
+                                        size_t os_cap)
+{
+    uint8_t idx = deck & 1u;
+    if (vfs_path && vfs_path[0])
+        strlcpy(s_manual_deck_vfs_path[idx], vfs_path, sizeof(s_manual_deck_vfs_path[idx]));
+    else
+        s_manual_deck_vfs_path[idx][0] = '\0';
+
+    if (!vfs_path || !vfs_path[0])
+        return "";
+    const char *resolved = handle_special_dirs(vfs_path, 0, os_buf, os_cap);
+    return (resolved && resolved[0]) ? resolved : vfs_path;
+}
+
 bool uipod_dj_manual_session_acquire(void)
 {
     uipod_dj_reset();
+    ensure_opus_decoder_registered();
     sdl_set_analog_stick_dpad_suppressed(true);
     refresh_fav_cache();
+    s_manual_deck_vfs_path[0][0] = '\0';
+    s_manual_deck_vfs_path[1][0] = '\0';
 
     uint32_t sr = (uint32_t)mixer_get_frequency();
     if (sr < 8000u)
         sr = 48000u;
 
+    /* Initialize ManualDjCore with `MANUAL_DJ_ACTIVE = false` so ALSA/SDL keeps playing
+     * uninterrupted from Rockbox while Deck A (`>= 1.0s`) and Deck B pre-buffer! */
     if (!uipod_rs_manual_dj_session_begin(sr))
     {
         sdl_set_analog_stick_dpad_suppressed(false);
@@ -751,13 +803,16 @@ bool uipod_dj_manual_session_acquire(void)
     {
         struct mp3entry *cur = audio_current_track();
         bool was_paused = (st & AUDIO_STATUS_PAUSE) != 0;
+        bool loaded_a = false;
+        bool is_nsf_a = false;
 
         if (cur && cur->path[0])
         {
             uint32_t dly_ms = (pcm_alsa_output_delay_us() + tape_deck_fx_delay_us()) / 1000u;
             uint32_t raw_el = (uint32_t)cur->elapsed;
             uint32_t raw_len = (uint32_t)cur->length;
-            if (is_nsf_track_id3(cur))
+            is_nsf_a = is_nsf_track_id3(cur);
+            if (is_nsf_a)
             {
                 uint32_t rs_dur = uipod_rs_codec_duration_ms();
                 uint32_t rs_el  = uipod_rs_codec_elapsed_ms();
@@ -767,14 +822,18 @@ bool uipod_dj_manual_session_acquire(void)
                     raw_el  = rs_el;
                 }
             }
-            uint32_t live_el_ms = (raw_el > dly_ms) ? (raw_el - dly_ms) : 0u;
+            /* When active, ALSA already holds `[raw_el - dly_ms .. raw_el)` in its hardware DMA
+             * ring, so the next sample ALSA pulls from `ManualDjCore` is `raw_el` (`chunk_ridx`)! */
+            uint32_t start_el_ms = was_paused
+                                 ? ((raw_el > dly_ms) ? (raw_el - dly_ms) : 0u)
+                                 : raw_el;
 
             (void)prepare_deck_local_file(cur->path, false);
 
-            size_t seed_cap = (size_t)sr * 4u; /* 4s seamless handoff window */
+            size_t seed_cap = (size_t)sr * 4u;
             int16_t *seed_buf = NULL;
             size_t seed_got = 0;
-            if (!was_paused)
+            if (!was_paused && is_nsf_a)
             {
                 seed_buf = malloc(seed_cap * 4u);
                 if (seed_buf)
@@ -785,24 +844,24 @@ bool uipod_dj_manual_session_acquire(void)
             const char *a_a = (cur->artist && cur->artist[0]) ? cur->artist : "";
             uint64_t key_a = uipod_track_intel_ensure_path(cur->path, t_a, a_a, raw_len, true);
 
-            (void)uipod_rs_manual_dj_load_deck(0,
-                                               cur->path,
-                                               t_a,
-                                               a_a,
-                                               raw_len,
-                                               live_el_ms,
-                                               was_paused,
-                                               key_a,
-                                               seed_buf,
-                                               seed_got);
+            char os_path_a[MAX_PATH];
+            const char *real_a = resolve_deck_os_path(0, cur->path, os_path_a, sizeof(os_path_a));
+
+            loaded_a = uipod_rs_manual_dj_load_deck(0,
+                                                    real_a,
+                                                    t_a,
+                                                    a_a,
+                                                    raw_len,
+                                                    start_el_ms,
+                                                    was_paused,
+                                                    key_a,
+                                                    seed_buf,
+                                                    seed_got);
             if (seed_buf)
                 free(seed_buf);
-
-            if (!was_paused)
-                audio_pause();
         }
 
-        /* Pre-load queued next playlist track paused at its Cue point into Deck B */
+        /* Pre-load queued next playlist track paused at its Cue point into Deck B BEFORE handoff */
         struct mp3entry *nxt = audio_next_track();
         char next_path[MAX_PATH] = "";
         char next_title[128]     = "";
@@ -837,8 +896,10 @@ bool uipod_dj_manual_session_acquire(void)
         {
             uint64_t key_b = uipod_track_intel_ensure_path(
                 next_path, next_title, next_artist, next_len_ms, true);
+            char os_path_b[MAX_PATH];
+            const char *real_b = resolve_deck_os_path(1, next_path, os_path_b, sizeof(os_path_b));
             (void)uipod_rs_manual_dj_load_deck(1,
-                                               next_path,
+                                               real_b,
                                                next_title,
                                                next_artist,
                                                next_len_ms,
@@ -847,6 +908,26 @@ bool uipod_dj_manual_session_acquire(void)
                                                key_b,
                                                NULL,
                                                0);
+        }
+
+        /* Snap Deck A to the exact live `chunk_ridx` timestamp right at the instant of handoff */
+        if (loaded_a && !was_paused && !is_nsf_a && cur)
+        {
+            uint32_t now_raw_el = (uint32_t)cur->elapsed;
+            uipod_rs_manual_dj_sync_playhead_ms(0, now_raw_el);
+        }
+
+        uipod_rs_manual_dj_session_activate(true);
+
+        /* Quiesce Rockbox `pcmbuf` & `tape_deck_fx` completely for strict single-consumer routing */
+        if (!was_paused)
+        {
+            audio_pause();
+            tape_deck_fx_on_seek_or_stop();
+            pcmbuf_fade(false, true);
+            pcmbuf_pause(true);
+            for (int i = 0; i < 4; i++)
+                yield();
         }
     }
     else
@@ -861,9 +942,12 @@ bool uipod_dj_manual_session_acquire(void)
                 p[0] && prepare_deck_local_file(p, false))
             {
                 uint64_t key = uipod_track_intel_ensure_path(p, t, a, dur, true);
-                (void)uipod_rs_manual_dj_load_deck((uint8_t)d, p, t, a, dur, 0, true, key, NULL, 0);
+                char os_p[MAX_PATH];
+                const char *real_p = resolve_deck_os_path((uint8_t)d, p, os_p, sizeof(os_p));
+                (void)uipod_rs_manual_dj_load_deck((uint8_t)d, real_p, t, a, dur, 0, true, key, NULL, 0);
             }
         }
+        uipod_rs_manual_dj_session_activate(true);
     }
 
     pcm_alsa_wake_writer();
@@ -885,12 +969,20 @@ void uipod_dj_manual_session_release(void)
     uipod_rs_manual_dj_session_end(&dom_deck, win_path, sizeof(win_path),
                                    &win_el_ms, &win_playing);
 
+    if (s_manual_deck_vfs_path[dom_deck & 1u][0])
+        strlcpy(win_path, s_manual_deck_vfs_path[dom_deck & 1u], sizeof(win_path));
+    s_manual_deck_vfs_path[0][0] = '\0';
+    s_manual_deck_vfs_path[1][0] = '\0';
+
     if (s_fav_cache)
     {
         free(s_fav_cache);
         s_fav_cache = NULL;
         s_fav_count = 0;
     }
+
+    tape_deck_fx_on_seek_or_stop();
+    pcmbuf_fade(false, true);
 
     if (!win_path[0])
         return;
@@ -971,7 +1063,9 @@ bool uipod_dj_manual_deck_load(uint8_t deck, const char *path, bool start_paused
         enrich_track_display_meta(path, title, sizeof(title), artist, sizeof(artist), &dur_ms);
 
     uint64_t key = uipod_track_intel_ensure_path(path, title, artist, dur_ms, true);
-    bool ok = uipod_rs_manual_dj_load_deck(deck, path, title, artist,
+    char os_path[MAX_PATH];
+    const char *real_path = resolve_deck_os_path(deck, path, os_path, sizeof(os_path));
+    bool ok = uipod_rs_manual_dj_load_deck(deck, real_path, title, artist,
                                            dur_ms, 0, start_paused,
                                            key, NULL, 0);
     pcm_alsa_wake_writer();

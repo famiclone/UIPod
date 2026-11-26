@@ -62,6 +62,7 @@ pub struct UIPodWasm {
     active_nsf: Option<NsfDecoder>,
     dj_mixer: DualDeckMixer,
     dj_out_buf: Vec<i16>,
+    manual_dj_out_buf: Vec<i16>,
     dj_midpoint_crossed: bool,
     intel_db: TrackIntelDb,
     intel_live: LiveTelemetryEngine,
@@ -99,6 +100,7 @@ impl UIPodWasm {
             active_nsf: None,
             dj_mixer: DualDeckMixer::new(48_000),
             dj_out_buf: vec![0i16; 8192 * 2],
+            manual_dj_out_buf: vec![0i16; 8192 * 2],
             dj_midpoint_crossed: false,
             intel_db: TrackIntelDb::new_in_memory(),
             intel_live: LiveTelemetryEngine::new(),
@@ -1059,7 +1061,7 @@ impl UIPodWasm {
         crate::plugins::with_wasm_manual_dj(|c| {
             c.set_sample_rate(sr);
             c.enqueue_deck_track(deck_id, loaded, start_paused, start_frame);
-            let _ = c.snapshot_telemetry(true);
+            c.step_idle_controls();
         });
     }
 
@@ -1068,12 +1070,44 @@ impl UIPodWasm {
             return Vec::new();
         }
         let sr = sample_rate.clamp(8_000, 192_000);
-        let mut out = vec![0i16; frames * 2];
+        let need = frames * 2;
+        if self.manual_dj_out_buf.len() < need {
+            self.manual_dj_out_buf.resize(need, 0);
+        }
+        let buf = &mut self.manual_dj_out_buf[..need];
         crate::plugins::with_wasm_manual_dj(|c| {
             c.set_sample_rate(sr);
-            let _ = c.render_s16(&mut out);
+            let _ = c.render_s16(buf);
         });
-        out
+        buf.to_vec()
+    }
+
+    pub fn manual_dj_render_f32_planar(
+        &mut self,
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+        sample_rate: u32,
+    ) -> usize {
+        let frames = out_l.len().min(out_r.len());
+        if frames == 0 {
+            return 0;
+        }
+        let sr = sample_rate.clamp(8_000, 192_000);
+        let need = frames * 2;
+        if self.manual_dj_out_buf.len() < need {
+            self.manual_dj_out_buf.resize(need, 0);
+        }
+        let buf = &mut self.manual_dj_out_buf[..need];
+        crate::plugins::with_wasm_manual_dj(|c| {
+            c.set_sample_rate(sr);
+            let _ = c.render_s16(buf);
+        });
+        let inv = 1.0f32 / 32768.0f32;
+        for i in 0..frames {
+            out_l[i] = (buf[i * 2] as f32) * inv;
+            out_r[i] = (buf[i * 2 + 1] as f32) * inv;
+        }
+        frames
     }
 
     /* ---- Unified Track Intelligence (`uipod-track-intel` Web Bridge) ---- */

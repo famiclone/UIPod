@@ -3211,10 +3211,16 @@ impl UiEngine {
                 pixels.push(RGBA8::new(px[0], px[1], px[2], px[3]));
             }
             let img_ref = ImgRef::new(&pixels, src_w as usize, src_h as usize);
-            let Ok(new_id) = self.canvas.create_image(img_ref, ImageFlags::NEAREST) else {
+            let flags = if radius < 0.0 {
+                ImageFlags::empty()
+            } else {
+                ImageFlags::NEAREST
+            };
+            let Ok(new_id) = self.canvas.create_image(img_ref, flags) else {
                 return;
             };
-            if self.plugin_images.len() >= 16 {
+            if self.plugin_images.len() >= 64 {
+                self.canvas.flush();
                 let (_, _, _, old_id) = self.plugin_images.remove(0);
                 self.canvas.delete_image(old_id);
             }

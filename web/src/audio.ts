@@ -83,6 +83,7 @@ export interface DjWasmBridge {
     startPaused: boolean,
   ) => void;
   manualRenderS16: (frames: number, sampleRate: number) => Int16Array;
+  manualRenderF32Planar: (outL: Float32Array, outR: Float32Array, sampleRate: number) => number;
 }
 
 export interface StreamingPcmSource {
@@ -720,6 +721,7 @@ export class UIPodAudioEngine {
     if (
       !this.playing ||
       this.djActive ||
+      this.manualDjActive ||
       !this.djBridge ||
       (this.dsp.djMode ?? 0) === 0 ||
       this.trackCount < 2 ||
@@ -747,6 +749,7 @@ export class UIPodAudioEngine {
       !this.djBridge ||
       (this.dsp.djMode ?? 0) === 0 ||
       this.djActive ||
+      this.manualDjActive ||
       !this.ctx
     ) {
       this.playTrack(nextIdx, 0);
@@ -1500,7 +1503,7 @@ export class UIPodAudioEngine {
     this.manualDjActive = true;
     this.playing = true;
 
-    const proc = ctx.createScriptProcessor(1024, 0, 2);
+    const proc = ctx.createScriptProcessor(2048, 0, 2);
     proc.onaudioprocess = (ev: AudioProcessingEvent) => {
       const outL = ev.outputBuffer.getChannelData(0);
       const outR = ev.outputBuffer.getChannelData(1);
@@ -1510,13 +1513,7 @@ export class UIPodAudioEngine {
         outR.fill(0);
         return;
       }
-      const s16 = this.djBridge.manualRenderS16(frames, ctx.sampleRate);
-      const n = Math.min(frames, Math.floor(s16.length / 2));
-      const inv = 1.0 / 32768.0;
-      for (let i = 0; i < n; i++) {
-        outL[i] = s16[i * 2] * inv;
-        outR[i] = s16[i * 2 + 1] * inv;
-      }
+      const n = this.djBridge.manualRenderF32Planar(outL, outR, ctx.sampleRate);
       for (let i = n; i < frames; i++) {
         outL[i] = 0;
         outR[i] = 0;
@@ -1525,6 +1522,8 @@ export class UIPodAudioEngine {
     proc.connect(this.eqFilters[0]);
     this.streamNode = proc;
   }
+
+  private manualDjSessionSeq = 0;
 
   public async startManualDjSession(
     trackA: number,
@@ -1536,21 +1535,34 @@ export class UIPodAudioEngine {
     const djBridge = this.djBridge;
     if (!djBridge) return;
 
-    const livePosMs = this.playing ? this.getPositionMs() : posAMs;
-    this.ensureManualDjAudioActive();
-    djBridge.manualBegin(ctx.sampleRate);
+    const sessionSeq = ++this.manualDjSessionSeq;
+    const wasPlayingBefore = this.playing;
+    this.manualDjActive = true;
 
+    // Decode Deck A BEFORE stopping `sourceNode` so current playback never drops out during decode!
+    let s16A: Int16Array | null = null;
     try {
-      const s16A = await this.decodeTrackFullS16(ctx, trackA);
-      if (!this.manualDjActive) return;
-      djBridge.manualLoadDeckS16(0, trackA, ctx.sampleRate, s16A, livePosMs, !playingA);
+      s16A = await this.decodeTrackFullS16(ctx, trackA);
     } catch (err) {
       console.warn('Manual DJ Deck A load error:', err);
     }
+    if (!this.manualDjActive || this.manualDjSessionSeq !== sessionSeq) return;
+
+    const handoffPosMs = wasPlayingBefore ? this.getPositionMs() : posAMs;
+    djBridge.manualBegin(ctx.sampleRate);
+    if (s16A && s16A.length > 0) {
+      djBridge.manualLoadDeckS16(0, trackA, ctx.sampleRate, s16A, handoffPosMs, !playingA);
+    }
+    this.ensureManualDjAudioActive();
+
+    if (trackB < 0) return;
+    // Yield one macrotask so the newly connected audio node fills its first buffer cleanly
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (!this.manualDjActive || this.manualDjSessionSeq !== sessionSeq) return;
 
     try {
       const s16B = await this.decodeTrackFullS16(ctx, trackB);
-      if (!this.manualDjActive) return;
+      if (!this.manualDjActive || this.manualDjSessionSeq !== sessionSeq) return;
       djBridge.manualLoadDeckS16(1, trackB, ctx.sampleRate, s16B, 0, true);
     } catch (err) {
       console.warn('Manual DJ Deck B load error:', err);
@@ -1561,9 +1573,10 @@ export class UIPodAudioEngine {
     const ctx = this.ensureContext();
     const djBridge = this.djBridge;
     if (!djBridge || !this.manualDjActive) return;
+    const sessionSeq = this.manualDjSessionSeq;
     try {
       const s16 = await this.decodeTrackFullS16(ctx, trackIndex);
-      if (!this.manualDjActive) return;
+      if (!this.manualDjActive || this.manualDjSessionSeq !== sessionSeq) return;
       djBridge.manualLoadDeckS16(deck, trackIndex, ctx.sampleRate, s16, 0, true);
     } catch (err) {
       console.warn('Manual DJ deck reload error:', err);
@@ -1571,6 +1584,7 @@ export class UIPodAudioEngine {
   }
 
   public releaseManualDjSession(trackIndex: number, posMs: number, playing: boolean): void {
+    this.manualDjSessionSeq++;
     this.manualDjActive = false;
     this.stopSource(false, false);
     this.currentTrack = trackIndex;

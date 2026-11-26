@@ -164,10 +164,11 @@ extern void uipod_rs_intel_audio_tap_push(const int16_t *stereo_s16,
                                           uint32_t sample_rate,
                                           uint32_t output_delay_us,
                                           uint64_t now_ms);
-extern int32_t uipod_rs_manual_dj_is_active(void);
-extern size_t  uipod_rs_manual_dj_render_s16(int16_t *out_stereo_s16,
-                                             size_t frames,
-                                             uint32_t sample_rate);
+extern int32_t  uipod_rs_manual_dj_is_active(void);
+extern uint32_t uipod_rs_manual_dj_sample_rate(void);
+extern size_t   uipod_rs_manual_dj_render_s16(int16_t *out_stereo_s16,
+                                              size_t frames,
+                                              uint32_t sample_rate);
 
 static void viz_pcm_push(const void *src, unsigned nframes)
 {
@@ -749,7 +750,9 @@ static void android_rs_push_chunk(unsigned int src_sr, unsigned int dst_sr)
 static void copy_period_resampled(int16_t *dst_frames, unsigned int nframes)
 {
     unsigned int dst_sr = real_sample_rate ? real_sample_rate : 48000U;
-    unsigned int src_sr = last_sample_rate ? last_sample_rate : dst_sr;
+    unsigned int src_sr = uipod_rs_manual_dj_is_active()
+                        ? (unsigned int)uipod_rs_manual_dj_sample_rate()
+                        : (last_sample_rate ? last_sample_rate : dst_sr);
     bool active_src = dev_playing || tape_deck_fx_ff_active() ||
                       uipod_rs_manual_dj_is_active();
     if (active_src)

@@ -88,6 +88,33 @@ impl WsolaStretcher {
         self.out_len - self.out_read
     }
 
+    #[inline]
+    pub fn is_bypass_ready(&self) -> bool {
+        self.bypass_active && self.available_output_frames() == 0 && self.in_frames == 0
+    }
+
+    /// Upper bound on additional input frames needed to emit `out_frames` at `tempo_ratio`.
+    #[inline]
+    pub fn needed_input_frames(&self, out_frames: usize, tempo_ratio: f32) -> usize {
+        let ratio = (tempo_ratio as f64).clamp(0.5, 2.0);
+        if (ratio - 1.0).abs() < 0.0005 && self.is_bypass_ready() {
+            return out_frames;
+        }
+        let avail = self.available_output_frames();
+        if avail >= out_frames {
+            return 0;
+        }
+        let rem_out = out_frames - avail;
+        let hops = (rem_out + self.hop_s - 1) / self.hop_s.max(1);
+        let end_ideal = self.ideal_pos + (hops as f64) * (self.hop_s as f64) * ratio;
+        let needed_total =
+            (end_ideal.ceil().max(0.0) as usize) + self.search_radius + self.win_len + 16;
+        let cap_space = (self.in_buf.len() / 2).saturating_sub(self.in_frames);
+        needed_total
+            .saturating_sub(self.real_in_frames)
+            .min(cap_space)
+    }
+
     /// Exact number of real input frames already ingested into WSOLA (`in_buf` + `out_fifo`)
     /// that have not yet been consumed by the caller.
     #[inline]
@@ -343,13 +370,110 @@ impl WsolaStretcher {
         let unity = (ratio - 1.0).abs() < 0.0005;
 
         // Fast-path bit-exact passthrough (`0%` CPU overhead!) when `|ratio - 1.0| < 0.0005`
-        if unity && self.bypass_active && self.available_output_frames() == 0 && self.in_frames == 0
-        {
+        if unity && self.is_bypass_ready() {
             let in_avail = src_interleaved.len() / 2;
             let n = in_avail.min(out_cap);
             out_interleaved[..n * 2].copy_from_slice(&src_interleaved[..n * 2]);
             return (n, n);
         }
+
+        // Smooth COLA recovery back to bit-exact `1.0x` bypass after momentary bend / sync release
+        if unity && !self.bypass_active {
+            let mut total_in = 0usize;
+            let mut total_out = 0usize;
+
+            loop {
+                // 1. Drain any already-synthesized output FIFO frames first
+                let ready = self.available_output_frames();
+                if ready > 0 && total_out < out_cap {
+                    let take = ready.min(out_cap - total_out);
+                    let src_off = self.out_read * 2;
+                    let dst_off = total_out * 2;
+                    out_interleaved[dst_off..dst_off + take * 2]
+                        .copy_from_slice(&self.out_fifo[src_off..src_off + take * 2]);
+                    self.out_read += take;
+                    total_out += take;
+                    if self.out_read == self.out_len {
+                        self.out_read = 0;
+                        self.out_len = 0;
+                    }
+                }
+                if total_out >= out_cap {
+                    break;
+                }
+
+                // 2. If an OLA grain tail is still pending, close it seamlessly via exact Hann COLA (`w[i] + w[i+hs] == 1`)
+                if let Some(prev_p) = self.last_grain_pos {
+                    let need_end = prev_p + self.win_len;
+                    if self.in_frames < need_end && total_in * 2 < src_interleaved.len() {
+                        total_in += self.push_input(&src_interleaved[total_in * 2..]);
+                    }
+                    if self.in_frames < need_end && is_eof && total_in * 2 >= src_interleaved.len() {
+                        self.pad_eof_zeros(need_end);
+                    }
+                    if self.in_frames < need_end {
+                        break;
+                    }
+                    let hs = self.hop_s;
+                    let merge_start = prev_p + hs;
+                    for i in 0..hs {
+                        let win = self.hann[i];
+                        let s_base = (merge_start + i) * 2;
+                        self.ola_buf[i * 2] += self.in_buf[s_base] * win;
+                        self.ola_buf[i * 2 + 1] += self.in_buf[s_base + 1] * win;
+                    }
+                    if self.out_read > 0 {
+                        let avail = self.out_len - self.out_read;
+                        if avail > 0 {
+                            self.out_fifo
+                                .copy_within(self.out_read * 2..self.out_len * 2, 0);
+                        }
+                        self.out_read = 0;
+                        self.out_len = avail;
+                    }
+                    let dst_off = self.out_len * 2;
+                    self.out_fifo[dst_off..dst_off + hs * 2]
+                        .copy_from_slice(&self.ola_buf[..hs * 2]);
+                    self.out_len += hs;
+                    self.ola_buf.fill(0.0);
+                    self.last_grain_pos = None;
+                    self.discard_input_prefix(need_end);
+                    continue;
+                }
+
+                // 3. Drain any remaining unplayed `real_in_frames` 1:1 in exact sample order
+                if self.real_in_frames > 0 {
+                    let take = self.real_in_frames.min(out_cap - total_out);
+                    let dst_off = total_out * 2;
+                    out_interleaved[dst_off..dst_off + take * 2]
+                        .copy_from_slice(&self.in_buf[..take * 2]);
+                    self.discard_input_prefix(take);
+                    total_out += take;
+                    continue;
+                }
+
+                // 4. All internal FIFOs are completely drained: re-arm zero-latency `1.0x` bypass!
+                self.in_frames = 0;
+                self.real_in_frames = 0;
+                self.ideal_pos = 0.0;
+                self.bypass_active = true;
+
+                let rem_in = (src_interleaved.len() / 2).saturating_sub(total_in);
+                let take = rem_in.min(out_cap - total_out);
+                if take > 0 {
+                    let src_off = total_in * 2;
+                    let dst_off = total_out * 2;
+                    out_interleaved[dst_off..dst_off + take * 2]
+                        .copy_from_slice(&src_interleaved[src_off..src_off + take * 2]);
+                    total_in += take;
+                    total_out += take;
+                }
+                break;
+            }
+
+            return (total_in, total_out);
+        }
+
         self.bypass_active = false;
 
         let mut total_in = 0usize;

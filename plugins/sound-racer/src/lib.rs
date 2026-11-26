@@ -8,31 +8,35 @@
 //! - Per-track score reset at the start of every song, full-run completion verification
 //!   (start-to-finish runs save per-track `Hi-Score`), and conditional `Hi-Score` HUD display.
 
+mod highway;
+mod sprites;
+
 use std::collections::VecDeque;
 use std::path::Path;
 
+use highway::{
+    extract_bass_30_140, render_highway_viewport, ElevationController, HighwayRenderInput,
+    Palette4, RenderBlockKind, RoadCanvas, RoadsideController, VisibleBlock, GRID_LINE_COUNT,
+    OBSTACLE_MAX_Z_VIS, OBSTACLE_MIN_Z_VIS, TRAVEL_TIME_MS, TRAVEL_TIME_S, VIEW_H, VIEW_W, VIEW_X,
+    VIEW_Y,
+};
+use sprites::CarSpriteCache;
 use uipod_plugin_sdk::{
     btn, uipod_declare_plugin, AudioTrackInfo, FontWeight, HostContext, MenuItem, MenuOutcome,
-    PluginCategory, PluginKind, PluginTheme, TextAlign, CONTENT_TOP_Y,
+    PluginCategory, PluginKind, TextAlign,
 };
 
 const SLOT_MS: u32 = 50;
 const MAX_TRACK_SLOTS: usize = 36_000; // Up to 30-minute tracks (`216 KB` max)
-const TRAVEL_TIME_MS: u32 = 1_150;
-const TRAVEL_SLOTS: usize = (TRAVEL_TIME_MS / SLOT_MS) as usize; // 23 slots
+const TRAVEL_SLOTS: usize = (TRAVEL_TIME_MS / SLOT_MS) as usize; // 29 slots (`1.45s`)
 const JUMP_DURATION_MS: u64 = 360;
 const CLUSTER_FUSE_MS: u64 = 320;
+const HIT_BLINK_DURATION_MS: u64 = 420;
+const HIT_BLINK_PERIOD_MS: u64 = 60;
 
 const TRAY_COLS: usize = 3;
 const TRAY_ROWS: usize = 7;
 const MAX_VIS_BLOCKS: usize = 32;
-
-// Viewport geometry (`1024 x 768`)
-const VIEW_X: f32 = 32.0;
-const VIEW_Y: f32 = CONTENT_TOP_Y + 42.0; // 178
-const VIEW_W: f32 = 700.0;
-const VIEW_H: f32 = 562.0;
-const SHIP_BASE_Y: f32 = VIEW_Y + VIEW_H - 58.0; // 682
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RaceMode {
@@ -761,6 +765,7 @@ struct RacerState {
     lane: usize,
     ship_pos: f32,
     jump_until_ms: Option<u64>,
+    hit_until_ms: Option<u64>,
     blocks: VecDeque<HighwayBlock>,
     tray: CollectorTray,
 
@@ -784,13 +789,15 @@ struct RacerState {
     prev_slot_feat: AudioFeatures,
     stream_lane: usize,
 
-    // Live 60 FPS visuals
+    // Live 60 FPS visuals, spaced bass elevation & beat-synced roadside props
     live_bars: [f32; 16],
     live_kick: f32,
     road_curve: f32,
     target_curve: f32,
     intensity: f32,
     scroll_phase: f32,
+    elevation: ElevationController,
+    roadside: RoadsideController,
     callout: Option<(String, u64)>,
 }
 
@@ -813,6 +820,7 @@ impl RacerState {
             lane: 1,
             ship_pos: 1.0,
             jump_until_ms: None,
+            hit_until_ms: None,
             blocks: VecDeque::with_capacity(48),
             tray: CollectorTray::new(),
             map,
@@ -837,6 +845,8 @@ impl RacerState {
             target_curve: 0.0,
             intensity: 0.35,
             scroll_phase: 0.0,
+            elevation: ElevationController::new(),
+            roadside: RoadsideController::new(),
             callout: None,
         }
     }
@@ -873,6 +883,7 @@ impl RacerState {
         self.blocks.clear();
         self.tray.clear_all();
         self.jump_until_ms = None;
+        self.hit_until_ms = None;
         self.map = new_map;
         self.free_clock = free_clock;
         self.subtune_mode = subtune_mode;
@@ -890,6 +901,8 @@ impl RacerState {
         self.ema_flux = 0.025;
         self.prev_slot_feat = AudioFeatures::default();
         self.stream_lane = 1;
+        self.elevation.reset();
+        self.roadside.reset();
     }
 
     fn add_score(&mut self, pts: u32) {
@@ -1075,108 +1088,75 @@ impl RacerState {
     }
 }
 
-#[inline]
-fn project_road(z: f32, lane_offset: f32, road_curve: f32, intensity: f32) -> (f32, f32, f32) {
-    let zc = z.clamp(0.0, 1.0);
-    let inv = 1.0 - zc;
-    let p = inv * inv;
-    let scale = 0.09 + 0.91 * p;
+struct HostRoadCanvas<'a, 'b>(&'a HostContext<'b>);
 
-    let vp_x = VIEW_X + VIEW_W * 0.5 + road_curve * 105.0;
-    let vp_y = (VIEW_Y + 78.0) + (intensity - 0.45) * 44.0;
+impl RoadCanvas for HostRoadCanvas<'_, '_> {
+    #[inline]
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, rgb: u32) {
+        self.0.fill_rect(x, y, w, h, radius, rgb);
+    }
 
-    let base_cx = VIEW_X + VIEW_W * 0.5;
-    let center_x = base_cx + (vp_x - base_cx) * (zc * zc);
-    let hill_arch = (4.0 * zc * inv) * (0.45 - intensity) * 26.0;
-    let center_y = vp_y + (SHIP_BASE_Y - vp_y) * p - hill_arch;
+    #[inline]
+    fn stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        stroke_w: f32,
+        rgb: u32,
+    ) {
+        self.0.stroke_rect(x, y, w, h, radius, stroke_w, rgb);
+    }
 
-    let road_half_w = 24.0 + 246.0 * p;
-    let lane_w = (road_half_w * 2.0) / 3.0;
-    let sx = center_x + lane_offset * lane_w;
+    #[inline]
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, rgb: u32) {
+        self.0.fill_circle(cx, cy, r, rgb);
+    }
 
-    (sx, center_y, scale)
-}
+    #[inline]
+    fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, stroke_w: f32, rgb: u32) {
+        self.0.draw_line(x0, y0, x1, y1, stroke_w, rgb);
+    }
 
-fn draw_highway_block(
-    ctx: &HostContext,
-    t: PluginTheme,
-    cx: f32,
-    cy: f32,
-    scale: f32,
-    kind: BlockKind,
-) {
-    let w = (98.0 * scale).max(7.0);
-    let h = (38.0 * scale).max(4.5);
-    let lift = (18.0 * scale).max(2.5);
-    let r = (5.0 * scale).max(0.0);
-    let x = cx - w * 0.5;
-    let y_front = cy - h * 0.5;
-    let y_top = y_front - lift;
-
-    match kind {
-        BlockKind::Spike => {
-            ctx.fill_rect(x, y_top, w, h + lift, r, t.fg1);
-            ctx.stroke_rect(x, y_top, w, h + lift, r, (2.8 * scale).max(1.5), t.fg);
-            let pad = (8.0 * scale).max(2.0);
-            let sw = (3.0 * scale).max(1.5);
-            ctx.draw_line(
-                x + pad,
-                y_top + pad,
-                x + w - pad,
-                y_top + h + lift - pad,
-                sw,
-                t.fg,
-            );
-            ctx.draw_line(
-                x + w - pad,
-                y_top + pad,
-                x + pad,
-                y_top + h + lift - pad,
-                sw,
-                t.fg,
-            );
-        }
-        BlockKind::Heavy => {
-            ctx.fill_rect(x, y_top, w, h + lift, r, t.fg);
-            if w > 18.0 {
-                let inset = (4.5 * scale).max(1.5);
-                ctx.fill_rect(
-                    x + inset,
-                    y_top + inset,
-                    w - inset * 2.0,
-                    (4.0 * scale).max(1.5),
-                    0.0,
-                    t.bg,
-                );
-            }
-        }
-        BlockKind::Medium => {
-            ctx.fill_rect(x, y_top, w, h + lift, r, t.fg2);
-            ctx.stroke_rect(x, y_top, w, h + lift, r, (2.4 * scale).max(1.2), t.fg);
-            if w > 18.0 {
-                ctx.fill_rect(
-                    x + w * 0.22,
-                    y_top + h * 0.45,
-                    w * 0.56,
-                    (4.0 * scale).max(1.5),
-                    0.0,
-                    t.bg,
-                );
-            }
-        }
-        BlockKind::Light => {
-            ctx.fill_rect(x, y_top, w, h + lift, r, t.fg1);
-            ctx.stroke_rect(x, y_top, w, h + lift, r, (2.4 * scale).max(1.2), t.fg);
-            if w > 18.0 {
-                let ps = (9.0 * scale).max(3.0);
-                ctx.fill_rect(cx - ps * 0.5, y_top + (h - ps) * 0.5, ps, ps, 2.0, t.fg);
-            }
-        }
+    #[inline]
+    fn draw_rgba(
+        &mut self,
+        tex_key: u64,
+        src_w: u32,
+        src_h: u32,
+        rgba: &[u8],
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
+        radius: f32,
+    ) {
+        self.0
+            .draw_rgba_image(tex_key, src_w, src_h, rgba, dst_x, dst_y, dst_w, dst_h, radius);
     }
 }
 
-fn draw_sound_racer(ctx: &HostContext, state: &RacerState, hud: &HudCache, now_ms: u64) {
+#[inline]
+fn to_render_kind(k: BlockKind) -> RenderBlockKind {
+    match k {
+        BlockKind::Heavy => RenderBlockKind::Heavy,
+        BlockKind::Medium => RenderBlockKind::Medium,
+        BlockKind::Light => RenderBlockKind::Light,
+        BlockKind::Spike => RenderBlockKind::Spike,
+    }
+}
+
+fn draw_sound_racer(
+    ctx: &HostContext,
+    sprites: &mut CarSpriteCache,
+    state: &RacerState,
+    hud: &HudCache,
+    now_ms: u64,
+) {
     let t = ctx.theme();
+    sprites.ensure_tinted(t.fg, t.fg2);
     ctx.begin_frame(t.bg, true, "Sound Racer");
 
     // ---- Top Live Track Ribbon (`y = 132..170`) ----
@@ -1215,67 +1195,12 @@ fn draw_sound_racer(ctx: &HostContext, state: &RacerState, hud: &HudCache, now_m
         );
     }
 
-    // ---- Main 3D Highway Viewport (`700 x 562`) ----
-    ctx.stroke_rect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H, 10.0, 3.5, t.fg1);
-
-    let (vp_x, vp_y, _) = project_road(1.0, 0.0, state.road_curve, state.intensity);
-
-    let sun_r = 16.0 + state.live_kick * 20.0;
-    ctx.fill_circle(vp_x, vp_y - 10.0, sun_r, t.fg1);
-    ctx.fill_circle(vp_x, vp_y - 10.0, sun_r * 0.56, t.bg);
-
-    let sky_span = 460.0_f32;
-    let bar_step = sky_span / 16.0;
-    let bar_w = bar_step - 6.0;
-    for (i, &lvl) in state.live_bars.iter().enumerate() {
-        let bx = (vp_x - sky_span * 0.5 + (i as f32) * bar_step)
-            .clamp(VIEW_X + 10.0, VIEW_X + VIEW_W - bar_w - 10.0);
-        let bh = (4.0 + lvl * 54.0).min(vp_y - VIEW_Y - 10.0).max(3.0);
-        let shade = if lvl > 0.62 {
-            t.fg
-        } else if lvl > 0.30 {
-            t.fg2
-        } else {
-            t.fg1
-        };
-        ctx.fill_rect(bx, vp_y - bh, bar_w, bh, 0.0, shade);
-    }
-
-    ctx.draw_line(
-        VIEW_X + 8.0,
-        vp_y,
-        VIEW_X + VIEW_W - 8.0,
-        vp_y,
-        2.0,
-        t.fg1,
-    );
-
-    for i in 0..9 {
-        let z = ((i as f32 + state.scroll_phase) / 9.0).fract();
-        let (lx, ly, sc) = project_road(z, -1.5, state.road_curve, state.intensity);
-        let (rx, ry, _) = project_road(z, 1.5, state.road_curve, state.intensity);
-        ctx.draw_line(lx, ly, rx, ry, (2.0 * sc).max(1.0), t.fg1);
-    }
-
-    const RAIL_SEGS: usize = 8;
-    for &lane_edge in &[-1.5_f32, -0.5, 0.5, 1.5] {
-        let is_outer = lane_edge.abs() > 1.0;
-        let color = if is_outer { t.fg } else { t.fg2 };
-        let base_w = if is_outer { 4.8 } else { 2.2 };
-        let (mut px, mut py, mut psc) =
-            project_road(0.0, lane_edge, state.road_curve, state.intensity);
-        for s in 1..=RAIL_SEGS {
-            let z1 = (s as f32) / (RAIL_SEGS as f32);
-            let (nx, ny, nsc) = project_road(z1, lane_edge, state.road_curve, state.intensity);
-            ctx.draw_line(px, py, nx, ny, (base_w * psc).max(1.3), color);
-            px = nx;
-            py = ny;
-            psc = nsc;
-        }
-    }
-
     // Zero-allocation stack sort of visible blocks (far -> near) locked to `smooth_song_ms`!
-    let mut vis = [(0.0_f32, 0usize, BlockKind::Heavy); MAX_VIS_BLOCKS];
+    let mut vis = [VisibleBlock {
+        z: 0.0,
+        lane: 0,
+        kind: RenderBlockKind::Heavy,
+    }; MAX_VIS_BLOCKS];
     let mut vis_n = 0usize;
     let inv_travel = 1.0 / (TRAVEL_TIME_MS as f32);
     for b in &state.blocks {
@@ -1283,46 +1208,47 @@ fn draw_sound_racer(ctx: &HostContext, state: &RacerState, hud: &HudCache, now_m
             continue;
         }
         let z = ((b.arrive_song_ms as f32) - state.smooth_song_ms) * inv_travel;
-        if (-0.08..=1.02).contains(&z) && vis_n < MAX_VIS_BLOCKS {
-            vis[vis_n] = (z.clamp(0.0, 1.0), b.lane, b.kind);
+        if (OBSTACLE_MIN_Z_VIS..=OBSTACLE_MAX_Z_VIS).contains(&z) && vis_n < MAX_VIS_BLOCKS {
+            vis[vis_n] = VisibleBlock {
+                z: z.clamp(OBSTACLE_MIN_Z_VIS, 1.0),
+                lane: b.lane,
+                kind: to_render_kind(b.kind),
+            };
             vis_n += 1;
         }
     }
-    vis[..vis_n].sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    vis[..vis_n].sort_unstable_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
 
-    for &(z, lane, kind) in &vis[..vis_n] {
-        let lane_off = (lane as f32) - 1.0;
-        let (bx, by, sc) = project_road(z, lane_off, state.road_curve, state.intensity);
-        draw_highway_block(ctx, t, bx, by, sc, kind);
-    }
-
-    // ---- Player Hovercraft Ship (`z = 0.0`) ----
-    let ship_lane_off = state.ship_pos - 1.0;
-    let (ship_x, ship_ground_y, _) =
-        project_road(0.0, ship_lane_off, state.road_curve, state.intensity);
     let jump_frac = state.jump_height_frac(now_ms);
-    let jump_px = jump_frac * 58.0;
+    let hit_blink_hidden = state
+        .hit_until_ms
+        .map(|until| now_ms < until && ((now_ms / HIT_BLINK_PERIOD_MS) & 1) == 1)
+        .unwrap_or(false);
 
-    if jump_px > 2.0 {
-        let sh_w = 88.0 * (1.0 - jump_frac * 0.35);
-        ctx.fill_rect(
-            ship_x - sh_w * 0.5,
-            ship_ground_y + 6.0,
-            sh_w,
-            12.0,
-            5.0,
-            t.fg1,
-        );
-    }
-
-    let sy = ship_ground_y - jump_px;
-    ctx.draw_line(ship_x, sy - 26.0, ship_x - 46.0, sy + 14.0, 4.5, t.fg);
-    ctx.draw_line(ship_x, sy - 26.0, ship_x + 46.0, sy + 14.0, 4.5, t.fg);
-    ctx.draw_line(ship_x - 46.0, sy + 14.0, ship_x + 46.0, sy + 14.0, 4.5, t.fg);
-    ctx.fill_rect(ship_x - 20.0, sy - 8.0, 40.0, 22.0, 5.0, t.fg);
-    let thrust_r = 5.5 + state.live_kick * 6.0;
-    ctx.fill_circle(ship_x, sy + 14.0, thrust_r, t.fg2);
-    ctx.fill_rect(ship_x - 4.0, sy - 1.0, 8.0, 8.0, 2.0, t.bg);
+    let mut canvas = HostRoadCanvas(ctx);
+    render_highway_viewport(
+        &mut canvas,
+        sprites,
+        &HighwayRenderInput {
+            pal: Palette4 {
+                bg: t.bg,
+                fg: t.fg,
+                fg1: t.fg1,
+                fg2: t.fg2,
+            },
+            road_curve: state.road_curve,
+            scroll_phase: state.scroll_phase,
+            live_bars: &state.live_bars,
+            live_kick: state.live_kick,
+            ship_pos: state.ship_pos,
+            player_lane: state.lane,
+            jump_frac,
+            hit_blink_hidden,
+            elevation: state.elevation.snapshot(),
+            roadside: &state.roadside,
+            sorted_blocks_far_to_near: &vis[..vis_n],
+        },
+    );
 
     if let Some((ref txt, until)) = state.callout {
         if now_ms < until {
@@ -1467,13 +1393,7 @@ fn draw_sound_racer(ctx: &HostContext, state: &RacerState, hud: &HudCache, now_m
     let bot_h = VIEW_Y + VIEW_H - bot_y;
     ctx.stroke_rect(rx, bot_y, rw, bot_h, 10.0, 3.5, t.fg1);
 
-    let slope_lbl = if state.intensity > 0.68 {
-        ctx.tr("Slope: ▼ RUSH!", "Схил: ▼ ДРАЙВ!")
-    } else if state.intensity > 0.36 {
-        ctx.tr("Slope: ► Groove", "Схил: ► Ритм")
-    } else {
-        ctx.tr("Slope: ▲ Climb", "Схил: ▲ Підйом")
-    };
+    let slope_lbl = state.elevation.slope_label(state.intensity, ctx.is_ukrainian());
     ctx.draw_text(
         rx + rw * 0.5,
         bot_y + 26.0,
@@ -1669,6 +1589,9 @@ fn open_system_menu(ctx: &HostContext, state: &mut RacerState) -> (bool, bool) {
         if let Some(ref mut t) = st.jump_until_ms {
             *t = t.saturating_add(delta);
         }
+        if let Some(ref mut t) = st.hit_until_ms {
+            *t = t.saturating_add(delta);
+        }
         if let Some(ref mut t) = st.tray.fuse_until_ms {
             *t = t.saturating_add(delta);
         }
@@ -1822,6 +1745,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         eligible,
     );
     let mut hud = HudCache::new();
+    let mut sprites = CarSpriteCache::new();
     if let Some(ref tr) = live_tr {
         hud.set_track_label(ctx, active_hash, tr);
         let disp_dur = if active_free { 0 } else { tr.duration_ms };
@@ -1934,16 +1858,20 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         state.road_curve += (state.target_curve - state.road_curve) * 0.055;
 
         if playing {
+            let dt_s = dt_ms * 0.001;
+            let z_speed = (state.clock_rate / TRAVEL_TIME_S).max(0.0);
             state.smooth_song_ms += dt_ms * state.clock_rate;
             let cur_u32 = state.smooth_song_ms.max(0.0) as u32;
             if cur_u32 > state.max_song_ms {
                 state.max_song_ms = cur_u32;
             }
-            state.scroll_phase = (state.scroll_phase + 0.05 + state.intensity * 0.07).fract();
+            state.scroll_phase =
+                (state.scroll_phase - dt_s * z_speed * (GRID_LINE_COUNT as f32)).rem_euclid(1.0);
+            let seed_u32 = (state.map.hash as u32) ^ cur_u32;
 
             if let Some(live) = ctx.audio_live_telemetry() {
                 let apu = live.apu;
-                if apu.is_available() {
+                let raw_bass = if apu.is_available() {
                     let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
                     state.live_kick =
                         (state.live_kick * 0.70).max(kick_hw.max(live.kick_impulse).clamp(0.0, 1.0));
@@ -1960,6 +1888,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                             *dst * 0.80 + src * 0.20
                         };
                     }
+                    apu.bass_trigger()
                 } else {
                     state.live_kick = (state.live_kick * 0.72).max(live.kick_impulse);
                     for (i, dst) in state.live_bars.iter_mut().enumerate() {
@@ -1977,16 +1906,38 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                             *dst * 0.82 + src * 0.18
                         };
                     }
-                }
+                    extract_bass_30_140(&live.bands_5, &live.spectrum_64, live.kick_impulse)
+                };
                 if live.has_analysis != 0 {
                     state.intensity =
                         (state.intensity * 0.90 + live.structural_energy * 0.10).clamp(0.05, 1.0);
                 }
+                state.elevation.update(dt_s, raw_bass, seed_u32);
+                state.roadside.update_with_telemetry(
+                    dt_s,
+                    z_speed,
+                    live.status == 1,
+                    live.beat_index,
+                    live.bar_beat,
+                    state.live_kick,
+                    seed_u32,
+                );
             } else {
                 state.live_kick *= 0.85;
                 for dst in &mut state.live_bars {
                     *dst *= 0.85;
                 }
+                let fallback_bass = (state.prev_slot_feat.low * 1.15).clamp(0.0, 1.0);
+                state.elevation.update(dt_s, fallback_bass, seed_u32);
+                state.roadside.update_with_telemetry(
+                    dt_s,
+                    z_speed,
+                    false,
+                    0,
+                    0,
+                    fallback_bass,
+                    seed_u32,
+                );
             }
 
             state.advance_horizon(ctx, &mut pcm_ahead);
@@ -2044,9 +1995,10 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                 if b.kind == BlockKind::Spike {
                     state.chain = 1;
                     state.streak_hits = 0;
+                    state.hit_until_ms = Some(frame_start + HIT_BLINK_DURATION_MS);
                     let _ = state.tray.push_block(ship_lane, BlockKind::Spike, frame_start);
                     state.callout = Some((
-                        ctx.tr("SPIKE HIT!  Chain x1", "ШИП!  Комбо скинуто").to_string(),
+                        ctx.tr("CRASH!  Chain x1", "АВАРІЯ!  Комбо скинуто").to_string(),
                         frame_start + 800,
                     ));
                 } else {
@@ -2163,6 +2115,8 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                             state.clock_rate = 1.0;
                             state.frozen_pos_polls = 0;
                             state.blocks.clear();
+                            state.elevation.reset();
+                            state.roadside.reset();
                             state.next_gen_slot =
                                 ((tr.position_ms / SLOT_MS) as usize).saturating_add(2);
                             state.last_spawn_slot = 0;
@@ -2203,7 +2157,7 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         );
 
         let now = ctx.ticks_ms();
-        draw_sound_racer(ctx, &state, &hud, now);
+        draw_sound_racer(ctx, &mut sprites, &state, &hud, now);
 
         let elapsed = ctx.ticks_ms().saturating_sub(frame_start);
         if elapsed < 16 {

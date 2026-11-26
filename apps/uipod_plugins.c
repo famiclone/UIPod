@@ -829,6 +829,7 @@ static struct UIPodPluginInput host_poll_input(uint32_t timeout_ms)
         if (ticks < 1)
             ticks = 1;
         long ev = button_get_w_tmo(ticks);
+        pump_background_threads();
         process_single_button_event(ev, &out);
         while (!out.should_exit)
         {

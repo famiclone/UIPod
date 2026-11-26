@@ -101,8 +101,19 @@ void uipod_rs_dj_set_intel_hints(float bpm_a,
                                  int32_t first_beat_b_ms);
 
 /* Manual Dual-Deck DJ Engine (`ABI v11+`, `DJ Mixer` Plugin) */
-int32_t uipod_rs_manual_dj_is_active(void);
-int32_t uipod_rs_manual_dj_session_begin(uint32_t sample_rate);
+int32_t  uipod_rs_manual_dj_is_active(void);
+uint32_t uipod_rs_manual_dj_sample_rate(void);
+int32_t  uipod_rs_manual_dj_session_begin(uint32_t sample_rate);
+void     uipod_rs_manual_dj_sync_playhead_ms(uint8_t deck, uint32_t playhead_ms);
+void     uipod_rs_manual_dj_session_activate(bool active);
+void     uipod_rs_manual_dj_register_opus(int (*get_size_fn)(int channels),
+                                          int (*init_fn)(void *st, int32_t fs, int channels),
+                                          int (*decode_fn)(void *st,
+                                                           const uint8_t *data,
+                                                           int32_t len,
+                                                           int16_t *pcm,
+                                                           int frame_size,
+                                                           int decode_fec));
 void    uipod_rs_manual_dj_session_end(uint8_t *out_dom_deck,
                                        char *out_path,
                                        size_t path_cap,
