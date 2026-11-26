@@ -1,0 +1,13 @@
+[package]
+name = "dj-mixer"
+version = "0.1.0"
+edition = "2021"
+description = "Manual Dual-Deck DJ Mixer native plugin for UIPod"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "dj_mixer"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uipod-plugin-sdk = { path = "../../crates/uipod-plugin-sdk" }

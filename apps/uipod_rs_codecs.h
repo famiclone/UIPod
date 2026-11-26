@@ -151,6 +151,18 @@ struct uipod_rs_dj_telemetry
     float   current_bpm;
 };
 
+struct uipod_rs_dj_playhead
+{
+    uint8_t                      is_deck_b_foreground;
+    uint8_t                      _pad[3];
+    uint32_t                     audible_elapsed_ms;
+    uint32_t                     audible_remaining_ms;
+    uint32_t                     deck_a_elapsed_ms;
+    uint32_t                     deck_a_remaining_ms;
+    uint32_t                     deck_b_elapsed_ms;
+    struct uipod_rs_dj_telemetry telemetry;
+};
+
 void   uipod_rs_dj_set_config(uint8_t mode,
                               uint8_t length,
                               uint8_t max_stretch,
@@ -177,6 +189,9 @@ void   uipod_rs_dj_push_deck_a_frames(const int16_t *stereo_s16,
 size_t uipod_rs_dj_pop_spill_s16(int16_t *out_stereo_s16,
                                  size_t max_frames,
                                  uint32_t *out_elapsed_ms);
+size_t uipod_rs_dj_pop_safe_premix_a_s16(int16_t *out_stereo_s16,
+                                         size_t max_frames,
+                                         uint32_t *out_elapsed_ms);
 size_t uipod_rs_dj_push_deck_a(const int16_t *stereo_s16,
                                size_t frames,
                                int16_t *spill_out,
@@ -197,6 +212,8 @@ size_t uipod_rs_dj_render_s16_timed(int16_t *out_stereo_s16,
 int    uipod_rs_dj_get_telemetry(struct uipod_rs_dj_telemetry *out_tel);
 int    uipod_rs_dj_get_telemetry_synced(struct uipod_rs_dj_telemetry *out_tel,
                                         size_t downstream_frames);
+int    uipod_rs_dj_get_playhead_synced(struct uipod_rs_dj_playhead *out_ph,
+                                       size_t downstream_frames);
 
 #ifdef __cplusplus
 }

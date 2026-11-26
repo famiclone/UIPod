@@ -16,14 +16,14 @@ use uipod_codecs::{
     set_nsf_endless_loop, set_nsf_tempo_ratio, NsfDecoder, RustAudioDecoder,
 };
 use uipod_dj::{
-    CrossfadeMode, DjConfig, DjTelemetry, DualDeckMixer, MaxTempoStretch, MixerPhase,
-    TransitionLength,
+    build_in_memory_deck_track, CrossfadeMode, DjConfig, DjTelemetry, DualDeckMixer,
+    MaxTempoStretch, MixerPhase, TransitionLength,
 };
 use uipod_nsf::{scan_nsf_container, SubtrackUri, TrackKind};
-use uipod_plugin_sdk::{PluginApuTelemetry, PluginChannelState};
+use uipod_plugin_sdk::{DjDeckId, PluginApuTelemetry, PluginChannelState};
 use uipod_track_intel::{
-    analyze_mono_window, analyze_nsf_bytes, audio_tap_push_apu, audio_tap_push_s16,
-    compute_contour_256_from_mono, compute_track_key_hash, decode_record_bytes,
+    analyze_mono_window, analyze_nsf_bytes, analyze_pcm_s16_buffer, audio_tap_push_apu,
+    audio_tap_push_s16, compute_contour_256_from_mono, compute_track_key_hash, decode_record_bytes,
     encode_record_bytes, normalize_track_id, publish_active_analysis, publish_live_frame,
     read_active_analysis, write_fixed_utf8, AnalyzeRequest, LiveTelemetryEngine,
     TrackAnalysisRecord, TrackIntelDb, TrackKeyInput, SUBTRACK_NONE,
@@ -304,8 +304,14 @@ impl UIPodWasm {
         self.app.state_dirty = true;
     }
 
-    pub fn set_viz_fine_grain(&mut self, fine: bool) {
-        self.viz.set_fine_grain(fine);
+    pub fn set_viz_fine_grain(&mut self, _fine: bool) {
+        // Locked to crisp default render resolution; kept as no-op for ABI compatibility.
+        self.viz.set_fine_grain(true);
+    }
+
+    pub fn set_viz_invert(&mut self, invert: bool) {
+        self.app.viz_invert = invert;
+        self.viz.set_invert(invert);
         self.app.state_dirty = true;
     }
 
@@ -859,15 +865,32 @@ impl UIPodWasm {
             .track_intel_keys
             .get(&track_a_idx)
             .and_then(|&k| self.intel_db.get(k))
-            .map(|r| (r.bpm, r.bpm_confidence));
+            .map(|r| (r.bpm, r.bpm_confidence, Some(r.first_beat_offset_ms)));
         let hint_b = self
             .track_intel_keys
             .get(&track_b_idx)
             .and_then(|&k| self.intel_db.get(k))
-            .map(|r| (r.bpm, r.bpm_confidence));
+            .map(|r| (r.bpm, r.bpm_confidence, Some(r.first_beat_offset_ms)));
+        let dur_a_ms = self
+            .app
+            .tracks
+            .get(track_a_idx)
+            .map(|t| t.duration_ms)
+            .unwrap_or(0);
+        let dur_b_ms = self
+            .app
+            .tracks
+            .get(track_b_idx)
+            .map(|t| t.duration_ms)
+            .unwrap_or(0);
+        let start_a_ms = dur_a_ms.saturating_sub(
+            (((tail_a_s16.len() / 2) as u64 * 1000) / (sample_rate.max(1) as u64)) as u32,
+        );
         self.dj_mixer
             .begin_deck_a_capture(sample_rate, &album_a, num_a, false, manual_quick_cut);
-        self.dj_mixer.set_deck_bpm_hints(hint_a, hint_b);
+        self.dj_mixer
+            .set_track_timing(start_a_ms, dur_a_ms, dur_b_ms);
+        self.dj_mixer.set_deck_intel_hints(hint_a, hint_b);
         self.dj_mixer.push_deck_a_frames(tail_a_s16);
         self.dj_mixer
             .finish_deck_a_and_begin_deck_b(&album_b, num_b, deck_b_is_native_nsf);
@@ -939,6 +962,118 @@ impl UIPodWasm {
         self.dj_midpoint_crossed = false;
         self.app.dj_telemetry = DjTelemetry::default();
         set_nsf_tempo_ratio(1.0);
+    }
+
+    /* ---- Manual Dual-Deck `DJ Mixer` Plugin WebAudio Bridge ---- */
+
+    pub fn manual_dj_begin(&mut self, sample_rate: u32) {
+        let sr = sample_rate.clamp(8_000, 192_000);
+        crate::plugins::with_wasm_manual_dj(|c| {
+            c.set_sample_rate(sr);
+            c.reset_session();
+            c.set_crossfader(0.0, true);
+        });
+    }
+
+    pub fn manual_dj_load_deck_s16(
+        &mut self,
+        deck: u8,
+        track_idx: usize,
+        sample_rate: u32,
+        pcm_s16: &[i16],
+        start_ms: u32,
+        start_paused: bool,
+    ) {
+        let sr = sample_rate.clamp(8_000, 192_000);
+        let (title, artist, path) = self
+            .app
+            .tracks
+            .get(track_idx)
+            .map(|t| {
+                let p = t.uri.clone().unwrap_or_else(|| t.title.clone());
+                (t.title.clone(), t.artist.clone(), p)
+            })
+            .unwrap_or_else(|| ("Track".to_string(), String::new(), "track".to_string()));
+
+        let mut bpm = 120.0f32;
+        let mut first_beat_ms = 0u32;
+        let mut contour = [140u8; 256];
+        let mut got_intel = false;
+
+        if let Some(&key) = self.track_intel_keys.get(&track_idx) {
+            if let Some(rec) = self.intel_db.get(key) {
+                if rec.bpm >= 50.0 && rec.bpm <= 220.0 {
+                    bpm = rec.bpm;
+                }
+                first_beat_ms = rec.first_beat_offset_ms;
+                contour = rec.energy_contour;
+                got_intel = true;
+            }
+        }
+
+        if !got_intel && pcm_s16.len() >= (sr as usize) * 4 {
+            let win_s16_len = pcm_s16.len().min((sr as usize) * 16 * 2);
+            let dur_ms = (((pcm_s16.len() / 2) as u64 * 1000) / (sr as u64)) as u32;
+            let req = AnalyzeRequest {
+                key_hash: (track_idx as u64).wrapping_add(1),
+                fs_path: String::new(),
+                subtrack_index: SUBTRACK_NONE,
+                slice_start_ms: 0,
+                duration_ms: dur_ms,
+                sample_rate_hint: sr,
+                title: title.clone(),
+                artist: artist.clone(),
+                album: String::new(),
+                genre: String::new(),
+                tag_tbpm: None,
+                high_priority: true,
+            };
+            let rec = analyze_pcm_s16_buffer(&pcm_s16[..win_s16_len], sr, 0, &req);
+            if rec.bpm >= 50.0 && rec.bpm <= 220.0 {
+                bpm = rec.bpm;
+            }
+            first_beat_ms = rec.first_beat_offset_ms;
+            contour = rec.energy_contour;
+            self.track_intel_keys.insert(track_idx, rec.key_hash);
+            self.intel_db.upsert(rec);
+        }
+
+        let loaded = build_in_memory_deck_track(
+            &path,
+            &title,
+            &artist,
+            sr,
+            pcm_s16.to_vec(),
+            bpm,
+            first_beat_ms,
+            contour,
+        );
+        let eff_start_ms = if start_paused && start_ms == 0 {
+            first_beat_ms.min(loaded.duration_ms.saturating_sub(250))
+        } else {
+            start_ms
+        };
+        let start_frame = (((eff_start_ms as u64) * (sr as u64)) / 1000).min(loaded.total_frames);
+        let deck_id = DjDeckId::from_u8(deck);
+
+        crate::plugins::with_wasm_manual_dj(|c| {
+            c.set_sample_rate(sr);
+            c.enqueue_deck_track(deck_id, loaded, start_paused, start_frame);
+            let _ = c.snapshot_telemetry(true);
+        });
+    }
+
+    pub fn manual_dj_render_s16(&mut self, frames: usize, sample_rate: u32) -> Vec<i16> {
+        if frames == 0 {
+            return Vec::new();
+        }
+        let sr = sample_rate.clamp(8_000, 192_000);
+        let mut out = vec![0i16; frames * 2];
+        crate::plugins::with_wasm_manual_dj(|c| {
+            c.set_sample_rate(sr);
+            let _ = c.render_s16(&mut out);
+        });
+        out
     }
 
     /* ---- Unified Track Intelligence (`uipod-track-intel` Web Bridge) ---- */

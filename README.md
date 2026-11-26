@@ -25,16 +25,16 @@ An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for 
 - Direct hardware DAC output and 3.5mm headphone bass shelf tuning on TrimUI Brick.
 
 ### Extras & Handheld Utilities
-- **10 four-shade audio visualizers** including Cassette Deck, Analog VU Meter, Sonic Vortex, and Phosphor Scope.
+- **10 four-shade audio visualizers** including Cassette Deck, Analog VU Meter, Sonic Vortex, and Phosphor Scope, with optional palette inversion.
 - **4-Shade E-Book Reader** for `.epub`, `.fb2`, `.mobi`, `.md`, and `.txt` with chapters, footnotes, dithered illustrations, and Sans/Serif fonts.
-- Built-in games & tools: **Beat Stack**, **Music Quiz**, **Sound Racer**, **Pulsar Vanguard**, **Tetris**, **Snake**, **Brick Breaker**, **2048**, **Stopwatch**, and **LCD Plasma**.
+- Built-in games & tools: **DJ Mixer** (live dual-deck mixing with beat sync, loops, and DJ filter), **Beat Stack**, **Music Quiz**, **Sound Racer**, **Pulsar Vanguard**, **Tetris**, **Snake**, **Brick Breaker**, **2048**, **Stopwatch**, and **LCD Plasma**.
 - Live USB-C MTP file transfer during playback, Android screen-off background audio, Sleep Timer, and TrimUI Brick charge limit.
 
 ## Installation
 
-- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.10.1-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
-- **Android Handhelds:** Install `UIPod-v0.10.1-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
-- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.10.1-web.zip`).
+- **TrimUI Brick (NextUI):** Install via **NextUI Pak Store** (`UIPod.pak.zip`) or extract `UIPod-v0.10.2-brick.zip` into `/mnt/SDCARD/Tools/tg5040/UIPod.pak`.
+- **Android Handhelds:** Install `UIPod-v0.10.2-android-arm64.apk` (Android 8.0+ `arm64-v8a`) and grant media storage access.
+- **Browser:** Open [**famiclone.dev/UIPod**](https://famiclone.dev/UIPod) (or self-host `UIPod-v0.10.2-web.zip`).
 
 ## Controls
 
@@ -44,7 +44,8 @@ An iPod Mini-inspired offline, **Navidrome**, and **Jellyfin** media player for 
 | **D-Pad Left / Right** | Page Up / Down in lists; Prev / Next track on Now Playing (hold to seek) |
 | **A / Hold A** | Select, Play / Pause, or open footnote in Reader; **Hold A** opens context menu or Reader Options |
 | **B / Hold B** | Back one screen; **Hold B** returns to Main Menu from anywhere |
-| **X** | Toggle Large Album Art; Bypass in Graphic EQ; aspect mode in Video; font size in Reader; grain in Visualizers |
+| **X** | Toggle Large Album Art; Bypass in Graphic EQ; aspect mode in Video; font size in Reader |
+| **Y** | Toggle Audio Visualizer on Now Playing (`Y` or `B` returns to Now Playing) |
 | **START** | Global Play / Pause (or Pause Menu inside games) |
 | **MENU** | Context menu; opens Settings on Main Menu; Reader Options in Text Viewer |
 | **L1 / R1** | Prev / Next track (or Quick Cut when DJ Crossfade is active); Page Up / Down in lists |

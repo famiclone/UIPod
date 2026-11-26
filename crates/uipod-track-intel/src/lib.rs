@@ -211,6 +211,17 @@ mod tests {
             subtrack_index: cue_b.subtrack_index,
         });
         assert_ne!(hc_a, hc_b);
+
+        // Subsonic/Navidrome & Jellyfin stream URLs strip ephemeral auth salts/tokens cleanly
+        let nav_1 = normalize_track_id(
+            "http://192.168.1.10:4533/rest/stream?id=song99&u=demo&t=aaa111&s=saltA&v=1.16.1&c=uipod",
+            None,
+        );
+        let nav_2 = normalize_track_id(
+            "http://192.168.1.10:4533/rest/stream?u=demo&s=saltB&t=bbb222&id=song99&c=uipod&v=1.16.1",
+            None,
+        );
+        assert_eq!(nav_1.canonical_source_id, nav_2.canonical_source_id);
     }
 
     #[test]
@@ -274,6 +285,21 @@ mod tests {
             assert_eq!(hit.subtrack_index, 3);
         }
 
+        // Schema version mismatch (`v1` vs `DB_VERSION = 2`) auto-invalidates cleanly
+        {
+            let mut stale_hdr = [0u8; 32];
+            stale_hdr[0..4].copy_from_slice(b"UTI1");
+            stale_hdr[4..6].copy_from_slice(&1u16.to_le_bytes()); // old schema v1
+            stale_hdr[6..8].copy_from_slice(&512u16.to_le_bytes());
+            stale_hdr[8..12].copy_from_slice(&1u32.to_le_bytes());
+            let chk = crc32fast::hash(&stale_hdr[0..16]) as u64;
+            stale_hdr[16..24].copy_from_slice(&chk.to_le_bytes());
+            std::fs::write(&db_file, stale_hdr).expect("write stale v1 header");
+
+            let db_migrated = TrackIntelDb::open(&db_file);
+            assert_eq!(db_migrated.len(), 0, "stale schema version must reset cleanly");
+        }
+
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
@@ -327,6 +353,7 @@ mod tests {
         assert_eq!(snap.has_analysis, 1);
         assert!((snap.bpm - 140.0).abs() < 1e-6);
         assert!(snap.vu_l > 0.01);
+        assert!(snap.beat_substeps_16.iter().any(|&b| b > 0));
 
         publish_active_analysis(None);
         assert!(read_active_analysis().is_none());

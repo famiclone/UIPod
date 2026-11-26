@@ -15,6 +15,7 @@
 use std::f32::consts::PI;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 use uipod_nsf::NsfEngine;
@@ -629,7 +630,41 @@ pub(crate) fn estimate_tempo_from_envelopes(
     (detected_bpm, confidence, first_beat_offset_ms)
 }
 
-/// Build a 256-bucket structural energy contour (`0..=255`) from arbitrary mono PCM samples.
+#[inline]
+fn three_band_structural_energy(slice: &[f32]) -> f32 {
+    if slice.is_empty() {
+        return 0.0;
+    }
+    if slice.len() < 4 {
+        let mut sq = 0.0f32;
+        for &s in slice {
+            sq += s * s;
+        }
+        return (sq / (slice.len() as f32)).sqrt();
+    }
+    // 1-pole split (~11 kHz decimated rate: a_low ~ 220 Hz, a_mid ~ 2200 Hz)
+    const A_LOW: f32 = 0.118;
+    const A_MID: f32 = 0.715;
+    let mut lp_low = slice[0];
+    let mut lp_mid = slice[0];
+    let mut low_sq = 0.0f32;
+    let mut mid_sq = 0.0f32;
+    let mut high_sq = 0.0f32;
+    for &s in slice {
+        lp_low += A_LOW * (s - lp_low);
+        lp_mid += A_MID * (s - lp_mid);
+        let low = lp_low;
+        let mid = lp_mid - lp_low;
+        let high = s - lp_mid;
+        low_sq += low * low;
+        mid_sq += mid * mid;
+        high_sq += high * high;
+    }
+    let inv = 1.0 / (slice.len() as f32);
+    0.42 * (low_sq * inv).sqrt() + 0.36 * (mid_sq * inv).sqrt() + 0.22 * (high_sq * inv).sqrt()
+}
+
+/// Build a 256-bucket `low/mid/high` weighted structural energy contour (`0..=255`) from mono PCM.
 pub fn compute_contour_256_from_mono(mono: &[f32]) -> [u8; 256] {
     if mono.is_empty() {
         return [128u8; 256];
@@ -639,11 +674,7 @@ pub fn compute_contour_256_from_mono(mono: &[f32]) -> [u8; 256] {
     for (b, slot) in rms_buckets.iter_mut().enumerate() {
         let i0 = (b * len) / 256;
         let i1 = (((b + 1) * len) / 256).max(i0 + 1).min(len);
-        let mut sq = 0.0f32;
-        for &s in &mono[i0..i1] {
-            sq += s * s;
-        }
-        *slot = (sq / ((i1 - i0) as f32)).sqrt();
+        *slot = three_band_structural_energy(&mono[i0..i1]);
     }
     quantize_contour_buckets(&rms_buckets)
 }
@@ -1159,11 +1190,7 @@ fn analyze_with_symphonia(path: &Path, req: &AnalyzeRequest) -> Option<TrackAnal
             let rel_ms = ((dur_ms as u64 * (a as u64 * 6 + 2)) / 100) as u32;
             let snip = decode_window_at_ms(rel_ms, 0.06);
             if !snip.is_empty() {
-                let mut sq = 0.0f32;
-                for &v in &snip {
-                    sq += v * v;
-                }
-                *slot = (sq / (snip.len() as f32)).sqrt();
+                *slot = three_band_structural_energy(&snip);
             } else {
                 *slot = metrics.avg_rms;
             }

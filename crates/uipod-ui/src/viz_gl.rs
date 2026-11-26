@@ -114,6 +114,18 @@ pub fn order_palette_bg_to_fg(theme: ThemeColors) -> [[f32; 3]; 4] {
     }
 }
 
+/// Returns the 4-shade visualizer palette ramp, reversing `Shade 0..3 -> Shade 3..0`
+/// (`bg <-> fg` and `fg1 <-> fg2`) when `invert` is enabled while preserving smooth
+/// monotonic midtone ordering.
+pub fn order_visualizer_palette(theme: ThemeColors, invert: bool) -> [[f32; 3]; 4] {
+    let p = order_palette_bg_to_fg(theme);
+    if invert {
+        [p[3], p[2], p[1], p[0]]
+    } else {
+        p
+    }
+}
+
 struct PingPongPair {
     w: i32,
     h: i32,
@@ -132,6 +144,7 @@ struct SceneProgram {
     u_att: Option<glow::UniformLocation>,
     u_beat: Option<glow::UniformLocation>,
     u_vu: Option<glow::UniformLocation>,
+    u_vu_hold: Option<glow::UniformLocation>,
     u_transport: Option<glow::UniformLocation>,
 }
 
@@ -152,14 +165,15 @@ pub struct VizEngine {
     vao: Option<glow::VertexArray>,
     vbo: glow::Buffer,
     audio_tex: glow::Texture,
-    fbo_coarse: PingPongPair, // 256x192 (4x4 macro-pixels on 1024x768)
-    fbo_fine: PingPongPair,   // 512x384 (2x2 fine pixels on 1024x768)
+    fbo_coarse: PingPongPair, // 256x192 legacy FBO
+    fbo_fine: PingPongPair,   // 512x384 crisp default render resolution
     scenes: Vec<SceneProgram>,
     custom_scene: Option<SceneProgram>,
     use_custom_scene: bool,
     present: PresentProgram,
     active_preset: usize,
     fine_grain: bool,
+    invert_palette: bool,
     needs_clear: bool,
     reel_ang_l: f32,
     reel_ang_r: f32,
@@ -192,6 +206,7 @@ uniform vec4 u_bands;     // x = sub_bass, y = bass, z = mid, w = treb
 uniform vec4 u_att;       // x = bass_att, y = mid_att, z = treb_att, w = stereo_width
 uniform vec4 u_beat;      // x = beat_pulse, y = beat_dir, z = beat_phase, w = reset_flag
 uniform vec4 u_vu;        // x = vu_l, y = vu_r, z = peak_l, w = peak_r
+uniform vec2 u_vu_hold;   // x = bar_hold_l, y = bar_hold_r (monotonic left-to-right peak hold)
 uniform vec4 u_transport; // x = track_progress, y = reel_ang_l, z = reel_ang_r, w = transport_speed
 
 const float PI = 3.14159265;
@@ -767,7 +782,7 @@ float draw_chan_mini(vec2 p, float is_right) {
     }
 }
 
-// Renders one cassette reel (magnetic tape pancake + 3-slot hub collar + 6-spline teeth + spindle)
+// Renders one cassette reel (magnetic tape pancake + TDK 8-window slotted hub + 1 contrasting clamp + 6-tooth spline collar)
 // Returns vec2(luma, alpha_mask)
 vec2 render_reel(vec2 p, vec2 center, float r_pack, float reel_ang) {
     vec2 rel = p - center;
@@ -778,43 +793,86 @@ vec2 render_reel(vec2 p, vec2 center, float r_pack, float reel_ang) {
 
     float a = atan(rel.x, rel.y) + reel_ang;
 
-    // 1. Wound magnetic oxide tape pancake (0.208 .. r_pack)
+    // 1. Wound magnetic oxide tape pancake (0.208 .. r_pack) — strictly preserved
     if (r > 0.208) {
         float rings = 0.04 * sin(r * 190.0);
         float sheen = 0.12 * pow(0.5 + 0.5 * cos(2.0 * a - 0.65), 2.0);
-        float rim = smoothstep(0.010, 0.002, abs(r - r_pack)) * 0.45;
-        float pack_luma = clamp(0.24 + rings + sheen + rim, 0.0, 1.0);
+        float has_tape = smoothstep(0.215, 0.232, r_pack);
+        float rim = smoothstep(0.010, 0.002, abs(r - r_pack)) * 0.38 * has_tape;
+        float pack_luma = clamp(0.24 + rings + sheen + rim, 0.0, 0.60);
         float pack_mask = smoothstep(r_pack + 0.008, r_pack - 0.004, r);
         return vec2(pack_luma, pack_mask);
     }
 
-    // 2. Bright hub wheel collar (0.146 .. 0.208) with 3 radial tape-clamp notches
-    if (r >= 0.146) {
-        float hub = 0.86;
-        // 3 radial clamp slots every 120 deg so wheel rotation is crisp and unmistakable
-        float slot_ang = cos(3.0 * a);
-        if (r > 0.158 && r < 0.197 && slot_ang > 0.78) {
-            hub = 0.16;
+    // 2. TDK Outer Slotted Wheel (0.136 .. 0.208): compact flush slotted clamp + 9 trapezoidal cutouts
+    if (r >= 0.136) {
+        float ang_c = mod(a + PI, TAU) - PI; // -PI .. +PI, clamp socket centered at 0.0
+        float clamp_half = 0.420;            // ~48 deg compact TDK clamp arc (~41% of wheel diameter)
+        float socket_half = 0.455;           // includes crisp dark end-notches up to r = 0.208
+
+        // Compact symmetric slotted tape clamp flush to outer wheel edge (zero white outer border)
+        if (abs(ang_c) < socket_half) {
+            if (r < 0.148) {
+                return vec2(0.99, 1.0);
+            }
+            if (r < 0.154 || abs(ang_c) > clamp_half) {
+                return vec2(0.02, 1.0);
+            }
+            // Curved relief slot inside the clamp body
+            float r_slot_c = 0.1725;
+            float slot_ang = clamp_half - 0.095;
+            float da_slot = max(abs(ang_c) - slot_ang, 0.0) * r_slot_c;
+            if (length(vec2(da_slot, r - r_slot_c)) < 0.0075) {
+                return vec2(0.02, 1.0);
+            }
+            // Smoothly rounded outer corners of the clamp clip at r = 0.208
+            float da_tip = max(abs(ang_c) - (clamp_half - 0.032), 0.0) * r;
+            float dr_tip = max(r - 0.201, 0.0);
+            if (length(vec2(da_tip, dr_tip)) > 0.0072) {
+                return vec2(0.02, 1.0);
+            }
+            return vec2(0.667, 1.0);
         }
-        float outer_rim = smoothstep(0.008, 0.002, abs(r - 0.206)) * 0.98;
-        float inner_rim = smoothstep(0.008, 0.002, abs(r - 0.148)) * 0.98;
-        return vec2(max(hub, max(outer_rim, inner_rim)), 1.0);
+
+        // Remaining arc: 9 evenly spaced radial trapezoidal cutouts separated by uniform spokes
+        float pad_ang = 0.0090 / r;
+        float span_rem = TAU - 2.0 * (socket_half + pad_ang);
+        float win_step = span_rem / 9.0;
+        float ang_rem = mod(ang_c + TAU, TAU) - (socket_half + pad_ang);
+        if (r >= 0.150 && r <= 0.194 && ang_rem > 0.0 && ang_rem < span_rem) {
+            float u_sec = ang_rem / win_step;
+            float da = (fract(u_sec) - 0.5) * win_step;
+            float d_spoke = r * (0.5 * win_step - abs(da));
+            if (d_spoke > 0.0095) {
+                return vec2(0.02, 1.0);
+            }
+        }
+        return vec2(0.99, 1.0);
     }
 
-    // 3. Drive bore with 6 classic inward-pointing cassette splines / teeth (0.062 .. 0.146)
-    if (r >= 0.062) {
-        float bore = 0.06;
-        float tooth = smoothstep(0.32, 0.52, cos(6.0 * a))
-                    * smoothstep(0.095, 0.103, r);
-        return vec2(mix(bore, 0.96, tooth), 1.0);
+    // 3. Crisp 1px concentric step ring separating inner spline collar from outer spoked wheel (0.130 .. 0.136)
+    if (r >= 0.130) {
+        return vec2(0.333, 1.0);
     }
 
-    // 4. Deck drive motor spindle & 3-lobe drive dog in the center (< 0.062)
-    float spindle = smoothstep(0.060, 0.050, r) * 0.54;
-    float dog = smoothstep(0.42, 0.65, cos(3.0 * a + 1.05)) * step(0.022, r) * 0.78;
-    float pin = smoothstep(0.022, 0.015, r) * 0.12;
-    float c_luma = (r < 0.022) ? pin : max(spindle, dog);
-    return vec2(c_luma, 1.0);
+    // 4. Inner drive spline collar (0.106 .. 0.130) + 6 evenly spaced (60 deg) rectangular inward teeth
+    if (r >= 0.106) {
+        return vec2(0.99, 1.0);
+    }
+
+    float sec6 = PI / 3.0;
+    float a6 = mod(a + sec6 * 0.5, sec6) - sec6 * 0.5;
+    float tx = abs(r * sin(a6));
+    float ty = r * cos(a6);
+    if (ty >= 0.072 && tx <= 0.0145) {
+        return vec2(0.99, 1.0);
+    }
+
+    // Dark center spindle void with subtle motor axle pin at center
+    if (r < 0.022) {
+        return vec2(0.333, 1.0);
+    }
+    return vec2(0.02, 1.0);
 }
 
 void main() {
@@ -844,15 +902,15 @@ void main() {
                 float shell_rim = smoothstep(-0.012, 0.0, d_shell) * 0.68;
                 luma = max(luma, shell_rim);
 
-                // 4 classic cassette corner assembly screws
-                vec2 sc_p = abs(p - wc) - vec2(1.00, 0.41);
+                // 2 upper cassette corner assembly screws (top-left & top-right only)
+                vec2 sc_p = vec2(abs(p.x - wc.x) - 1.00, (p.y - wc.y) - 0.41);
                 float sc_r = length(sc_p);
                 if (sc_r < 0.030) {
                     luma = (sc_r < 0.018) ? 0.10 : 0.68;
                 }
 
-                // Retro cassette top/side label sticker with classic header stripes
-                float d_lbl = sd_rbox(p - vec2(0.0, 0.275), vec2(0.96, 0.375), 0.030);
+                // Retro cassette top/side label sticker extended cleanly down to meet lowered head shield
+                float d_lbl = sd_rbox(p - vec2(0.0, 0.250), vec2(0.96, 0.400), 0.030);
                 if (d_lbl < 0.0) {
                     luma = 0.56;
                     if (p.y > 0.555 && p.y < 0.590) {
@@ -864,17 +922,20 @@ void main() {
                     luma = mix(luma, 0.22, lbl_edge);
                 }
 
-                // Bottom trapezoidal head-shield ridge & capstan/guide holes
-                float trap_w = 0.72 - (p.y - (-0.26)) * 0.32;
-                if (p.y < -0.105 && abs(p.x) < trap_w) {
+                // Lowered horizontal shading strip & trapezoidal head-shield flush with bottom shell border
+                float trap_w = 0.72 - (p.y - (-0.26)) * 0.45;
+                if (p.y >= -0.150 && p.y < -0.138 && abs(p.x) < trap_w + 0.012) {
+                    luma = 0.22;
+                }
+                if (p.y < -0.150 && d_shell < -0.006 && abs(p.x) < trap_w) {
                     luma = 0.35;
-                    if (abs(p.y - (-0.105)) < 0.010 || abs(abs(p.x) - trap_w) < 0.010) {
+                    if (abs(p.y - (-0.150)) < 0.009 || abs(abs(p.x) - trap_w) < 0.010) {
                         luma = 0.68;
                     }
-                    float h1 = length(vec2(abs(p.x) - 0.46, p.y - (-0.195)));
-                    float h2 = length(vec2(abs(p.x) - 0.23, p.y - (-0.205)));
-                    if (h1 < 0.032) {
-                        luma = (h1 < 0.022) ? 0.05 : 0.76;
+                    float h1 = length(vec2(abs(p.x) - 0.46, p.y - (-0.208)));
+                    float h2 = length(vec2(abs(p.x) - 0.23, p.y - (-0.215)));
+                    if (h1 < 0.030) {
+                        luma = (h1 < 0.020) ? 0.05 : 0.76;
                     }
                     if (h2 < 0.022) {
                         luma = (h2 < 0.014) ? 0.05 : 0.68;
@@ -936,10 +997,11 @@ void main() {
                 }
             }
 
-            // Subtle diagonal deck-door glass reflection sheen + inner window shadow
+            // Subtle diagonal deck-door glass reflection sheen (on dark surfaces only so clamp stays solid Shade 2)
             float glass_sheen = smoothstep(0.10, 0.0, abs((p.x * 0.42 + (p.y - 0.23)) - 0.16)) * 0.09;
+            float sheen_mask = 1.0 - smoothstep(0.35, 0.55, luma);
             float door_shadow = smoothstep(-0.035, 0.0, d_door) * 0.18;
-            luma = clamp(luma + glass_sheen - door_shadow * 0.35, 0.0, 1.0);
+            luma = clamp(luma + glass_sheen * sheen_mask - door_shadow * 0.35, 0.0, 1.0);
         }
     }
 
@@ -951,11 +1013,11 @@ void main() {
         if (d_br > 0.0) {
             luma = max(luma, smoothstep(0.028, 0.004, d_br) * 0.88);
         } else {
-            luma = 0.04;
+            luma = 0.02;
 
             // L & R channel labels on the left of the LED bridge
-            float lbl_l = draw_chan_mini(p - vec2(-1.065, -0.612), 0.0) * 0.90;
-            float lbl_r = draw_chan_mini(p - vec2(-1.065, -0.728), 1.0) * 0.90;
+            float lbl_l = draw_chan_mini(p - vec2(-1.065, -0.612), 0.0) * 0.99;
+            float lbl_r = draw_chan_mini(p - vec2(-1.065, -0.728), 1.0) * 0.99;
             luma = max(luma, max(lbl_l, lbl_r));
 
             float bx = (p.x - (-0.98)) / 2.06; // 0.0 .. 1.0 across 28 LED segments
@@ -963,35 +1025,41 @@ void main() {
                 float segs = 28.0;
                 float s_idx = floor(bx * segs);
                 float s_f = fract(bx * segs);
-                float seg_x = smoothstep(0.10, 0.22, s_f) * smoothstep(0.90, 0.78, s_f);
+                float seg_x = smoothstep(0.14, 0.19, s_f) * smoothstep(0.86, 0.81, s_f);
                 float seg_u = (s_idx + 0.5) / segs;
 
                 float dy_l = abs(p.y - (-0.612));
                 float dy_r = abs(p.y - (-0.728));
-                float row_l = smoothstep(0.036, 0.024, dy_l);
-                float row_r = smoothstep(0.036, 0.024, dy_r);
+                float row_l = smoothstep(0.034, 0.028, dy_l);
+                float row_r = smoothstep(0.034, 0.028, dy_r);
 
-                float bright = (seg_u >= 0.72) ? 1.0 : 0.74;
-                float unlit = 0.15;
+                // Last 8 segments (rightmost two 4-segment blocks: indices 20..27) use distinct peak-zone shades
+                bool is_peak_zone = (s_idx >= (segs - 8.0));
+                float lit_shade = is_peak_zone ? 0.667 : 0.99;
+                float unlit_shade = is_peak_zone ? 0.333 : 0.22;
 
-                // Instantaneous stereo VU bar + single-segment Peak-Hold dot
-                float pk_idx_l = floor(clamp(u_vu.z, 0.0, 0.999) * segs);
-                float pk_idx_r = floor(clamp(u_vu.w, 0.0, 0.999) * segs);
-                float is_pk_l = (u_vu.z > 0.04 && abs(s_idx - pk_idx_l) < 0.4) ? 1.0 : 0.0;
-                float is_pk_r = (u_vu.w > 0.04 && abs(s_idx - pk_idx_r) < 0.4) ? 1.0 : 0.0;
+                // Left-to-right stereo VU bar + 1-segment monotonic Peak-Hold indicator
+                float bar_l = clamp(u_vu.x, 0.0, 1.0);
+                float bar_r = clamp(u_vu.y, 0.0, 1.0);
+                float hold_l = clamp(max(u_vu_hold.x, bar_l), 0.0, 0.999);
+                float hold_r = clamp(max(u_vu_hold.y, bar_r), 0.0, 0.999);
+                float pk_idx_l = floor(hold_l * segs);
+                float pk_idx_r = floor(hold_r * segs);
+                float is_pk_l = (hold_l >= (1.0 / segs) && abs(s_idx - pk_idx_l) < 0.4) ? 1.0 : 0.0;
+                float is_pk_r = (hold_r >= (1.0 / segs) && abs(s_idx - pk_idx_r) < 0.4) ? 1.0 : 0.0;
 
-                float lit_l = max(step(seg_u, u_vu.x), is_pk_l);
-                float lit_r = max(step(seg_u, u_vu.y), is_pk_r);
-                float top_l = max(bright, is_pk_l);
-                float top_r = max(bright, is_pk_r);
+                float lit_l = max(step(seg_u, bar_l), is_pk_l);
+                float lit_r = max(step(seg_u, bar_r), is_pk_r);
+                float cell_l = mix(unlit_shade, lit_shade, lit_l);
+                float cell_r = mix(unlit_shade, lit_shade, lit_r);
 
-                luma += seg_x * row_l * mix(unlit, top_l, lit_l);
-                luma += seg_x * row_r * mix(unlit, top_r, lit_r);
+                luma = mix(luma, cell_l, seg_x * row_l);
+                luma = mix(luma, cell_r, seg_x * row_r);
 
                 // Subtle dB graduation dots between L and R LED rows
                 if (abs(p.y - (-0.67)) < 0.007 &&
                     (mod(s_idx, 4.0) < 0.4 || abs(s_idx - 20.0) < 0.4)) {
-                    luma += seg_x * 0.45;
+                    luma = max(luma, seg_x * 0.45);
                 }
             }
         }
@@ -1171,6 +1239,7 @@ impl VizEngine {
             let u_att = gl.get_uniform_location(prog, "u_att");
             let u_beat = gl.get_uniform_location(prog, "u_beat");
             let u_vu = gl.get_uniform_location(prog, "u_vu");
+            let u_vu_hold = gl.get_uniform_location(prog, "u_vu_hold");
             let u_transport = gl.get_uniform_location(prog, "u_transport");
             scenes.push(SceneProgram {
                 prog,
@@ -1182,6 +1251,7 @@ impl VizEngine {
                 u_att,
                 u_beat,
                 u_vu,
+                u_vu_hold,
                 u_transport,
             });
         }
@@ -1214,8 +1284,9 @@ impl VizEngine {
             custom_scene: None,
             use_custom_scene: false,
             present,
-            active_preset: 0,
-            fine_grain: false,
+            active_preset: 9,
+            fine_grain: true,
+            invert_palette: false,
             needs_clear: true,
             reel_ang_l: 0.0,
             reel_ang_r: 0.9,
@@ -1264,6 +1335,7 @@ impl VizEngine {
             u_att: self.gl.get_uniform_location(prog, "u_att"),
             u_beat: self.gl.get_uniform_location(prog, "u_beat"),
             u_vu: self.gl.get_uniform_location(prog, "u_vu"),
+            u_vu_hold: self.gl.get_uniform_location(prog, "u_vu_hold"),
             u_transport: self.gl.get_uniform_location(prog, "u_transport"),
         };
         self.custom_scene = Some(sc);
@@ -1293,20 +1365,25 @@ impl VizEngine {
     }
 
     pub fn is_fine_grain(&self) -> bool {
-        self.fine_grain
+        true
     }
 
-    pub fn set_fine_grain(&mut self, fine: bool) {
-        if self.fine_grain != fine {
-            self.fine_grain = fine;
-            self.needs_clear = true;
-        }
+    pub fn set_fine_grain(&mut self, _fine: bool) {
+        // Locked to crisp default render resolution (512x384 / 2x2 LCD grid).
+        self.fine_grain = true;
     }
 
     pub fn toggle_grain(&mut self) -> bool {
-        self.fine_grain = !self.fine_grain;
-        self.needs_clear = true;
-        self.fine_grain
+        self.fine_grain = true;
+        true
+    }
+
+    pub fn is_inverted(&self) -> bool {
+        self.invert_palette
+    }
+
+    pub fn set_invert(&mut self, invert: bool) {
+        self.invert_palette = invert;
     }
 
     /// Updates audio analysis and renders one complete frame into the window's default framebuffer.
@@ -1480,6 +1557,8 @@ impl VizEngine {
             af.vu_peak_l,
             af.vu_peak_r,
         );
+        self.gl
+            .uniform_2_f32(sc.u_vu_hold.as_ref(), af.vu_hold_l, af.vu_hold_r);
         self.gl.uniform_4_f32(
             sc.u_transport.as_ref(),
             prog,
@@ -1490,7 +1569,7 @@ impl VizEngine {
         self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
 
         // Pass 2: Fullscreen 4-Shade Ordered Bayer LCD Quantizer into window FBO 0
-        let pal = order_palette_bg_to_fg(theme);
+        let pal = order_visualizer_palette(theme, self.invert_palette);
         self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         self.gl.viewport(0, 0, win_w.max(1), win_h.max(1));
         self.gl
@@ -1677,5 +1756,17 @@ mod tests {
         assert_eq!(dp[1], unpack_rgb_f32_and_luma(dark.fg1_rgb).1);
         assert_eq!(dp[2], unpack_rgb_f32_and_luma(dark.fg2_rgb).1);
         assert_eq!(dp[3], unpack_rgb_f32_and_luma(dark.fg_rgb).1);
+    }
+
+    #[test]
+    fn invert_visualizer_palette_swaps_bg_fg_and_midtones_monotonically() {
+        for theme in [ThemeColors::default(), ThemeColors::classic_dark()] {
+            let normal = order_visualizer_palette(theme, false);
+            let inv = order_visualizer_palette(theme, true);
+            assert_eq!(inv[0], normal[3]);
+            assert_eq!(inv[1], normal[2]);
+            assert_eq!(inv[2], normal[1]);
+            assert_eq!(inv[3], normal[0]);
+        }
     }
 }

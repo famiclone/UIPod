@@ -789,6 +789,10 @@ const struct settings_list settings[] = {
                 viz_transition, LANG_UIPOD_VIZ_TRANSITION, 20, "viz transition",
                 off_on, UNIT_SEC, formatter_seconds_0_is_never,
                 NULL, 10, viz_transition_values),
+    INT_SETTING_NOWRAP(0, viz_last_preset, LANG_UIPOD_VISUALIZERS, 9,
+                       "viz last preset", UNIT_INT, 0, 31, 1, NULL, NULL),
+    OFFON_SETTING(0, viz_invert, LANG_UIPOD_INVERT_VISUALIZER, false,
+                  "invert visualizer", NULL),
 #ifdef HAVE_PERCEPTUAL_VOLUME
     /* UIPod: perceptual by default with 40 even loudness increments (a 0..10
      * dial); not exposed in the menu. */

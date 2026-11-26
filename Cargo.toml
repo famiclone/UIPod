@@ -25,6 +25,7 @@ members = [
     "plugins/stopwatch",
     "plugins/text-viewer",
     "plugins/lcd-plasma",
+    "plugins/dj-mixer",
 ]
 
 [profile.release]

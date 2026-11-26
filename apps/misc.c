@@ -50,6 +50,7 @@
 #include "splash.h"
 #include "sound.h"
 #include "pcm_mixer.h"
+#include "pcmbuf.h"
 #include "playlist.h"
 #include "uipod_library.h"
 #include "uipod_rs_ui.h"
@@ -408,7 +409,10 @@ void audio_prev_or_restart(void)
         audio_prev();
     else
     {
-        audio_pre_ff_rewind();
+        if (audio_status() & AUDIO_STATUS_PAUSE)
+            audio_pre_ff_rewind();
+        else
+            pcmbuf_seamless_seek_splice();
         audio_ff_rewind(0);
     }
 }

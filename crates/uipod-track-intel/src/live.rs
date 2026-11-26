@@ -1,7 +1,7 @@
 //! Lock-free Tier-2 Real-Time Audio Telemetry (`live.rs`):
 //! - Wait-free `16,384`-frame stereo SPSC PCM tap (`64 KB` BSS, zero `Mutex`, zero heap allocs).
 //! - Latency-compensated `32`-slot `.nsf` APU ring matching speaker / Bluetooth A2DP output delay.
-//! - Atomic `SeqLock` publication of [`TrackAnalysisRecord`] (`512 B`) and [`TrackLiveFrame`] (`592 B`).
+//! - Atomic `SeqLock` publication of [`TrackAnalysisRecord`] (`512 B`) and [`TrackLiveFrame`] (`608 B`).
 //! - Zero-allocation `1024`-point radix-2 Hann FFT, `64`-bin log spectrum + peak hold, `256`-sample
 //!   gain-normalized scope waveform, normalized `kick_impulse` / `snare_impulse`, and monotonic
 //!   bar/beat phase grid anchored to `TrackAnalysisRecord`.
@@ -29,7 +29,7 @@ const APU_RING_MASK: usize = APU_RING_SLOTS - 1;
 const APU_WORDS_PER_SLOT: usize = 27; // frame_pos(2) + header(1) + 8 * 3(24)
 
 const ANALYSIS_WORDS: usize = TRACK_ANALYSIS_RECORD_BYTES / 4; // 128 u32 words = 512 bytes
-const LIVE_WORDS: usize = core::mem::size_of::<TrackLiveFrame>() / 4; // 148 u32 words = 592 bytes
+const LIVE_WORDS: usize = core::mem::size_of::<TrackLiveFrame>() / 4; // 152 u32 words = 608 bytes
 
 const FFT_SIZE: usize = 1024;
 const FFT_BINS: usize = FFT_SIZE / 2;
@@ -337,6 +337,7 @@ pub struct LiveTelemetryEngine {
     spec_smooth: [f32; 64],
     spec_peak: [f32; 64],
     bands_smooth: [f32; 5],
+    beat_substeps_smooth: [f32; 16],
     wave_rms_avg: f32,
 
     vu_l: f32,
@@ -397,6 +398,7 @@ impl LiveTelemetryEngine {
             spec_smooth: [0.0; 64],
             spec_peak: [0.0; 64],
             bands_smooth: [0.0; 5],
+            beat_substeps_smooth: [0.0; 16],
             wave_rms_avg: 0.12,
             vu_l: 0.0,
             vu_r: 0.0,
@@ -442,6 +444,7 @@ impl LiveTelemetryEngine {
             self.clock_initialized = false;
             self.prev_k_log = 0.0;
             self.prev_s_log = 0.0;
+            self.beat_substeps_smooth = [0.0; 16];
         }
 
         let matched_rec = analysis_opt.filter(|r| r.is_valid() && r.key_hash == track_key_hash);
@@ -535,6 +538,9 @@ impl LiveTelemetryEngine {
             self.snare_imp_smooth *= rel;
             for b in &mut self.bands_smooth {
                 *b *= rel;
+            }
+            for s in &mut self.beat_substeps_smooth {
+                *s *= rel;
             }
             for i in 0..64 {
                 self.spec_smooth[i] *= rel;
@@ -684,6 +690,20 @@ impl LiveTelemetryEngine {
                 self.spec_smooth[i] += (level - self.spec_smooth[i]) * alpha;
                 self.spec_peak[i] = (self.spec_peak[i] - dt * 0.42).max(self.spec_smooth[i]);
             }
+
+            // Beat-quantized 16-step (`4` sub-steps per quarter-note beat) amplitude bars
+            let sub_decay = (-dt * 1.35).exp();
+            for s in &mut self.beat_substeps_smooth {
+                *s *= sub_decay;
+            }
+            let step_idx = ((bar_phase.clamp(0.0, 3.999_9) * 4.0).floor() as usize).min(15);
+            let step_amp = (0.38 * self.bands_smooth[0].max(self.bands_smooth[1])
+                + 0.28 * self.bands_smooth[2]
+                + 0.18 * self.kick_imp_smooth.max(self.snare_imp_smooth)
+                + 0.16 * self.vu_l.max(self.vu_r))
+            .clamp(0.0, 1.0);
+            self.beat_substeps_smooth[step_idx] =
+                self.beat_substeps_smooth[step_idx].max(step_amp);
         }
 
         let mut spectrum_64 = [0u8; 64];
@@ -691,6 +711,11 @@ impl LiveTelemetryEngine {
         for i in 0..64 {
             spectrum_64[i] = (self.spec_smooth[i].clamp(0.0, 1.0) * 255.0).round() as u8;
             spectrum_peak_64[i] = (self.spec_peak[i].clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        let mut beat_substeps_16 = [0u8; 16];
+        for i in 0..16 {
+            beat_substeps_16[i] =
+                (self.beat_substeps_smooth[i].clamp(0.0, 1.0) * 255.0).round() as u8;
         }
 
         TrackLiveFrame {
@@ -720,6 +745,7 @@ impl LiveTelemetryEngine {
             spectrum_64,
             spectrum_peak_64,
             waveform_256,
+            beat_substeps_16,
             apu,
         }
     }

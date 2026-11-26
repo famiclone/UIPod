@@ -90,6 +90,32 @@ bool power_display_off(void) { return power_blanked; }
  * JOYBUTTON/JOYHAT/JOYAXIS events to Rockbox buttons in event_handler. */
 static SDL_Joystick **joysticks = NULL;
 static int num_joysticks = 0;
+static volatile int16_t s_axis_lx = 0;
+static volatile int16_t s_axis_ly = 0;
+static volatile int16_t s_axis_rx = 0;
+static volatile int16_t s_axis_ry = 0;
+static volatile bool    s_suppress_stick_dpad = false;
+
+void sdl_get_analog_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+    if (lx) *lx = s_axis_lx;
+    if (ly) *ly = s_axis_ly;
+    if (rx) *rx = s_axis_rx;
+    if (ry) *ry = s_axis_ry;
+}
+
+void sdl_set_analog_stick_dpad_suppressed(bool suppressed)
+{
+    s_suppress_stick_dpad = suppressed;
+    if (!suppressed)
+    {
+        s_axis_lx = 0;
+        s_axis_ly = 0;
+        s_axis_rx = 0;
+        s_axis_ry = 0;
+    }
+}
+
 #ifdef __ANDROID__
 #define MAX_ANDROID_PADS 8
 static SDL_GameController *s_controllers[MAX_ANDROID_PADS];
@@ -99,7 +125,7 @@ static int s_stick_btns = 0;
 static void sync_directional_btns(void)
 {
     btn &= ~(BUTTON_UP | BUTTON_DOWN | BUTTON_LEFT | BUTTON_RIGHT);
-    btn |= (s_dpad_btns | s_stick_btns);
+    btn |= s_dpad_btns | (s_suppress_stick_dpad ? 0 : s_stick_btns);
 }
 
 static void android_open_controller(int joy_idx)
@@ -428,16 +454,24 @@ static bool event_handler(SDL_Event *event)
         switch (event->caxis.axis)
         {
             case SDL_CONTROLLER_AXIS_LEFTX:
+                s_axis_lx = v;
                 s_stick_btns &= ~(BUTTON_LEFT | BUTTON_RIGHT);
                 if (v < -DEADZONE)     s_stick_btns |= BUTTON_LEFT;
                 else if (v > DEADZONE) s_stick_btns |= BUTTON_RIGHT;
                 sync_directional_btns();
                 break;
             case SDL_CONTROLLER_AXIS_LEFTY:
+                s_axis_ly = v;
                 s_stick_btns &= ~(BUTTON_UP | BUTTON_DOWN);
                 if (v < -DEADZONE)     s_stick_btns |= BUTTON_UP;
                 else if (v > DEADZONE) s_stick_btns |= BUTTON_DOWN;
                 sync_directional_btns();
+                break;
+            case SDL_CONTROLLER_AXIS_RIGHTX:
+                s_axis_rx = v;
+                break;
+            case SDL_CONTROLLER_AXIS_RIGHTY:
+                s_axis_ry = v;
                 break;
             case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
                 if (v > TRIG_THRESH) btn |= BUTTON_L2;
@@ -511,7 +545,8 @@ static bool event_handler(SDL_Event *event)
             break;
 #endif
         /* L2/R2 triggers report as axes; any positive deflection = pressed
-         * (matches NextUI's val > 0 test).  Non-trigger axes map to nothing. */
+         * (matches NextUI's val > 0 test).  Record optional Smart Pro / Linux
+         * analog sticks (axes 0, 1, 3, 4) for DJ Mixer without mapping them to D-Pad. */
         int b = joyaxis_to_button(event->jaxis.axis);
         if (b != BUTTON_NONE)
         {
@@ -520,6 +555,14 @@ static bool event_handler(SDL_Event *event)
             else
                 btn &= ~b;
         }
+        else if (event->jaxis.axis == 0)
+            s_axis_lx = event->jaxis.value;
+        else if (event->jaxis.axis == 1)
+            s_axis_ly = event->jaxis.value;
+        else if (event->jaxis.axis == 3)
+            s_axis_rx = event->jaxis.value;
+        else if (event->jaxis.axis == 4)
+            s_axis_ry = event->jaxis.value;
         break;
     }
 

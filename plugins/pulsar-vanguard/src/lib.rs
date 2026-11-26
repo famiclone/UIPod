@@ -10,8 +10,7 @@ use core::f32::consts::{PI, TAU};
 use std::path::Path;
 
 use rhythm::{
-    AudioFrameInput, BarPhaseConfig, BarPhaseTracker, BarTick, LivePcmAnalyzer, SyncSource,
-    WeaponGear,
+    AudioFrameInput, BarPhaseConfig, BarPhaseTracker, BarTick, SyncSource, WeaponGear,
 };
 use uipod_plugin_sdk::{
     btn, uipod_declare_plugin, FontWeight, HostContext, MenuItem, MenuOutcome, PluginCategory,
@@ -1994,8 +1993,6 @@ fn run_pulsar_vanguard(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> 
     let mut cfg = BarPhaseConfig::default();
     cfg.audio_latency_sec = prefs.latency_sec();
     let mut tracker = BarPhaseTracker::new(cfg);
-    let mut pcm_analyzer = LivePcmAnalyzer::new();
-    let mut pcm_window = [0i16; 1024 * 2];
 
     let mut game = VanguardGame::new(prefs, (ctx.ticks_ms() as u32) ^ 0xA5C3_19E7, init_layout);
 
@@ -2076,54 +2073,33 @@ fn run_pulsar_vanguard(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> 
         }
 
         // Read lock-free `uipod-track-intel` telemetry & cached `SongMapFixed` beat grid
-        // (falling back cleanly to `LivePcmAnalyzer` + `LivePll` on older `< v8` hosts).
-        let live_intel = if music_playing {
-            ctx.audio_live_telemetry()
-        } else {
-            None
-        };
-        let cached_analysis = if music_playing {
-            ctx.audio_track_analysis()
-        } else {
-            None
-        };
-
         let (sync_source, playback_pos_sec, low_energy, flux_hint, vu_level) = if music_playing {
-            if let (Some(live), Some(rec)) = (live_intel, cached_analysis) {
-                if live.status == 1 && live.has_analysis != 0 && rec.key_hash == live.track_key_hash
-                {
-                    let apu_hit = if live.apu.is_available() {
-                        live.apu.percussion_trigger().max(live.apu.bass_trigger())
-                    } else {
-                        0.0
-                    };
-                    (
-                        SyncSource::SongMapFixed {
-                            bpm: rec.bpm,
-                            first_downbeat_sec: (rec.first_beat_offset_ms as f64) * 0.001,
-                        },
-                        Some((live.playhead_ms as f64) * 0.001),
-                        live.bands_5[0].max(live.bands_5[1]).max(apu_hit * 0.8),
-                        live.kick_impulse.max(live.snare_impulse).max(apu_hit),
-                        live.vu_l.max(live.vu_r).clamp(0.15, 1.0),
-                    )
+            let live_intel = ctx.audio_live_telemetry();
+            let cached_analysis = ctx.audio_track_analysis();
+            if let Some(live) = live_intel {
+                let apu_hit = if live.apu.is_available() {
+                    live.apu.percussion_trigger().max(live.apu.bass_trigger())
                 } else {
-                    let n_frames = ctx.audio_read_pcm(0, &mut pcm_window);
-                    let (le, fh, vu) = if n_frames > 0 {
-                        pcm_analyzer.analyze_window(&pcm_window, n_frames, dt_sec)
-                    } else {
-                        (0.0, 0.0, 0.35)
-                    };
-                    (SyncSource::LivePll, None, le, fh, vu)
-                }
-            } else {
-                let n_frames = ctx.audio_read_pcm(0, &mut pcm_window);
-                let (le, fh, vu) = if n_frames > 0 {
-                    pcm_analyzer.analyze_window(&pcm_window, n_frames, dt_sec)
-                } else {
-                    (0.0, 0.0, 0.35)
+                    0.0
                 };
-                (SyncSource::LivePll, None, le, fh, vu)
+                let (bpm, downbeat_sec) = match cached_analysis {
+                    Some(rec) if live.has_analysis != 0 && rec.key_hash == live.track_key_hash => {
+                        (rec.bpm, (rec.first_beat_offset_ms as f64) * 0.001)
+                    }
+                    _ => (live.bpm, 0.0),
+                };
+                (
+                    SyncSource::SongMapFixed {
+                        bpm,
+                        first_downbeat_sec: downbeat_sec,
+                    },
+                    Some((live.playhead_ms as f64) * 0.001),
+                    live.bands_5[0].max(live.bands_5[1]).max(apu_hit * 0.8),
+                    live.kick_impulse.max(live.snare_impulse).max(apu_hit),
+                    live.vu_l.max(live.vu_r).clamp(0.15, 1.0),
+                )
+            } else {
+                (SyncSource::LivePll, None, 0.0, 0.0, 0.40)
             }
         } else {
             // Internal 120 BPM silent pulsar clock so the game remains 100% playable when music is paused/stopped

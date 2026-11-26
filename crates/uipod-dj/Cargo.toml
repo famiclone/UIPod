@@ -5,3 +5,21 @@ edition = "2021"
 description = "Dual-Deck Smart DJ Crossfade engine (Beatmatch WSOLA, Vinyl Sync, Butterworth Bass Swap & Filter Wash)"
 
 [dependencies]
+uipod-plugin-sdk = { path = "../uipod-plugin-sdk" }
+uipod-track-intel = { path = "../uipod-track-intel" }
+uipod-nsf = { path = "../uipod-nsf" }
+uipod-codecs = { path = "../uipod-codecs" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+symphonia = { version = "0.5", default-features = false, features = [
+    "mp3",
+    "flac",
+    "ogg",
+    "vorbis",
+    "pcm",
+    "wav",
+    "aiff",
+    "isomp4",
+    "aac",
+    "alac",
+] }

@@ -187,6 +187,7 @@ enum {
     ACTION_WPS_ABSETB_NEXTDIR, /* you shouldnt want to change dir in ab-mode */
     ACTION_WPS_ABRESET,
     ACTION_WPS_HOTKEY,
+    ACTION_WPS_VIZ_TOGGLE,
 
     /* list and tree page up/down */
     ACTION_LISTTREE_PGUP,/* optional */

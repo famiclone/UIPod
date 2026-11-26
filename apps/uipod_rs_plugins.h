@@ -13,7 +13,42 @@
 extern "C" {
 #endif
 
-#define UIPOD_PLUGIN_API_VERSION 9u
+#define UIPOD_PLUGIN_API_VERSION 11u
+
+enum uipod_dj_deck_id
+{
+    UIPOD_DJ_DECK_A = 0,
+    UIPOD_DJ_DECK_B = 1,
+};
+
+enum uipod_dj_cue_action
+{
+    UIPOD_DJ_CUE_RETURN   = 0,
+    UIPOD_DJ_CUE_STUTTER  = 1,
+    UIPOD_DJ_CUE_SET_HERE = 2,
+};
+
+enum uipod_dj_tempo_mode
+{
+    UIPOD_DJ_TEMPO_MASTER = 0,
+    UIPOD_DJ_TEMPO_VINYL  = 1,
+};
+
+enum uipod_dj_loop_beats
+{
+    UIPOD_DJ_LOOP_OFF  = 0,
+    UIPOD_DJ_LOOP_4    = 1,
+    UIPOD_DJ_LOOP_2    = 2,
+    UIPOD_DJ_LOOP_1    = 3,
+    UIPOD_DJ_LOOP_HALF = 4,
+};
+
+enum uipod_dj_track_source
+{
+    UIPOD_DJ_SRC_QUEUE      = 0,
+    UIPOD_DJ_SRC_FAVOURITES = 1,
+    UIPOD_DJ_SRC_LIBRARY    = 2,
+};
 
 enum uipod_plugin_category
 {
@@ -127,7 +162,44 @@ struct UIPodPluginLiveTelemetry
     uint8_t                        spectrum_64[64];
     uint8_t                        spectrum_peak_64[64];
     int8_t                         waveform_256[256];
+    uint8_t                        beat_substeps_16[16];
     struct UIPodPluginApuTelemetry apu;
+};
+
+struct UIPodDjDeckTelemetry
+{
+    uint8_t  loaded;
+    uint8_t  playing;
+    uint8_t  loop_beats;
+    uint8_t  sync_locked;
+    uint32_t elapsed_ms;
+    uint32_t remaining_ms;
+    uint32_t duration_ms;
+    uint32_t cue_ms;
+    float    native_bpm;
+    float    effective_bpm;
+    float    beat_phase;
+    float    bar_phase;
+    float    filter_val;
+    uint8_t  bars_peak_24[24];
+    uint8_t  bars_kick_24[24];
+    uint8_t  title[96];
+    uint8_t  artist[80];
+};
+
+struct UIPodDjTelemetry
+{
+    uint32_t                    seq_generation;
+    uint8_t                     session_active;
+    uint8_t                     bass_swap_enabled;
+    uint8_t                     tempo_mode;
+    uint8_t                     reserved;
+    float                       crossfader;
+    int16_t                     analog_lx;
+    int16_t                     analog_ly;
+    int16_t                     analog_rx;
+    int16_t                     analog_ry;
+    struct UIPodDjDeckTelemetry decks[2];
 };
 
 struct UIPodPluginApi
@@ -221,6 +293,27 @@ struct UIPodPluginApi
                                        float dst_x, float dst_y,
                                        float dst_w, float dst_h,
                                        float radius);
+
+    /* Manual Dual-Deck DJ Extension (v11+) */
+    bool     (*dj_session_acquire)(void);
+    void     (*dj_session_release)(void);
+    bool     (*dj_deck_load)(uint8_t deck, const char *path, bool start_paused);
+    void     (*dj_deck_set_playing)(uint8_t deck, bool playing, bool quantize);
+    void     (*dj_deck_cue)(uint8_t deck, uint8_t cue_action);
+    void     (*dj_deck_seek_beats)(uint8_t deck, int32_t delta_beats);
+    void     (*dj_set_crossfader)(float position, bool bass_swap_enabled);
+    void     (*dj_deck_set_tempo)(uint8_t deck, float target_bpm_ratio,
+                                  uint8_t tempo_mode, float momentary_bend);
+    void     (*dj_deck_set_sync)(uint8_t deck, bool enabled);
+    void     (*dj_deck_set_loop)(uint8_t deck, uint8_t loop_beats);
+    void     (*dj_deck_set_filter)(uint8_t deck, float filter_value);
+    bool     (*dj_get_telemetry)(struct UIPodDjTelemetry *out);
+    size_t   (*dj_source_track_count)(uint8_t source_kind);
+    bool     (*dj_source_track_at)(uint8_t source_kind, size_t index,
+                                   char *path_out, size_t path_cap,
+                                   char *artist_out, size_t artist_cap,
+                                   char *title_out, size_t title_cap,
+                                   uint32_t *duration_ms_out);
 };
 
 struct UIPodPluginInfoC

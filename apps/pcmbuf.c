@@ -118,12 +118,13 @@ static size_t chunk_transidx;
 
 static size_t pcmbuf_watermark = 0;
 
-/* Gap-free manual skip keepalive & anti-click cosine/Hermite splice state */
+/* Gap-free manual skip keepalive & anti-click cosine splice state */
 #define SKIP_KEEPALIVE_FRAMES 256u
 static int16_t s_keepalive_zeros[SKIP_KEEPALIVE_FRAMES * 2];
 static volatile int s_manual_skip_keepalive_chunks = 0;
 static volatile bool s_fade_in_next_write = false;
 static void *s_last_req_write_ptr = NULL;
+static volatile uint64_t s_total_played_frames = 0;
 
 static bool low_latency_mode = false;
 
@@ -548,8 +549,8 @@ void * pcmbuf_request_buffer(int *count)
     return buf;
 }
 
-/* Apply C1-continuous Hermite smoothstep (`3t^2 - 2t^3`) fade-in or fade-out
-   across `frames` stereo S16 samples (`fade_in == true`: 0 -> 1, `false`: 1 -> 0). */
+/* Apply C2-continuous raised-cosine (`0.5 * (1 - cos(pi * t))`) anti-click
+   fade-in or fade-out across `frames` stereo S16 samples (`fade_in == true`: 0 -> 1, `false`: 1 -> 0). */
 static void apply_smooth_fade_s16(int16_t *stereo, size_t frames, bool fade_in)
 {
     if (!stereo || frames == 0)
@@ -563,17 +564,20 @@ static void apply_smooth_fade_s16(int16_t *stereo, size_t frames, bool fade_in)
         }
         return;
     }
-    uint32_t denom = (uint32_t)(frames - 1);
+    float inv_denom = 1.0f / (float)(frames - 1);
     for (size_t i = 0; i < frames; i++)
     {
-        /* Q15 normalized progress t in [0, 32768] */
-        uint32_t t = (uint32_t)(((uint64_t)i * 32768ULL) / denom);
+        float t = (float)i * inv_denom;
         if (!fade_in)
-            t = 32768U - t;
-        /* smoothstep(t) = t^2 * (3 - 2t) in Q15 */
-        uint32_t t2 = (t * t) >> 15;
-        uint32_t three_minus_2t = 98304U - (t << 1); /* 3.0 in Q15 = 98304 */
-        int32_t gain_q15 = (int32_t)((t2 * three_minus_2t) >> 15);
+            t = 1.0f - t;
+        /* Raised-cosine window `0.5 * (1 - cos(pi * t))` via exact minimax polynomial (`err < 2e-5`) */
+        float u = t - 0.5f;
+        float u2 = u * u;
+        float sin_pi_u = u * (3.14159265f - u2 * (5.16771278f - u2 * 2.55016404f));
+        float gain = 0.5f + 0.5f * sin_pi_u;
+        if (gain < 0.0f) gain = 0.0f;
+        if (gain > 1.0f) gain = 1.0f;
+        int32_t gain_q15 = (int32_t)(gain * 32768.0f + 0.5f);
         stereo[i * 2]     = (int16_t)(((int32_t)stereo[i * 2] * gain_q15) >> 15);
         stereo[i * 2 + 1] = (int16_t)(((int32_t)stereo[i * 2 + 1] * gain_q15) >> 15);
     }
@@ -660,6 +664,7 @@ static void init_buffer_state(void)
     /* Reset counters */
     __atomic_store_n(&chunk_ridx, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&chunk_widx, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_total_played_frames, 0ULL, __ATOMIC_RELEASE);
     pcmbuf_bytes_waiting = 0;
     s_manual_skip_keepalive_chunks = 0;
     s_fade_in_next_write = false;
@@ -849,6 +854,85 @@ static void pcmbuf_manual_skip_splice(bool dj_quick_cut_armed)
     trigger_cpu_boost();
 }
 
+void pcmbuf_seamless_seek_splice(void)
+{
+    pcmbuf_manual_skip_splice(false);
+}
+
+/* When `skip_pending == TRACK_SKIP_AUTO` (codec already finished Track 1 and pre-decoded
+   Track 2 into `pcmbuf` starting at `index_next(chunk_transidx)`), splice a 6 ms cosine
+   fade-out on Track 1 directly into Track 2's pre-buffered `pcmbuf` frames (`5 ms` fade-in)
+   with 0 ms gap and without halting Track 2's running decoder! */
+bool pcmbuf_try_fast_auto_next_splice(void)
+{
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) != CHANNEL_PLAYING ||
+        !pcmbuf_buffer || !pcmbuf_descriptors || pcmbuf_size == 0)
+    {
+        return false;
+    }
+
+    unsigned long freq = mixer_get_frequency();
+    if (freq == 0)
+        freq = 44100UL;
+    size_t fade_out_frames = (size_t)((freq * 6UL) / 1000UL);
+    size_t fade_in_frames  = (size_t)((freq * 5UL) / 1000UL);
+    if (fade_out_frames < 32U) fade_out_frames = 32U;
+    if (fade_in_frames < 32U)  fade_in_frames  = 32U;
+
+    bool spliced = false;
+    pcm_play_lock();
+    size_t trans = chunk_transidx;
+    size_t ridx  = __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE);
+    size_t widx  = __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE);
+
+    if (trans != INVALID_BUF_INDEX && index_committed(trans))
+    {
+        size_t track2_idx = index_next(trans);
+        if (track2_idx != widx && index_committed(track2_idx))
+        {
+            struct chunkdesc *t2desc = index_chunkdesc(track2_idx);
+            size_t t2_frames = ((size_t)t2desc->size) / PCMBUF_SAMPLE_SIZE;
+            if (t2_frames > 0)
+            {
+                apply_smooth_fade_s16((int16_t *)index_buffer(track2_idx),
+                                      MIN(t2_frames, fade_in_frames),
+                                      true);
+
+                if (ridx != trans)
+                {
+                    /* Copy 6 ms of next outgoing Track 1 chunk into `trans` (safe: DMA is reading `ridx`),
+                       fade it out cleanly, and jump `chunk_ridx` to `trans - 1` so `pcmbuf_pcm_callback`
+                       steps `old_ridx -> trans (6 ms fade-out) -> track2_idx`! */
+                    size_t src_idx = index_next(ridx);
+                    struct chunkdesc *sdesc = index_chunkdesc(src_idx);
+                    struct chunkdesc *tdesc = index_chunkdesc(trans);
+                    size_t avail = ((size_t)sdesc->size) / PCMBUF_SAMPLE_SIZE;
+                    size_t fn = MIN(avail, fade_out_frames);
+                    if (fn > 0 && src_idx != trans)
+                        memcpy(index_buffer(trans), index_buffer(src_idx), fn * PCMBUF_SAMPLE_SIZE);
+                    if (fn > 0)
+                    {
+                        apply_smooth_fade_s16((int16_t *)index_buffer(trans), fn, false);
+                        tdesc->size = (uint16_t)(fn * PCMBUF_SAMPLE_SIZE);
+                        tdesc->pos_key = 0;
+                        __atomic_store_n(&chunk_ridx, index_chunk_offs(trans, -1), __ATOMIC_RELEASE);
+                    }
+                }
+
+                chunk_transidx = INVALID_BUF_INDEX;
+                s_manual_skip_keepalive_chunks = 0;
+                s_fade_in_next_write = false;
+                spliced = true;
+            }
+        }
+    }
+    pcm_play_unlock();
+
+    if (spliced)
+        trigger_cpu_boost();
+    return spliced;
+}
+
 void pcmbuf_start_track_change(enum pcm_track_change_type type)
 {
     /* Commit all outstanding data before starting next track - tracks don't
@@ -982,6 +1066,8 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
     if (desc)
     {
         bool track_change = index == chunk_transidx;
+        size_t played_frames = ((size_t)desc->size) / PCMBUF_SAMPLE_SIZE;
+        __atomic_fetch_add(&s_total_played_frames, (uint64_t)played_frames, __ATOMIC_RELEASE);
 
         /* If last chunk in the track, notify of track change */
         if (track_change)
@@ -1649,8 +1735,13 @@ size_t pcmbuf_unplayed_frames(void)
 {
     if (!pcmbuf_buffer || !pcmbuf_descriptors || pcmbuf_size == 0)
         return 0;
-    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) != CHANNEL_PLAYING)
+    if (mixer_channel_status(PCM_MIXER_CHAN_PLAYBACK) == CHANNEL_STOPPED &&
+        __atomic_load_n(&chunk_ridx, __ATOMIC_ACQUIRE) ==
+            __atomic_load_n(&chunk_widx, __ATOMIC_ACQUIRE) &&
+        pcmbuf_bytes_waiting == 0)
+    {
         return 0;
+    }
 
     size_t total_bytes = 0;
     pcm_play_lock();
@@ -1665,8 +1756,20 @@ size_t pcmbuf_unplayed_frames(void)
         total_bytes += cbytes;
         idx = index_next(idx);
     }
+    total_bytes += pcmbuf_bytes_waiting;
     pcm_play_unlock();
     return total_bytes / PCMBUF_SAMPLE_SIZE;
+}
+
+uint64_t pcmbuf_total_played_frames(void)
+{
+    return __atomic_load_n(&s_total_played_frames, __ATOMIC_ACQUIRE);
+}
+
+uint64_t pcmbuf_total_committed_frames(void)
+{
+    uint64_t played = __atomic_load_n(&s_total_played_frames, __ATOMIC_ACQUIRE);
+    return played + (uint64_t)pcmbuf_unplayed_frames();
 }
 
 size_t pcmbuf_peek_ahead_s16(uint32_t ahead_ms, int16_t *out, size_t max_frames)

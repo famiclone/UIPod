@@ -335,6 +335,7 @@ size_t uipod_rs_viz_preset_id(size_t idx, char *out, size_t cap);
 size_t uipod_rs_viz_preset_name(size_t idx, bool is_ukrainian, char *out, size_t cap);
 bool   uipod_rs_viz_init(uipod_rs_gl_get_proc_fn get_proc);
 void   uipod_rs_viz_set_preset(size_t idx);
+void   uipod_rs_viz_set_invert(bool invert);
 bool   uipod_rs_viz_toggle_grain(void);
 bool   uipod_rs_viz_render_frame(const int16_t *pcm_interleaved,
                                  size_t frames,

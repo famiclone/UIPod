@@ -102,8 +102,8 @@ pub struct DualDeckMixer {
 
     cue_a: DeckCueAnalysis,
     cue_b: DeckCueAnalysis,
-    hint_bpm_a: Option<(f32, f32)>,
-    hint_bpm_b: Option<(f32, f32)>,
+    hint_bpm_a: Option<(f32, f32, Option<u32>)>,
+    hint_bpm_b: Option<(f32, f32, Option<u32>)>,
     plan: Option<TransitionPlan>,
     mix_frames_done: usize,
     midpoint_signaled: bool,
@@ -499,6 +499,18 @@ impl DualDeckMixer {
         deck_a: Option<(f32, f32)>,
         deck_b: Option<(f32, f32)>,
     ) {
+        self.set_deck_intel_hints(
+            deck_a.map(|(b, c)| (b, c, None)),
+            deck_b.map(|(b, c)| (b, c, None)),
+        );
+    }
+
+    /// Supply cached full-track `(bpm, confidence, first_beat_offset_ms)` hints from `uipod-track-intel`.
+    pub fn set_deck_intel_hints(
+        &mut self,
+        deck_a: Option<(f32, f32, Option<u32>)>,
+        deck_b: Option<(f32, f32, Option<u32>)>,
+    ) {
         if deck_a.is_some() {
             self.hint_bpm_a = deck_a;
         }
@@ -507,15 +519,82 @@ impl DualDeckMixer {
         }
     }
 
-    fn apply_bpm_hint(cue: &mut DeckCueAnalysis, hint: Option<(f32, f32)>) {
-        if let Some((hbpm, hconf)) = hint {
-            if (60.0..=200.0).contains(&hbpm) && hconf >= 0.55 {
-                if cue.confidence < 0.62 || (cue.bpm - hbpm).abs() > 4.0 {
+    fn apply_bpm_hint(
+        cue: &mut DeckCueAnalysis,
+        hint: Option<(f32, f32, Option<u32>)>,
+        window_start_frame: u64,
+        sr: u32,
+    ) {
+        if let Some((hbpm, hconf, downbeat_ms_opt)) = hint {
+            if (60.0..=200.0).contains(&hbpm) && hconf >= 0.45 {
+                if cue.confidence < 0.65 || (cue.bpm - hbpm).abs() > 2.5 {
                     cue.bpm = hbpm;
-                    cue.confidence = cue.confidence.max(hconf * 0.95);
+                    cue.confidence = cue.confidence.max(hconf * 0.96);
+                }
+                if let Some(downbeat_ms) = downbeat_ms_opt {
+                    let bar_frames = (((sr as f64) * 240.0) / (cue.bpm as f64)).round().max(1.0);
+                    let anchor_frame = ((downbeat_ms as f64) * (sr as f64)) / 1000.0;
+                    let win_start = window_start_frame as f64;
+                    let rel_phase = (anchor_frame - win_start).rem_euclid(bar_frames);
+                    let first_db = (rel_phase.round() as usize).min(cue.cue_out_frame);
+                    let adjusted_first = if first_db < cue.cue_in_frame {
+                        let need = ((cue.cue_in_frame - first_db) as f64 / bar_frames).ceil() as usize;
+                        (first_db + need * (bar_frames as usize)).min(cue.cue_out_frame)
+                    } else {
+                        first_db
+                    };
+                    cue.first_downbeat_frame = adjusted_first;
+                    if cue.cue_out_frame > adjusted_first {
+                        let bars_fit = (cue.cue_out_frame - adjusted_first) / (bar_frames as usize).max(1);
+                        cue.last_downbeat_frame =
+                            (adjusted_first + bars_fit * (bar_frames as usize)).min(cue.cue_out_frame);
+                    } else {
+                        cue.last_downbeat_frame = adjusted_first;
+                    }
                 }
             }
         }
+    }
+
+    /// Pop safe early `Deck A` frames while `CapturingDeckB` is waiting on a slow network stream
+    /// so downstream `pcmbuf` never underruns mid-track. Reserves enough `Deck A` tail for the mix.
+    pub fn pop_safe_premix_a_s16(&mut self, out_s16: &mut [i16]) -> (usize, u32) {
+        if self.spill_cursor * 2 < self.spill_pcm.len() {
+            return self.pop_spill_s16(out_s16);
+        }
+        if self.phase != MixerPhase::CapturingDeckB {
+            return (0, 0);
+        }
+        let sr = self.sample_rate as usize;
+        let reserve_frames = match self.cfg.length {
+            crate::TransitionLength::Short4Bars => sr * 9,
+            crate::TransitionLength::Club8Bars => sr * 13,
+            crate::TransitionLength::Long12s => sr * 13,
+        };
+        let avail_a = self.deck_a_pcm.len() / 2;
+        if avail_a <= reserve_frames {
+            return (0, 0);
+        }
+        let safe_frames = (avail_a - reserve_frames).min(out_s16.len() / 2);
+        if safe_frames == 0 {
+            return (0, 0);
+        }
+        out_s16[..safe_frames * 2].copy_from_slice(&self.deck_a_pcm[..safe_frames * 2]);
+        self.deck_a_pcm.drain(..safe_frames * 2);
+        let a0 = (self.deck_a_capture_start_frame + self.deck_a_emitted_spill_frames) as f64;
+        self.deck_a_spilled_frames += safe_frames as u64;
+        self.deck_a_emitted_spill_frames += safe_frames as u64;
+        let a1 = (self.deck_a_capture_start_frame + self.deck_a_emitted_spill_frames) as f64;
+        self.record_span(
+            safe_frames,
+            false,
+            a0,
+            a1,
+            0.0,
+            0.0,
+            DjTelemetry::default(),
+        );
+        (safe_frames, self.frames_to_ms(a0))
     }
 
     /// Finish `Deck A` capture, run `cue_scanner` on `Deck A`'s tail, and move to `CapturingDeckB`.
@@ -529,12 +608,24 @@ impl DualDeckMixer {
         self.album_b.push_str(album_b);
         self.track_num_b = track_num_b;
         self.deck_b_is_native_nsf = deck_b_is_native_nsf;
+
+        // Anchor `deck_a_capture_start_frame` against known `deck_a_duration_ms` if codec packet
+        // timestamps overshot slightly at capture start, guaranteeing Deck A never hits 0:00 early!
+        let captured_a_frames = self.deck_a_spilled_frames + (self.deck_a_pcm.len() / 2) as u64;
+        if self.deck_a_duration_ms > 0 {
+            let known_dur_frames =
+                (self.deck_a_duration_ms * (self.sample_rate as u64)) / 1000;
+            if self.deck_a_capture_start_frame + captured_a_frames > known_dur_frames {
+                self.deck_a_capture_start_frame =
+                    known_dur_frames.saturating_sub(captured_a_frames);
+            }
+        }
+
         self.cue_a = analyze_pcm_s16(&self.deck_a_pcm, self.sample_rate);
-        Self::apply_bpm_hint(&mut self.cue_a, self.hint_bpm_a);
-        // Ensure `deck_a_duration_ms` is at least the exact total decoded frame length of Deck A
-        let total_a_frames = self.deck_a_capture_start_frame
-            + self.deck_a_spilled_frames
-            + (self.deck_a_pcm.len() / 2) as u64;
+        let win_a_start = self.deck_a_capture_start_frame + self.deck_a_spilled_frames;
+        Self::apply_bpm_hint(&mut self.cue_a, self.hint_bpm_a, win_a_start, self.sample_rate);
+
+        let total_a_frames = self.deck_a_capture_start_frame + captured_a_frames;
         let true_a_ms = (total_a_frames * 1000) / (self.sample_rate as u64);
         if self.deck_a_duration_ms < true_a_ms {
             self.deck_a_duration_ms = true_a_ms;
@@ -558,7 +649,7 @@ impl DualDeckMixer {
             let sr = self.sample_rate as usize;
             let has_bpm_hint_b = self
                 .hint_bpm_b
-                .is_some_and(|(bpm, conf)| (60.0..=200.0).contains(&bpm) && conf >= 0.55);
+                .is_some_and(|(bpm, conf, _)| (60.0..=200.0).contains(&bpm) && conf >= 0.45);
             let min_frames = if self.manual_quick_cut {
                 (sr * 35) / 100 // 350 ms for instant manual Quick Cut
             } else if self.cfg.mode == CrossfadeMode::ClassicFade
@@ -581,7 +672,7 @@ impl DualDeckMixer {
 
     fn commit_transition_plan(&mut self) {
         self.cue_b = analyze_pcm_s16(&self.deck_b_pcm, self.sample_rate);
-        Self::apply_bpm_hint(&mut self.cue_b, self.hint_bpm_b);
+        Self::apply_bpm_hint(&mut self.cue_b, self.hint_bpm_b, 0, self.sample_rate);
         // If `Deck B` is still streaming (`!deck_b_eof`), expose its full track length to `plan_transition`
         // so early plan commit (`1.5s..5.5s` intro lookahead) never truncates `8s`/`12s` fade lengths!
         if !self.deck_b_eof {
@@ -739,9 +830,33 @@ impl DualDeckMixer {
     /// Compute the exact speaker-front playhead & telemetry given `downstream_frames`
     /// of rendered audio still queued between `DualDeckMixer` and the hardware DAC.
     pub fn playhead_at_delay_frames(&self, downstream_frames: usize) -> PlayheadSnapshot {
-        let target_out = self
-            .total_emitted_frames
-            .saturating_sub(downstream_frames as u64);
+        let ds_u64 = downstream_frames as u64;
+        if ds_u64 > self.total_emitted_frames {
+            let pre_roll = (ds_u64 - self.total_emitted_frames) as f64;
+            let anchor_a = self
+                .playhead_spans
+                .front()
+                .map(|s| s.a_frame_start)
+                .unwrap_or(self.deck_a_capture_start_frame as f64);
+            let a_frame = (anchor_a - pre_roll).max(0.0);
+            let a_el = self.frames_to_ms(a_frame);
+            let a_rem = if self.deck_a_duration_ms > 0 {
+                (self.deck_a_duration_ms.saturating_sub(a_el as u64)) as u32
+            } else {
+                0
+            };
+            return PlayheadSnapshot {
+                is_deck_b_foreground: false,
+                audible_elapsed_ms: a_el,
+                audible_remaining_ms: a_rem,
+                deck_a_elapsed_ms: a_el,
+                deck_a_remaining_ms: a_rem,
+                deck_b_elapsed_ms: 0,
+                telemetry: DjTelemetry::default(),
+            };
+        }
+
+        let target_out = self.total_emitted_frames - ds_u64;
 
         let (is_b_fg, a_frame, b_frame, tel) = if let Some(first) = self.playhead_spans.front() {
             if target_out <= first.start_out_frame {
@@ -852,6 +967,7 @@ impl DualDeckMixer {
 
         let mut written = 0usize;
         let mut crossed_midpoint = false;
+        let start_emitted = self.total_emitted_frames;
 
         while written < cap_frames {
             // Drain any unread lossless `Deck A` spill frames before `PreMixDeckA`
@@ -1102,9 +1218,10 @@ impl DualDeckMixer {
             }
         }
 
-        let snap = self.playhead_at_delay_frames(0);
+        // Stamp chunk with the exact foreground playhead at the START of this chunk (`start_emitted`)
+        let lookback = (self.total_emitted_frames.saturating_sub(start_emitted)) as usize;
+        let snap = self.playhead_at_delay_frames(lookback);
         let chunk_el = if crossed_midpoint {
-            // The chunk ending at `crossed_midpoint` is Deck A's final pre-midpoint chunk
             snap.deck_a_elapsed_ms
         } else {
             snap.audible_elapsed_ms

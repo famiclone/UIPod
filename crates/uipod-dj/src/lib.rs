@@ -6,7 +6,9 @@
 //! 3. Web Studio Simulator (`wasm32-unknown-unknown` Web Audio)
 
 pub mod cue_scanner;
+pub mod decoder;
 pub mod filter;
+pub mod manual;
 pub mod mixer;
 pub mod planner;
 pub mod resampler;
@@ -14,6 +16,13 @@ pub mod wsola;
 
 pub use cue_scanner::{analyze_pcm_f32, analyze_pcm_s16, DeckCueAnalysis};
 pub use filter::{DeckChannelStrip, OnePoleSmoother, StereoWashDelay};
+pub use manual::{
+    build_in_memory_deck_track, compute_zoomed_24_bars, evaluate_manual_crossfader,
+    BassSwapFilter, DeckAtomicControls, DeckRamStore, DjMacroFilter, LoadedDeckTrack, ManualDjCore,
+    PinnedBeatLoop, PinnedPcmWindow, RAM_CHUNK_FRAMES,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use manual::{prepare_streaming_deck_track, DeckRefillWorker, RefillCmd};
 pub use mixer::{DualDeckMixer, MixerPhase, PlayheadSnapshot};
 pub use planner::{
     evaluate_mix_curves, fold_bpm_to_reference, plan_transition, should_respect_album_gapless,
@@ -597,5 +606,107 @@ mod tests {
             assert!(saw_deck_a_during_mix, "Mode {mode:?}: Expected active pre-midpoint mix on Deck A");
             assert!(saw_clean_deck_b_handoff, "Mode {mode:?}: Expected clean midpoint handoff to Deck B");
         }
+    }
+
+    #[test]
+    fn test_lossless_burst_producer_writes_and_exact_eof_tail_drain() {
+        let sr = 44_100u32;
+        // 28 seconds of uniquely identifiable stereo samples (> 18s MAX_DECK_A_SECONDS cap!)
+        let total_frames = (sr as usize) * 28 + 317;
+        let mut src = Vec::with_capacity(total_frames * 2);
+        for f in 0..total_frames {
+            let l = ((f % 30_000) as i16).wrapping_sub(15_000);
+            let r = (((f * 7) % 30_000) as i16).wrapping_sub(15_000);
+            src.push(l);
+            src.push(r);
+        }
+
+        let mut mixer = DualDeckMixer::new(sr);
+        mixer.set_config(DjConfig {
+            mode: CrossfadeMode::DjMasterTempo,
+            length: TransitionLength::Club8Bars,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        });
+        mixer.begin_deck_a_capture(sr, "BurstAlbum", 1, false, false);
+        mixer.set_track_timing(0, ((total_frames as u64 * 1000) / sr as u64) as u32, 0);
+
+        // Push irregular faster-than-1x bursts (up to 65,536 frames at once) while consumer pulls slowly
+        let burst_sizes = [4096usize, 65_536, 17, 131_072, 1024, 99_991, 513];
+        let mut pushed = 0usize;
+        let mut bi = 0usize;
+        let mut drained = Vec::with_capacity(total_frames * 2);
+        let mut pull_buf = [0i16; 512 * 2];
+
+        while pushed < total_frames {
+            let chunk = burst_sizes[bi % burst_sizes.len()].min(total_frames - pushed);
+            bi += 1;
+            mixer.push_deck_a_frames(&src[pushed * 2..(pushed + chunk) * 2]);
+            pushed += chunk;
+
+            // Pull only 1 small 512-frame slice per giant producer burst (simulating heavy backpressure)
+            let (got, _) = mixer.pop_spill_s16(&mut pull_buf);
+            if got > 0 {
+                drained.extend_from_slice(&pull_buf[..got * 2]);
+            }
+        }
+
+        // Simulate EOF with no Deck B -> `flush_to_gapless_drain` must emit 100% of remaining samples!
+        mixer.flush_to_gapless_drain();
+        while mixer.phase() != MixerPhase::Idle {
+            let (got, _, _) = mixer.render_s16_timed(&mut pull_buf);
+            if got == 0 {
+                break;
+            }
+            drained.extend_from_slice(&pull_buf[..got * 2]);
+        }
+
+        assert_eq!(
+            drained.len(),
+            src.len(),
+            "Expected N={} samples out for N={} samples in (zero drops/truncation)",
+            src.len() / 2,
+            drained.len() / 2
+        );
+        assert_eq!(drained, src, "Bit-exact sample integrity violated across spill + EOF tail drain");
+    }
+
+    #[test]
+    fn test_preroll_and_slow_stream_deck_b_never_freeze_remaining_time_or_starve() {
+        let sr = 44_100u32;
+        let frames_a = (sr as usize) * 18;
+        let s16_a = vec![4000i16; frames_a * 2];
+
+        let mut mixer = DualDeckMixer::new(sr);
+        mixer.set_config(DjConfig {
+            mode: CrossfadeMode::ClassicFade,
+            length: TransitionLength::Short4Bars,
+            max_stretch: MaxTempoStretch::Pct10,
+            keep_album_gapless: true,
+            quick_cut_on_next: true,
+        });
+
+        // Codec timestamp slightly overshot by +350 ms at capture start (`162_350 ms` on a `180_000 ms` track)
+        mixer.begin_deck_a_capture(sr, "StreamA", 1, false, false);
+        mixer.set_track_timing(162_350, 180_000, 200_000);
+        mixer.push_deck_a_frames(&s16_a);
+        mixer.finish_deck_a_and_begin_deck_b("StreamB", 1, false);
+
+        // Before Deck B arrives, `pop_safe_premix_a_s16` yields safe prefix frames so `pcmbuf` never starves
+        let mut pre_buf = [0i16; 4096 * 2];
+        let (safe_got, el_ms) = mixer.pop_safe_premix_a_s16(&mut pre_buf);
+        assert_eq!(safe_got, 4096);
+        assert_eq!(el_ms, 162_000, "Anchored capture start should align exact 18s tail to 162,000 ms");
+
+        // With 4.0s (`176,400` frames) still queued downstream (including ~3.9s of pre-capture audio),
+        // playhead lookback must report ~158,093 ms (`> 21,800 ms` remaining), never freezing at 162,000 ms!
+        let snap = mixer.playhead_at_delay_frames(sr as usize * 4);
+        assert!(!snap.is_deck_b_foreground);
+        assert!(
+            (21_800..=22_000).contains(&snap.audible_remaining_ms),
+            "Expected ~21.9s remaining with 4s downstream pre-roll, got {} ms",
+            snap.audible_remaining_ms
+        );
     }
 }

@@ -57,6 +57,27 @@ fn canonicalize_mount_prefix(path: &str) -> String {
             return out;
         }
     }
+    // Strip ephemeral Subsonic / Jellyfin auth query parameters (`t=`, `s=`, `api_key=`, `ApiKey=`)
+    // so remote stream URLs produce stable cache keys across sessions.
+    if (p.starts_with("http://") || p.starts_with("https://")) && p.contains('?') {
+        if let Some((base, query)) = p.split_once('?') {
+            let mut kept: Vec<&str> = query
+                .split('&')
+                .filter(|kv| {
+                    let k = kv.split('=').next().unwrap_or("");
+                    !matches!(
+                        k.to_ascii_lowercase().as_str(),
+                        "t" | "s" | "u" | "v" | "c" | "f" | "api_key" | "apikey" | "x-emby-token"
+                    )
+                })
+                .collect();
+            kept.sort_unstable();
+            if kept.is_empty() {
+                return base.to_string();
+            }
+            return format!("{base}?{}", kept.join("&"));
+        }
+    }
     p.to_string()
 }
 

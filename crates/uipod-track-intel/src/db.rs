@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use uipod_plugin_sdk::{PluginTrackAnalysis, TRACK_ANALYSIS_RECORD_BYTES};
 
 pub const DB_MAGIC: &[u8; 4] = b"UTI1";
-pub const DB_VERSION: u16 = 1;
+pub const DB_VERSION: u16 = 2;
 pub const DB_HEADER_BYTES: usize = 32;
 pub const RECORD_STRIDE: usize = TRACK_ANALYSIS_RECORD_BYTES; // 512 bytes
 

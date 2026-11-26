@@ -191,6 +191,44 @@ void codec_thread_do_callback(void (*fn)(void), unsigned int *id)
 
 /** --- codec API callbacks --- **/
 
+/* Check `codec_queue` while inserting already-decoded PCM frames:
+ * - Only abort (`false`) on `Q_CODEC_SEEK` or `Q_CODEC_STOP` (discontinuity).
+ * - On `Q_CODEC_PAUSE`, park cleanly in place and resume without dropping a single
+ *   decoded sample from `src` or `DualDeckMixer`! */
+static bool codec_may_continue_insert(void)
+{
+    while (!queue_empty(&codec_queue))
+    {
+        struct queue_event ev;
+        queue_peek(&codec_queue, &ev);
+
+        switch (ev.id)
+        {
+        case Q_CODEC_SEEK:
+        case Q_CODEC_STOP:
+            return false;
+
+        case Q_CODEC_PAUSE:
+            LOGFQUEUE("codec < Q_CODEC_PAUSE (preserving insert)");
+            queue_wait(&codec_queue, &ev);
+            codec_queue_ack(Q_CODEC_PAUSE);
+            queue_wait(&codec_queue, NULL);
+            continue;
+
+        case Q_CODEC_RUN:
+            queue_wait(&codec_queue, &ev);
+            codec_queue_ack(Q_CODEC_RUN);
+            continue;
+
+        default:
+            queue_wait(&codec_queue, &ev);
+            codec_queue_ack(Q_NULL);
+            continue;
+        }
+    }
+    return true;
+}
+
 static void codec_dj_pcm_sink(const int16_t *stereo_s16,
                               int frames,
                               unsigned long elapsed,
@@ -199,9 +237,7 @@ static void codec_dj_pcm_sink(const int16_t *stereo_s16,
     int rem = frames;
     const int16_t *p = stereo_s16;
 
-    while (rem > 0 &&
-           (LIKELY(queue_empty(&codec_queue)) ||
-            codec_check_queue__have_msg() >= 0))
+    while (rem > 0 && codec_may_continue_insert())
     {
         int req = MAX(rem, 1024);
         int16_t *out = pcmbuf_request_buffer(&req);
@@ -231,8 +267,7 @@ static void codec_pcmbuf_insert_callback(
     if (!uipod_dj_is_passthrough(ci.id3))
     {
         int16_t stage_buf[1024 * 2];
-        while (LIKELY(queue_empty(&codec_queue)) ||
-               codec_check_queue__have_msg() >= 0)
+        while (codec_may_continue_insert())
         {
             struct dsp_buffer dst;
             dst.remcount = 0;
@@ -255,8 +290,7 @@ static void codec_pcmbuf_insert_callback(
         return;
     }
 
-    while (LIKELY(queue_empty(&codec_queue)) ||
-           codec_check_queue__have_msg() >= 0)
+    while (codec_may_continue_insert())
     {
         struct dsp_buffer dst;
         dst.remcount = 0;
@@ -540,7 +574,11 @@ static void run_codec(void)
     if (!encoder)
     {
         if (status == CODEC_OK)
+        {
+            /* Purge any residual SRC / DSP lookahead tail samples before closing track */
+            codec_pcmbuf_insert_callback(NULL, NULL, 0);
             uipod_dj_on_codec_eof(ci.id3, codec_dj_pcm_sink);
+        }
 
         /* Codec is done with it - let it move */
         buf_pin_handle(ci.audio_hid, false);

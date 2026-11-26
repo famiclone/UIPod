@@ -1888,6 +1888,7 @@ void tape_deck_fx_render_ff_period(int16_t *out_interleaved,
     const float q_body = 0.55f;
     const float f_tape = 2.0f * sinf((float)M_PI * 2150.0f * inv_fs);
     const float q_tape = 0.85f;
+    const float k_ff_motor_gain = 0.40f; /* -8 dB quieter FF/RW motor sound */
 
     for (int i = 0; i < frames; i++)
     {
@@ -1940,7 +1941,7 @@ void tape_deck_fx_render_ff_period(int16_t *out_interleaved,
             float tape_whir = st.ff_tape_bp * (0.68f + 0.32f * hub_wobble)
                             + spline_tick * wn * 0.30f;
 
-            float mech = (motor_body * 0.055f + tape_whir * 0.048f) * vel;
+            float mech = (motor_body * 0.055f + tape_whir * 0.048f) * vel * k_ff_motor_gain;
             float pan = (st.ff_last_dir < 0) ? -0.14f : 0.14f;
             sig_l += mech * (1.0f - pan);
             sig_r += mech * (1.0f + pan);
@@ -1950,9 +1951,9 @@ void tape_deck_fx_render_ff_period(int16_t *out_interleaved,
         {
             st.ff_clack_hi_ph += 1720.0f * inv_fs;
             st.ff_clack_lo_ph += 540.0f * inv_fs;
-            float clack = fast_sin2pi(st.ff_clack_hi_ph) * st.ff_clack_hi_env
-                        + fast_sin2pi(st.ff_clack_lo_ph) * st.ff_clack_lo_env
-                        + wn * st.ff_clack_nz_env;
+            float clack = (fast_sin2pi(st.ff_clack_hi_ph) * st.ff_clack_hi_env
+                         + fast_sin2pi(st.ff_clack_lo_ph) * st.ff_clack_lo_env
+                         + wn * st.ff_clack_nz_env) * k_ff_motor_gain;
             sig_l += clack;
             sig_r += clack;
             st.ff_clack_hi_env *= dec_hi;

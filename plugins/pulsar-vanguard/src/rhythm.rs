@@ -116,9 +116,6 @@ pub struct BarPhaseTracker {
     silence_sec: f32,
     was_silent_before_onset: bool,
     pll_rate_trim: f32,
-    ioi_bpms: [f32; 8],
-    ioi_cursor: usize,
-    ioi_len: usize,
 
     // Loudness integrator across the active bar (feeds Wave Cannon caliber)
     energy_accum: f32,
@@ -140,9 +137,6 @@ impl BarPhaseTracker {
             silence_sec: 0.0,
             was_silent_before_onset: false,
             pll_rate_trim: 0.0,
-            ioi_bpms: [120.0; 8],
-            ioi_cursor: 0,
-            ioi_len: 0,
             energy_accum: 0.0,
             energy_frames: 0,
             last_bar_energy: 0.5,
@@ -160,8 +154,6 @@ impl BarPhaseTracker {
         self.silence_sec = 0.0;
         self.was_silent_before_onset = false;
         self.pll_rate_trim = 0.0;
-        self.ioi_cursor = 0;
-        self.ioi_len = 0;
         self.energy_accum = 0.0;
         self.energy_frames = 0;
         self.last_bar_energy = 0.5;
@@ -352,37 +344,11 @@ impl BarPhaseTracker {
 
         if is_onset {
             self.was_silent_before_onset = prev_silence >= 2.2;
-            let ioi = self.since_last_onset_sec;
             self.since_last_onset_sec = 0.0;
-            if (0.22..=2.0).contains(&ioi) {
-                self.push_ioi_bpm(self.fold_bpm(60.0 / ioi));
-            }
         } else {
             self.was_silent_before_onset = false;
         }
         is_onset
-    }
-
-    fn push_ioi_bpm(&mut self, candidate_bpm: f32) {
-        self.ioi_bpms[self.ioi_cursor] = candidate_bpm;
-        self.ioi_cursor = (self.ioi_cursor + 1) % self.ioi_bpms.len();
-        if self.ioi_len < self.ioi_bpms.len() {
-            self.ioi_len += 1;
-        }
-        if self.ioi_len >= 3 {
-            // Zero-allocation stack median filter: rejects occasional syncopations and missed beats
-            let mut scratch = [0.0_f32; 8];
-            scratch[..self.ioi_len].copy_from_slice(&self.ioi_bpms[..self.ioi_len]);
-            for i in 1..self.ioi_len {
-                let mut j = i;
-                while j > 0 && scratch[j - 1] > scratch[j] {
-                    scratch.swap(j - 1, j);
-                    j -= 1;
-                }
-            }
-            let median_bpm = scratch[self.ioi_len / 2];
-            self.effective_bpm += (median_bpm - self.effective_bpm) * 0.20;
-        }
     }
 
     fn advance_live_pll(&mut self, dt: f32, raw_onset: bool, vu: f32) {
@@ -426,103 +392,6 @@ impl BarPhaseTracker {
 
     fn fold_bpm(&self, bpm: f32) -> f32 {
         bpm * self.octave_scale_factor(bpm) as f32
-    }
-}
-
-/// Zero-allocation time-domain sub-bass (`40..120 Hz`), spectral-flux, and VU extractor
-/// operating directly on interleaved stereo `i16` PCM windows at ~44.1 kHz.
-pub struct LivePcmAnalyzer {
-    lp_120: f32,
-    lp_40: f32,
-    lp_mid: f32,
-    prev_sample: f32,
-    prev_mid_e: f32,
-    prev_hi_e: f32,
-    peak_low_agc: f32,
-    peak_flux_agc: f32,
-}
-
-impl Default for LivePcmAnalyzer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LivePcmAnalyzer {
-    pub const fn new() -> Self {
-        Self {
-            lp_120: 0.0,
-            lp_40: 0.0,
-            lp_mid: 0.0,
-            prev_sample: 0.0,
-            prev_mid_e: 0.0,
-            prev_hi_e: 0.0,
-            peak_low_agc: 0.12,
-            peak_flux_agc: 0.08,
-        }
-    }
-
-    /// Analyze `n_frames` stereo samples (`samples[..n_frames * 2]`) and return `(low_energy, flux_hint, vu_level)`.
-    pub fn analyze_window(&mut self, samples: &[i16], n_frames: usize, dt_sec: f32) -> (f32, f32, f32) {
-        let n = n_frames.min(samples.len() / 2);
-        if n == 0 {
-            return (0.0, 0.0, 0.0);
-        }
-
-        // One-pole cutoff coefficients @ 44.1 kHz:
-        // alpha = 1 - exp(-2*pi*fc/44100): 40 Hz -> ~0.0057, 120 Hz -> ~0.0170, 1.4 kHz -> ~0.18
-        const A_40: f32 = 0.0057;
-        const A_120: f32 = 0.0170;
-        const A_MID: f32 = 0.1800;
-        const INV_I16: f32 = 1.0 / 32768.0;
-
-        let mut low_sq = 0.0_f32;
-        let mut mid_sq = 0.0_f32;
-        let mut hi_sq = 0.0_f32;
-        let mut full_sq = 0.0_f32;
-
-        for i in 0..n {
-            let l = (samples[i * 2] as f32) * INV_I16;
-            let r = (samples[i * 2 + 1] as f32) * INV_I16;
-            let mono = (l + r) * 0.5;
-
-            self.lp_40 += A_40 * (mono - self.lp_40);
-            self.lp_120 += A_120 * (mono - self.lp_120);
-            self.lp_mid += A_MID * (mono - self.lp_mid);
-
-            // Band-pass 40..120 Hz isolates kick drums & basslines cleanly from DC rumble
-            let band_40_120 = self.lp_120 - self.lp_40;
-            let mid = self.lp_mid - self.lp_120;
-            let hi = mono - self.prev_sample;
-            self.prev_sample = mono;
-
-            low_sq += band_40_120 * band_40_120;
-            mid_sq += mid * mid;
-            hi_sq += hi * hi;
-            full_sq += mono * mono;
-        }
-
-        let inv_n = 1.0 / (n as f32);
-        let low_rms = (low_sq * inv_n).sqrt();
-        let mid_rms = (mid_sq * inv_n).sqrt();
-        let hi_rms = (hi_sq * inv_n).sqrt();
-        let full_rms = (full_sq * inv_n).sqrt();
-
-        // Broadband positive spectral flux across mid + high bands (snare, synth stabs, chiptune attacks)
-        let raw_flux = (mid_rms - self.prev_mid_e).max(0.0) + (hi_rms - self.prev_hi_e).max(0.0) * 0.8;
-        self.prev_mid_e = mid_rms;
-        self.prev_hi_e = hi_rms;
-
-        // Slow automatic gain control so quiet acoustic/MIDI tracks and mastered EDM both hit 0..1 cleanly
-        let decay = (1.0 - dt_sec * 0.45).clamp(0.90, 0.999);
-        self.peak_low_agc = (self.peak_low_agc * decay).max(low_rms).max(0.04);
-        self.peak_flux_agc = (self.peak_flux_agc * decay).max(raw_flux).max(0.025);
-
-        let low_norm = (low_rms / self.peak_low_agc).clamp(0.0, 1.0);
-        let flux_norm = (raw_flux / self.peak_flux_agc).clamp(0.0, 1.0);
-        let vu_norm = (full_rms * 3.1).sqrt().clamp(0.0, 1.0);
-
-        (low_norm, flux_norm, vu_norm)
     }
 }
 

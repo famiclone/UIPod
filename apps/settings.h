@@ -420,6 +420,8 @@ struct user_settings
     /* UIPod visualizer */
     int viz_start_delay;  /* WPS idle seconds before auto-starting the visualizer (0=never) */
     int viz_transition;   /* seconds each preset shows before switching to a random next */
+    int viz_last_preset;  /* persisted last-selected visualizer preset index */
+    bool viz_invert;      /* swap 4-shade background <-> foreground inside visualizers */
 #if BATTERY_CAPACITY_INC > 0
     int battery_capacity; /* in mAh */
 #endif

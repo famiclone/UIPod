@@ -493,6 +493,20 @@ static void tp_mono_art_value_cycle(void *ctx, int dir)
 static const struct menu_value_cb uipod_mono_art_value =
     { tp_mono_art_value_get, tp_mono_art_value_cycle, NULL };
 
+static const char *tp_viz_invert_value_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return uipod_toggle_str(global_settings.viz_invert);
+}
+static void tp_viz_invert_value_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    global_settings.viz_invert = !global_settings.viz_invert;
+    settings_save();
+}
+static const struct menu_value_cb uipod_viz_invert_value =
+    { tp_viz_invert_value_get, tp_viz_invert_value_cycle, NULL };
+
 static bool tp_lang_is_ukrainian(void)
 {
     return strcmp((const char *)global_settings.lang_file, "ukrainian") == 0;
@@ -555,7 +569,7 @@ static void tp_transition_value_cycle(void *ctx, int dir)
 static const struct menu_value_cb uipod_transition_value =
     { tp_transition_value_get, tp_transition_value_cycle, NULL };
 
-/* Settings -> Display (#1172): Theme, Customize Theme, Screen Transition, Language, Monochrome Album Art, Main Menu. */
+/* Settings -> Display (#1172): Theme, Customize Theme, Screen Transition, Language, Monochrome Album Art, Invert Visualizer, Main Menu. */
 MENUITEM_VALUE(tp_pw_theme, ID2P(LANG_UIPOD_THEME), &uipod_theme_value, Icon_NOICON);
 MENUITEM_FUNCTION(tp_pw_customize_theme, MENU_SHOW_CHEVRON,
                   ID2P(LANG_UIPOD_CUSTOMIZE_THEME), uipod_customize_theme_page,
@@ -563,12 +577,13 @@ MENUITEM_FUNCTION(tp_pw_customize_theme, MENU_SHOW_CHEVRON,
 MENUITEM_VALUE(tp_pw_transition, ID2P(LANG_UIPOD_TRANSITION), &uipod_transition_value, Icon_NOICON);
 MENUITEM_VALUE(tp_app_lang, ID2P(LANG_UIPOD_LANGUAGE), &uipod_lang_value, Icon_NOICON);
 MENUITEM_VALUE(tp_pw_mono_art, ID2P(LANG_UIPOD_MONO_ALBUM_ART), &uipod_mono_art_value, Icon_NOICON);
+MENUITEM_VALUE(tp_pw_viz_invert, ID2P(LANG_UIPOD_INVERT_VISUALIZER), &uipod_viz_invert_value, Icon_NOICON);
 MENUITEM_FUNCTION(tp_app_mainmenu, MENU_SHOW_CHEVRON, ID2P(LANG_UIPOD_MAINMENU),
                   uipod_mainmenu_settings, NULL, Icon_NOICON);
 MAKE_MENU(uipod_appearance_menu, ID2P(LANG_UIPOD_APPEARANCE), NULL,
           Icon_Submenu_Entered,
           &tp_pw_theme, &tp_pw_customize_theme, &tp_pw_transition,
-          &tp_app_lang, &tp_pw_mono_art, &tp_app_mainmenu);
+          &tp_app_lang, &tp_pw_mono_art, &tp_pw_viz_invert, &tp_app_mainmenu);
 
 int uipod_appearance_page(void)
 {

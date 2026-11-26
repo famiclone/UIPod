@@ -40,6 +40,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     theme_mono: 'Monochrome album art',
     theme_trans: 'Screen Transition',
     viz_launch: 'Open Visualizer Fullscreen',
+    viz_invert: 'Invert Visualizer',
     viz_shader_title: 'GLSL Fragment Shader Editor',
     viz_compile: 'Compile & Run',
     viz_reset: 'Reset Preset',
@@ -76,7 +77,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
       '10-band Graphic EQ, offline AutoEQ headphone profiles, Direct DAC & 3.5mm Low-Shelf tuning, Dual-Deck Smart DJ Crossfade (Vinyl & Master Tempo sync with Bass Swap), Speed stretch, Walkman Tape Mode, Reverb, Ping-Pong Delay, Chorus, and Flanger.',
     f_plg_title: '4-Shade E-Book Reader & Games',
     f_plg_desc:
-      'Built-in .epub, .fb2 & .mobi reader with chapters, footnotes, dithered illustrations & Sans/Serif fonts, plus 60 FPS games & tools: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch & LCD Plasma.',
+      'Built-in .epub, .fb2 & .mobi reader with chapters, footnotes, dithered illustrations & Sans/Serif fonts, plus 60 FPS games & tools: DJ Mixer, Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch & LCD Plasma.',
     sec_ctrl_title: 'Controls',
     sec_inst_title: 'Installation',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',
@@ -126,6 +127,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
     theme_mono: 'Монохромна обкладинка',
     theme_trans: 'Анімація переходу',
     viz_launch: 'Відкрити візуалізатор',
+    viz_invert: 'Інвертувати візуалізацію',
     viz_shader_title: 'Редактор GLSL Fragment Shader',
     viz_compile: 'Скомпілювати',
     viz_reset: 'Скинути пресет',
@@ -162,7 +164,7 @@ export const STRINGS: Record<Lang, Record<string, string>> = {
       '10-смуговий графічний EQ, офлайн-база AutoEQ, Direct DAC та 3.5mm Low-Shelf, Dual-Deck Smart DJ Crossfade (Vinyl і Master Tempo з Bass Swap), розтягування Speed, емуляція касетної деки, Reverb, Ping-Pong Delay, Chorus і Flanger.',
     f_plg_title: '4-відтінкова Читалка та Ігри',
     f_plg_desc:
-      'Вбудована читалка .epub, .fb2 і .mobi з розділами, виносками, ілюстраціями та вибором шрифту Sans/Serif, а також 60 FPS ігри й утиліти: Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch та LCD Plasma.',
+      'Вбудована читалка .epub, .fb2 і .mobi з розділами, виносками, ілюстраціями та вибором шрифту Sans/Serif, а також 60 FPS ігри й утиліти: DJ Мікшер, Beat Stack, Music Quiz, Sound Racer, Pulsar Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch та LCD Plasma.',
     sec_ctrl_title: 'Керування',
     sec_inst_title: 'Встановлення',
     inst_brick_title: 'TrimUI Brick / Hammer (NextUI)',

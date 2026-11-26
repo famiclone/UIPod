@@ -54,7 +54,8 @@ docker run --rm \
                target/aarch64-unknown-linux-gnu/release/libmusic_quiz.so \
                target/aarch64-unknown-linux-gnu/release/libstopwatch.so \
                target/aarch64-unknown-linux-gnu/release/libtext_viewer.so \
-               target/aarch64-unknown-linux-gnu/release/liblcd_plasma.so; do
+               target/aarch64-unknown-linux-gnu/release/liblcd_plasma.so \
+               target/aarch64-unknown-linux-gnu/release/libdj_mixer.so; do
     pl_base=\$(basename \"\$pl_so\" .so)
     pl_name=\"\${pl_base#lib}.uipod\"
     cp \"\$pl_so\" \"$BUILD_DIR/plugins/\$pl_name\"

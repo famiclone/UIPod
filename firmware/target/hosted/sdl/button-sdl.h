@@ -23,10 +23,14 @@
 #define __BUTTON_SDL_H__
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "config.h"
 #include "SDL.h"
 
 extern int sdl_app_has_input_focus;
+
+void sdl_get_analog_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry);
+void sdl_set_analog_stick_dpad_suppressed(bool suppressed);
 
 
 bool button_hold(void);

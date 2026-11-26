@@ -965,6 +965,17 @@
         "apps/gui/wps.c"
       ],
       "status": "mapped"
+    },
+    {
+      "id": "plugin_dj_mixer",
+      "figcraft_screen": null,
+      "node_id": null,
+      "tokens_file": "crates/uipod-ui/src/lib.rs",
+      "code_files": [
+        "plugins/dj-mixer/src/lib.rs",
+        "web/uipod-wasm/src/plugins.rs"
+      ],
+      "status": "code_only"
     }
   ]
 }

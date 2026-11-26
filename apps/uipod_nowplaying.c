@@ -56,7 +56,9 @@
 #include "status.h"
 #include "string-extra.h"
 #include "system.h"
+#include "tape_deck_fx.h"
 #include "trimpod_alsa.h"
+#include "uipod_dj.h"
 #include "uipod_library.h"
 #include "uipod_nowplaying.h"
 #include "uipod_nsf_ui.h"
@@ -1525,6 +1527,41 @@ void uipod_nowplaying_draw(void)
     struct wps_state *state = get_wps_state();
     struct mp3entry *id3 = state ? state->id3 : NULL;
 
+    struct uipod_rs_dj_playhead dj_ph;
+    memset(&dj_ph, 0, sizeof(dj_ph));
+    const char *dj_path_a = NULL;
+    const char *dj_path_b = NULL;
+    bool dj_active = uipod_dj_query_playhead(&dj_ph, &dj_path_a, &dj_path_b);
+    bool dj_using_nid3 = false;
+    bool dj_show_deck_b = false;
+
+    if (dj_active)
+    {
+        if (dj_ph.is_deck_b_foreground)
+        {
+            dj_show_deck_b = true;
+            if (id3 && dj_path_b && dj_path_b[0] &&
+                strcmp(id3->path, dj_path_b) != 0)
+            {
+                struct mp3entry *nid3 = state ? state->nid3 : NULL;
+                if (!nid3 || !nid3->path[0])
+                    nid3 = audio_next_track();
+                if (nid3 && nid3->path[0])
+                {
+                    id3 = nid3;
+                    dj_using_nid3 = true;
+                }
+            }
+        }
+        else if (id3 && dj_path_b && dj_path_b[0] &&
+                 strcmp(id3->path, dj_path_b) == 0 &&
+                 (!dj_path_a || strcmp(dj_path_a, dj_path_b) != 0))
+        {
+            /* `PLAYING_ID3` already flipped to Deck B across the last ALSA period */
+            dj_show_deck_b = true;
+        }
+    }
+
     ensure_track_inspected(id3);
 
     /* ---- Pure-Rust GPU UI Engine (`taffy` + `femtovg` on GLES 3.0) ----- */
@@ -1538,6 +1575,8 @@ void uipod_nowplaying_draw(void)
         int pl_amt = playlist_amount();
         if (pl_amt <= 0) { pl_pos = 1; pl_amt = 1; }
         if (pl_pos <= 0) pl_pos = 1;
+        if (dj_using_nid3 && pl_amt > 1)
+            pl_pos = (pl_pos < pl_amt) ? (pl_pos + 1) : 1;
 
         char pos_buf[48];
         snprintf(pos_buf, sizeof(pos_buf), "%d of %d", pl_pos, pl_amt);
@@ -1602,19 +1641,42 @@ void uipod_nowplaying_draw(void)
         char el_str[24]  = "";
         char rem_str[24] = "";
 
-        long pos_ms = 0, len_ms = 0;
-        if (id3 && id3->length > 0)
+        long pos_ms = 0, len_ms = 0, rem_ms = 0;
+        if (dj_active && (!state || state->ff_rewind_count == 0))
+        {
+            if (dj_show_deck_b)
+            {
+                pos_ms = (long)dj_ph.deck_b_elapsed_ms;
+                len_ms = (id3 && id3->length > 0) ? (long)id3->length : 0L;
+                if (pos_ms < 0) pos_ms = 0;
+                if (len_ms > 0 && pos_ms > len_ms) pos_ms = len_ms;
+                rem_ms = (len_ms > pos_ms) ? (len_ms - pos_ms) : 0L;
+            }
+            else
+            {
+                pos_ms = (long)dj_ph.deck_a_elapsed_ms;
+                rem_ms = (long)dj_ph.deck_a_remaining_ms;
+                len_ms = (id3 && id3->length > 0)
+                       ? (long)id3->length
+                       : (pos_ms + rem_ms);
+                if (pos_ms < 0) pos_ms = 0;
+                if (len_ms > 0 && pos_ms > len_ms) pos_ms = len_ms;
+                if (rem_ms < 0) rem_ms = 0;
+            }
+        }
+        else if (id3 && id3->length > 0)
         {
             pos_ms = (long)id3->elapsed + (state ? state->ff_rewind_count : 0);
-            /* Subtract live ALSA/SDL hardware sink latency so displayed elapsed/remaining
-             * tracks the exact sample reaching the listener's ears. */
+            /* Subtract live ALSA/SDL + tape deck hardware sink latency so displayed
+             * elapsed/remaining tracks the exact sample reaching the listener's ears. */
             int astat = audio_status();
             if ((astat & AUDIO_STATUS_PLAY) && !(astat & AUDIO_STATUS_PAUSE) &&
                 (!state || state->ff_rewind_count == 0))
             {
-                long hw_delay_ms = (long)(pcm_alsa_output_delay_us() / 1000u);
-                if (hw_delay_ms > 500L)
-                    hw_delay_ms = 500L;
+                long hw_delay_ms = (long)((pcm_alsa_output_delay_us() +
+                                           tape_deck_fx_delay_us()) / 1000u);
+                if (hw_delay_ms > 2000L)
+                    hw_delay_ms = 2000L;
                 if (hw_delay_ms > 0 && pos_ms >= hw_delay_ms)
                     pos_ms -= hw_delay_ms;
             }
@@ -1641,13 +1703,14 @@ void uipod_nowplaying_draw(void)
 
             if (pos_ms < 0) pos_ms = 0;
             if (pos_ms > len_ms) pos_ms = len_ms;
+            rem_ms = (len_ms > pos_ms) ? (len_ms - pos_ms) : 0L;
         }
 
         bar_ratio = (len_ms > 0) ? ((float)pos_ms / (float)len_ms) : 0.0f;
-        long el_sec  = pos_ms / 1000;
-        long tot_sec = len_ms / 1000;
-        long rem_sec = tot_sec - el_sec;
-        if (rem_sec < 0) rem_sec = 0;
+        long el_sec  = pos_ms / 1000L;
+        /* Ceiling rounding for remaining seconds so `-0:00` is NEVER shown while
+         * any audible audio remains in the foreground deck or hardware sink! */
+        long rem_sec = (rem_ms > 0L) ? ((rem_ms + 999L) / 1000L) : 0L;
 
         format_mmss(el_sec, false, el_str, sizeof(el_str));
         format_mmss(rem_sec, true, rem_str, sizeof(rem_str));
@@ -1684,22 +1747,16 @@ void uipod_nowplaying_draw(void)
         np.nsf_loop_progress   = -1.0f;
 
         char dj_label_buf[64] = "";
-        struct uipod_rs_dj_telemetry dj_tel;
-        unsigned long mix_sr = mixer_get_frequency();
-        if (mix_sr == 0)
-            mix_sr = 44100UL;
-        size_t sink_delay_frames =
-            pcmbuf_unplayed_frames() +
-            (size_t)(((uint64_t)pcm_alsa_output_delay_us() * (uint64_t)mix_sr) / 1000000ULL);
-        if (uipod_rs_dj_get_telemetry_synced(&dj_tel, sink_delay_frames) != 0)
+        if (dj_active && dj_ph.telemetry.active != 0)
         {
-            if (dj_tel.mix_kind == 2 && dj_tel.bpm_a > 1.0f && dj_tel.bpm_b > 1.0f)
+            const struct uipod_rs_dj_telemetry *dj_tel = &dj_ph.telemetry;
+            if (dj_tel->mix_kind == 2 && dj_tel->bpm_a > 1.0f && dj_tel->bpm_b > 1.0f)
             {
                 snprintf(dj_label_buf, sizeof(dj_label_buf),
                          "DJ SYNC · %.0f→%.0f BPM",
-                         (double)dj_tel.bpm_a, (double)dj_tel.bpm_b);
+                         (double)dj_tel->bpm_a, (double)dj_tel->bpm_b);
             }
-            else if (dj_tel.mix_kind == 3)
+            else if (dj_tel->mix_kind == 3)
             {
                 snprintf(dj_label_buf, sizeof(dj_label_buf), "DJ WASH › NEXT");
             }
@@ -1708,8 +1765,8 @@ void uipod_nowplaying_draw(void)
                 snprintf(dj_label_buf, sizeof(dj_label_buf), "FADE › NEXT");
             }
             np.dj_status_label    = dj_label_buf;
-            np.dj_progress        = dj_tel.progress;
-            np.dj_bass_swap_flash = (dj_tel.bass_swap_flash != 0);
+            np.dj_progress        = dj_tel->progress;
+            np.dj_bass_swap_flash = (dj_tel->bass_swap_flash != 0);
         }
 
         int nsf_cflags = uipod_rs_nsf_get_active_chip_flags();

@@ -900,6 +900,41 @@ mod tests {
         ) {
         }
 
+        extern "C" fn m_dj_acq() -> bool {
+            false
+        }
+        extern "C" fn m_dj_rel() {}
+        unsafe extern "C" fn m_dj_load(_: u8, _: *const c_char, _: bool) -> bool {
+            false
+        }
+        extern "C" fn m_dj_play(_: u8, _: bool, _: bool) {}
+        extern "C" fn m_dj_cue(_: u8, _: u8) {}
+        extern "C" fn m_dj_seek_beats(_: u8, _: i32) {}
+        extern "C" fn m_dj_xfade(_: f32, _: bool) {}
+        extern "C" fn m_dj_tempo(_: u8, _: f32, _: u8, _: f32) {}
+        extern "C" fn m_dj_sync(_: u8, _: bool) {}
+        extern "C" fn m_dj_loop(_: u8, _: u8) {}
+        extern "C" fn m_dj_filter(_: u8, _: f32) {}
+        unsafe extern "C" fn m_dj_tel(_: *mut uipod_plugin_sdk::PluginDjTelemetry) -> bool {
+            false
+        }
+        extern "C" fn m_dj_src_cnt(_: u8) -> usize {
+            0
+        }
+        unsafe extern "C" fn m_dj_src_at(
+            _: u8,
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut c_char,
+            _: usize,
+            _: *mut u32,
+        ) -> bool {
+            false
+        }
+
         let mock_api = UIPodPluginApi {
             api_version: UIPOD_PLUGIN_API_VERSION,
             get_ticks_ms: m_ticks,
@@ -940,6 +975,20 @@ mod tests {
             audio_get_track_analysis: m_trk_analysis,
             audio_get_live_telemetry: m_live_tel,
             canvas_draw_rgba_image: m_rgba_img,
+            dj_session_acquire: m_dj_acq,
+            dj_session_release: m_dj_rel,
+            dj_deck_load: m_dj_load,
+            dj_deck_set_playing: m_dj_play,
+            dj_deck_cue: m_dj_cue,
+            dj_deck_seek_beats: m_dj_seek_beats,
+            dj_set_crossfader: m_dj_xfade,
+            dj_deck_set_tempo: m_dj_tempo,
+            dj_deck_set_sync: m_dj_sync,
+            dj_deck_set_loop: m_dj_loop,
+            dj_deck_set_filter: m_dj_filter,
+            dj_get_telemetry: m_dj_tel,
+            dj_source_track_count: m_dj_src_cnt,
+            dj_source_track_at: m_dj_src_at,
         };
 
         let sample_txt = tmp_dir.join("hello.txt");

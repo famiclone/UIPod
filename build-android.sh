@@ -272,7 +272,8 @@ for pl_so in "$ROOT/target/aarch64-linux-android/release/libbrick_breaker.so" \
              "$ROOT/target/aarch64-linux-android/release/libmusic_quiz.so" \
              "$ROOT/target/aarch64-linux-android/release/libstopwatch.so" \
              "$ROOT/target/aarch64-linux-android/release/libtext_viewer.so" \
-             "$ROOT/target/aarch64-linux-android/release/liblcd_plasma.so"; do
+             "$ROOT/target/aarch64-linux-android/release/liblcd_plasma.so" \
+             "$ROOT/target/aarch64-linux-android/release/libdj_mixer.so"; do
   pl_base="$(basename "$pl_so" .so)"
   pl_name="${pl_base#lib}"
   cp "$pl_so" "$APK_WORK/lib/arm64-v8a/libuipod_plugin_${pl_name}.so"

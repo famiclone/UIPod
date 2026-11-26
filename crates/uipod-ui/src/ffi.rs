@@ -1874,12 +1874,16 @@ pub extern "C" fn uipod_rs_viz_set_preset(idx: usize) {
 
 #[no_mangle]
 pub extern "C" fn uipod_rs_viz_toggle_grain() -> bool {
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn uipod_rs_viz_set_invert(invert: bool) {
     if let Ok(mut guard) = SYNC_VIZ.lock() {
         if let Some(wrap) = guard.as_mut() {
-            return wrap.0.toggle_grain();
+            wrap.0.set_invert(invert);
         }
     }
-    false
 }
 
 #[no_mangle]

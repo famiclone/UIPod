@@ -15,7 +15,7 @@ pub mod viz_gl;
 
 pub use hud::{HudCardPayload, HudExitMode, HudRenderItem, HudStack};
 pub use renderer::UiEngine;
-pub use viz_gl::{VizEngine, VizPresetInfo, VIZ_PRESETS};
+pub use viz_gl::{order_visualizer_palette, VizEngine, VizPresetInfo, VIZ_PRESETS};
 
 /// Default `ui.figcraft` background color (`bg-color` = `#D6D8D5`).
 pub const DEFAULT_BG_RGB: u32 = 0xD6D8D5;

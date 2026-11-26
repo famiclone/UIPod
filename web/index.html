@@ -154,8 +154,8 @@
                   <button type="button" class="hit hit-dpad hit-right" data-btn="RIGHT" title="Right (ArrowRight / D)" aria-label="D-Pad Right"></button>
 
                   <!-- ABXY -->
-                  <button type="button" class="hit hit-round hit-x" data-btn="X" title="X (C) — Large Cover / Viz Grain" aria-label="X"></button>
-                  <button type="button" class="hit hit-round hit-y" data-btn="Y" title="Y (V)" aria-label="Y"></button>
+                  <button type="button" class="hit hit-round hit-x" data-btn="X" title="X (C) — Large Cover / EQ Bypass" aria-label="X"></button>
+                  <button type="button" class="hit hit-round hit-y" data-btn="Y" title="Y (V) — Toggle Visualizer" aria-label="Y"></button>
                   <button type="button" class="hit hit-round hit-a" data-btn="A" title="A (Enter / Z) — Select (Hold = Options)" aria-label="A"></button>
                   <button type="button" class="hit hit-round hit-b" data-btn="B" title="B (Esc / X) — Back (Hold = Home)" aria-label="B"></button>
 
@@ -307,8 +307,8 @@
                       Open Visualizer Fullscreen
                     </button>
                     <label class="toggle-chip">
-                      <input type="checkbox" id="chk-viz-fine" />
-                      <span id="lbl-viz-grain">4×4</span>
+                      <input type="checkbox" id="chk-viz-invert" />
+                      <span id="lbl-viz-invert" data-i18n="viz_invert">Invert Visualizer</span>
                     </label>
                   </div>
 
@@ -331,7 +331,7 @@
                     aria-label="GLSL Fragment Shader Editor"
                   ></textarea>
                   <div class="shader-status" id="shader-status">
-                    Uniforms: u_time, u_bands, u_att, u_beat, u_vu, u_transport, wave_mono(x), spec_sample(x), prev_scene(uv)
+                    Uniforms: u_time, u_bands, u_att, u_beat, u_vu, u_vu_hold, u_transport, wave_mono(x), spec_sample(x), prev_scene(uv)
                   </div>
                 </div>
 
@@ -448,6 +448,11 @@
                       <strong>Brick Breaker</strong>
                       <span>Arcade Paddle</span>
                     </button>
+                    <button type="button" class="plugin-card" data-jump="plugin:dj_mixer">
+                      <span class="plugin-tag">APP</span>
+                      <strong>DJ Mixer</strong>
+                      <span>Dual-Deck Live DJ</span>
+                    </button>
                     <button type="button" class="plugin-card" data-jump="plugin:stopwatch">
                       <span class="plugin-tag">APP</span>
                       <strong>Stopwatch</strong>
@@ -537,7 +542,7 @@
               <h3 data-i18n="f_plg_title">4-Shade E-Book Reader &amp; Games</h3>
               <p data-i18n="f_plg_desc">
                 Built-in .epub, .fb2 &amp; .mobi reader with chapters, footnotes, dithered illustrations &amp;
-                Sans/Serif fonts, plus 60 FPS games &amp; tools: Beat Stack, Music Quiz, Sound Racer, Pulsar
+                Sans/Serif fonts, plus 60 FPS games &amp; tools: DJ Mixer, Beat Stack, Music Quiz, Sound Racer, Pulsar
                 Vanguard, Tetris, Snake, Brick Breaker, 2048, Stopwatch &amp; LCD Plasma.
               </p>
             </article>
@@ -595,7 +600,12 @@
                 <tr>
                   <td><kbd>X</kbd></td>
                   <td><kbd>C</kbd></td>
-                  <td>Toggle Large Album Art / Toggle 4×4 vs 2×2 Visualizer pixel grain</td>
+                  <td>Toggle Large Album Art; Bypass in Graphic EQ; aspect mode in Video; font size in Reader</td>
+                </tr>
+                <tr>
+                  <td><kbd>Y</kbd></td>
+                  <td><kbd>V</kbd></td>
+                  <td>Toggle Audio Visualizer on Now Playing (<kbd>Y</kbd> or <kbd>B</kbd> returns to Now Playing)</td>
                 </tr>
                 <tr>
                   <td><kbd>L1</kbd> / <kbd>R1</kbd></td>

@@ -13,6 +13,11 @@ void     uipod_track_intel_init(void);
 void     uipod_track_intel_on_track_change(const struct mp3entry *id3);
 void     uipod_track_intel_on_next_track(const struct mp3entry *next_id3);
 uint64_t uipod_track_intel_key_for_id3(const struct mp3entry *id3);
+uint64_t uipod_track_intel_ensure_path(const char *path,
+                                       const char *title,
+                                       const char *artist,
+                                       uint32_t duration_ms,
+                                       bool show_hud_on_miss);
 void     uipod_track_intel_ensure_for_plugin(const char *plugin_id);
 void     uipod_track_intel_tick_live(void);
 bool     uipod_track_intel_get_analysis(struct UIPodPluginTrackAnalysis *out);

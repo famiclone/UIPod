@@ -69,6 +69,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-mixer"
+version = "0.1.0"
+dependencies = [
+ "uipod-plugin-sdk",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -585,6 +592,13 @@ dependencies = [
 [[package]]
 name = "uipod-dj"
 version = "0.1.0"
+dependencies = [
+ "symphonia",
+ "uipod-codecs",
+ "uipod-nsf",
+ "uipod-plugin-sdk",
+ "uipod-track-intel",
+]
 
 [[package]]
 name = "uipod-ebook"

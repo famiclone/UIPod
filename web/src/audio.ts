@@ -73,6 +73,16 @@ export interface DjWasmBridge {
   takeMidpointCrossed: () => boolean;
   isActive: () => boolean;
   reset: () => void;
+  manualBegin: (sampleRate: number) => void;
+  manualLoadDeckS16: (
+    deck: number,
+    trackIndex: number,
+    sampleRate: number,
+    pcmS16: Int16Array,
+    startMs: number,
+    startPaused: boolean,
+  ) => void;
+  manualRenderS16: (frames: number, sampleRate: number) => Int16Array;
 }
 
 export interface StreamingPcmSource {
@@ -156,6 +166,7 @@ export class UIPodAudioEngine {
   private activeStreamSource: StreamingPcmSource | null = null;
   public djBridge: DjWasmBridge | null = null;
   private djActive = false;
+  private manualDjActive = false;
   private djPreppingSeq = -1;
   private djMidpointDone = false;
   private djDisplayPosSec = 0;
@@ -447,9 +458,7 @@ export class UIPodAudioEngine {
       }
     }
     if (this.sourceNode) {
-      const isUser = this.userBuffers.has(this.currentTrack);
-      const djOn = (merged.djMode ?? 0) > 0 && this.trackCount >= 2;
-      this.sourceNode.loop = !isUser && !djOn;
+      this.sourceNode.loop = this.trackCount < 2;
     }
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
@@ -837,6 +846,7 @@ export class UIPodAudioEngine {
     const startAMs = Math.round(posA * 1000);
     const durBMs = Math.round(durSecB * 1000);
 
+    djBridge.setTrackTiming(startAMs, durAMs, durBMs);
     const armed = djBridge.beginTransition(
       ctx.sampleRate,
       trackA,
@@ -1304,7 +1314,7 @@ export class UIPodAudioEngine {
       }
       if (this.seekOsc) {
         try {
-          this.seekOsc.stop((this.ctx?.currentTime ?? 0) + 0.05);
+          this.seekOsc.stop((this.ctx?.currentTime ?? 0) + 0.07);
         } catch {
           // ignore
         }
@@ -1312,7 +1322,7 @@ export class UIPodAudioEngine {
       }
       if (this.seekLfo) {
         try {
-          this.seekLfo.stop((this.ctx?.currentTime ?? 0) + 0.05);
+          this.seekLfo.stop((this.ctx?.currentTime ?? 0) + 0.07);
         } catch {
           // ignore
         }
@@ -1343,8 +1353,8 @@ export class UIPodAudioEngine {
     bp.frequency.setValueAtTime(1150, now);
     bp.Q.setValueAtTime(2.2, now);
 
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.032 * this.volumeNorm, now + 0.06);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.032 * 0.40 * this.volumeNorm, now + 0.022);
 
     lfo.connect(lfoGain).connect(osc.frequency);
     osc.connect(bp).connect(gain).connect(ctx.destination);
@@ -1462,5 +1472,113 @@ export class UIPodAudioEngine {
       this.pcmOut[i * 2 + 1] = (r * 32767) | 0;
     }
     return this.pcmOut;
+  }
+
+  private async decodeTrackFullS16(ctx: AudioContext, trackIndex: number): Promise<Int16Array> {
+    const streamEntry = this.streamingTracks.get(trackIndex);
+    if (streamEntry) {
+      const durMs = streamEntry.source.open(ctx.sampleRate);
+      const durSec = Math.min(240, Math.max(5, durMs > 0 ? durMs / 1000 : streamEntry.initialDurSec));
+      const pcm = streamEntry.source.renderS16(Math.floor(durSec * ctx.sampleRate));
+      streamEntry.source.close();
+      return pcm;
+    }
+    const buf = await this.loadTrackBuffer(ctx, trackIndex);
+    return this.extractBufferS16AtRate(buf, ctx.sampleRate, 0, Math.min(360, buf.duration)).s16;
+  }
+
+  public ensureManualDjAudioActive(): void {
+    const ctx = this.ensureContext();
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    if (this.manualDjActive && this.streamNode) return;
+    const djBridge = this.djBridge;
+    if (!djBridge) return;
+
+    this.stopSource(false, true);
+    this.manualDjActive = true;
+    this.playing = true;
+
+    const proc = ctx.createScriptProcessor(1024, 0, 2);
+    proc.onaudioprocess = (ev: AudioProcessingEvent) => {
+      const outL = ev.outputBuffer.getChannelData(0);
+      const outR = ev.outputBuffer.getChannelData(1);
+      const frames = outL.length;
+      if (!this.manualDjActive || this.streamNode !== proc || !this.djBridge) {
+        outL.fill(0);
+        outR.fill(0);
+        return;
+      }
+      const s16 = this.djBridge.manualRenderS16(frames, ctx.sampleRate);
+      const n = Math.min(frames, Math.floor(s16.length / 2));
+      const inv = 1.0 / 32768.0;
+      for (let i = 0; i < n; i++) {
+        outL[i] = s16[i * 2] * inv;
+        outR[i] = s16[i * 2 + 1] * inv;
+      }
+      for (let i = n; i < frames; i++) {
+        outL[i] = 0;
+        outR[i] = 0;
+      }
+    };
+    proc.connect(this.eqFilters[0]);
+    this.streamNode = proc;
+  }
+
+  public async startManualDjSession(
+    trackA: number,
+    posAMs: number,
+    playingA: boolean,
+    trackB: number,
+  ): Promise<void> {
+    const ctx = this.ensureContext();
+    const djBridge = this.djBridge;
+    if (!djBridge) return;
+
+    const livePosMs = this.playing ? this.getPositionMs() : posAMs;
+    this.ensureManualDjAudioActive();
+    djBridge.manualBegin(ctx.sampleRate);
+
+    try {
+      const s16A = await this.decodeTrackFullS16(ctx, trackA);
+      if (!this.manualDjActive) return;
+      djBridge.manualLoadDeckS16(0, trackA, ctx.sampleRate, s16A, livePosMs, !playingA);
+    } catch (err) {
+      console.warn('Manual DJ Deck A load error:', err);
+    }
+
+    try {
+      const s16B = await this.decodeTrackFullS16(ctx, trackB);
+      if (!this.manualDjActive) return;
+      djBridge.manualLoadDeckS16(1, trackB, ctx.sampleRate, s16B, 0, true);
+    } catch (err) {
+      console.warn('Manual DJ Deck B load error:', err);
+    }
+  }
+
+  public async loadManualDjDeck(deck: number, trackIndex: number): Promise<void> {
+    const ctx = this.ensureContext();
+    const djBridge = this.djBridge;
+    if (!djBridge || !this.manualDjActive) return;
+    try {
+      const s16 = await this.decodeTrackFullS16(ctx, trackIndex);
+      if (!this.manualDjActive) return;
+      djBridge.manualLoadDeckS16(deck, trackIndex, ctx.sampleRate, s16, 0, true);
+    } catch (err) {
+      console.warn('Manual DJ deck reload error:', err);
+    }
+  }
+
+  public releaseManualDjSession(trackIndex: number, posMs: number, playing: boolean): void {
+    this.manualDjActive = false;
+    this.stopSource(false, false);
+    this.currentTrack = trackIndex;
+    this.offsetSec = Math.max(0, posMs / 1000);
+    if (playing) {
+      this.playTrack(trackIndex, this.offsetSec);
+    } else {
+      this.playing = false;
+    }
   }
 }

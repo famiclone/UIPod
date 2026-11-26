@@ -16,10 +16,10 @@
  * active UIPod theme (`bg`, `fg1`, `fg2`, `fg`).
  *
  * Controls while visualizing:
- *   B / MENU     — Exit back to Now Playing (or previous screen)
+ *   B / Y        — Exit back to Now Playing (Hold B -> Main Menu)
+ *   MENU         — Visualizer options (Invert Visualizer, Preset, Exit)
  *   Left / Right — Previous / Next track (Hold to rewind / fast-forward)
  *   L2 / R2      — Previous / Next visualizer preset
- *   X / Y        — Toggle LCD pixel grain (4x4 Classic Macro-Pixel <-> 2x2 Fine)
  *   A / START    — Play / Pause music
  *   VOL+ / VOL-  — Adjust volume (SELECT + VOL+/- adjusts brightness)
  *
@@ -62,6 +62,7 @@
 #include "metadata.h"
 #include "tape_deck_fx.h"
 #include "root_menu.h"
+#include "menu.h"
 #include "gui/list.h"
 #include "gui/wps.h"
 #include "window-sdl.h"
@@ -194,8 +195,9 @@ static void activate_preset(int idx)
     if (preset_count <= 0)
         return;
     if (idx < 0 || idx >= preset_count)
-        idx = 0;
+        idx = preset_count - 1;
     preset_cur = idx;
+    global_settings.viz_last_preset = idx;
     uipod_rs_viz_set_preset((size_t)idx);
 }
 
@@ -366,6 +368,7 @@ static int viz_render_thread(void *param)
         }
 
         uipod_track_intel_tick_live();
+        uipod_rs_viz_set_invert(global_settings.viz_invert);
 
         uipod_rs_viz_render_frame(pcm,
                                   (size_t)frames,
@@ -429,6 +432,51 @@ static void viz_finish_seek(bool *seeking, int *seek_delta,
     viz_seek_dir = 0;
 }
 
+#define VIZ_CTX_EXIT 101
+
+static const char *viz_qm_invert_get(void *ctx, char *buf, int len)
+{
+    (void)ctx; (void)buf; (void)len;
+    return uipod_toggle_str(global_settings.viz_invert);
+}
+
+static void viz_qm_invert_cycle(void *ctx, int dir)
+{
+    (void)ctx; (void)dir;
+    global_settings.viz_invert = !global_settings.viz_invert;
+    settings_save();
+}
+
+static const struct menu_value_cb viz_qm_invert_value =
+    { viz_qm_invert_get, viz_qm_invert_cycle, NULL };
+
+static const char *viz_qm_preset_get(void *ctx, char *buf, int len)
+{
+    (void)ctx;
+    if (preset_count <= 0 || len <= 0)
+        return "";
+    int cur = (preset_cur >= 0 && preset_cur < preset_count) ? preset_cur : 0;
+    uipod_rs_viz_preset_name((size_t)cur, is_lang_uk(), buf, (size_t)len);
+    return buf;
+}
+
+static void viz_qm_preset_cycle(void *ctx, int dir)
+{
+    (void)ctx;
+    int target = step_enabled_preset(preset_cur, dir < 0 ? -1 : 1);
+    activate_preset(target);
+}
+
+static const struct menu_value_cb viz_qm_preset_value =
+    { viz_qm_preset_get, viz_qm_preset_cycle, NULL };
+
+MENUITEM_VALUE(viz_qm_invert, ID2P(LANG_UIPOD_INVERT_VISUALIZER), &viz_qm_invert_value, Icon_NOICON);
+MENUITEM_VALUE(viz_qm_preset, ID2P(LANG_UIPOD_VISUALIZERS), &viz_qm_preset_value, Icon_NOICON);
+MENUITEM_RETURNVALUE(viz_qm_exit, ID2P(LANG_UIPOD_EXIT), VIZ_CTX_EXIT, NULL, Icon_NOICON);
+
+MAKE_MENU(viz_quick_menu, ID2P(LANG_UIPOD_AUDIO_VISUALIZER), NULL,
+          Icon_NOICON, &viz_qm_invert, &viz_qm_preset, &viz_qm_exit);
+
 static void visualizer_session(int locked_idx)
 {
     viz_locked = (locked_idx >= 0);
@@ -443,6 +491,7 @@ static void visualizer_session(int locked_idx)
     }
 
     scan_presets();
+    int initial_saved_preset = global_settings.viz_last_preset;
     button_clear_queue();
     sdl_gl_make_current();
     uipod_viz_active = true;
@@ -451,9 +500,18 @@ static void visualizer_session(int locked_idx)
     backlight_set_timeout(0);
 
     if (viz_locked)
+    {
         activate_preset(locked_idx);
+    }
     else
-        activate_random_preset();
+    {
+        int start_idx = global_settings.viz_last_preset;
+        if (start_idx < 0 || start_idx >= preset_count)
+            start_idx = (preset_count > 0) ? (preset_count - 1) : 0;
+        if (preset_count > 0 && !preset_enabled[start_idx] && enabled_count() > 0)
+            start_idx = step_enabled_preset(start_idx, 1);
+        activate_preset(start_idx);
+    }
 
     viz_fade_ticks_cur = VIZ_FADE_TICKS;
     if (viz_entry_faded)
@@ -522,11 +580,48 @@ static void visualizer_session(int locked_idx)
                 }
             }
 
-            if (act == ACTION_WPS_BROWSE ||
-                act == ACTION_STD_CANCEL ||
-                act == ACTION_STD_CONTEXT)
+            if (act == ACTION_TP_HOME)
+            {
+                uipod_home_pending = true;
+                break;
+            }
+            else if (act == ACTION_WPS_BROWSE ||
+                     act == ACTION_STD_CANCEL ||
+                     act == ACTION_WPS_VIZ_TOGGLE)
             {
                 break;
+            }
+            else if (act == ACTION_STD_CONTEXT)
+            {
+                viz_thread_stop = true;
+                SDL_WaitThread(rt, NULL);
+                rt = NULL;
+                sdl_gl_make_current();
+                uipod_viz_active = false;
+                backlight_set_timeout(global_settings.backlight_timeout);
+
+                int mres = do_menu(&viz_quick_menu, NULL, NULL, false);
+                if (mres == VIZ_CTX_EXIT ||
+                    uipod_home_pending ||
+                    power_display_off() ||
+                    !audio_status())
+                {
+                    break;
+                }
+
+                button_clear_queue();
+                sdl_gl_make_current();
+                uipod_viz_active = true;
+                backlight_set_timeout(0);
+                viz_pending_preset = -1;
+                viz_fade = VIZ_NORMAL;
+                viz_preset_tick = current_tick;
+                viz_seek_dir = 0;
+                SDL_GL_MakeCurrent(sdlWindow, NULL);
+                viz_thread_stop = false;
+                rt = SDL_CreateThread(viz_render_thread, "uipod_viz", NULL);
+                if (!rt)
+                    break;
             }
             else if (act == ACTION_WPS_SEEKBACK || act == ACTION_WPS_SEEKFWD)
             {
@@ -595,16 +690,16 @@ static void visualizer_session(int locked_idx)
             else if (act == ACTION_TP_CHAP_PREV)
             {
                 int target = step_enabled_preset(preset_cur, -1);
+                preset_cur = target;
+                global_settings.viz_last_preset = target;
                 viz_request_switch(target, true);
             }
             else if (act == ACTION_TP_CHAP_NEXT)
             {
                 int target = step_enabled_preset(preset_cur, 1);
+                preset_cur = target;
+                global_settings.viz_last_preset = target;
                 viz_request_switch(target, true);
-            }
-            else if (act == ACTION_WPS_HOTKEY)
-            {
-                (void)uipod_rs_viz_toggle_grain();
             }
             else if (act == ACTION_WPS_PLAY)
             {
@@ -619,10 +714,16 @@ static void visualizer_session(int locked_idx)
             }
         }
         viz_finish_seek(&seeking, &seek_delta, &seek_id3, true);
-        viz_thread_stop = true;
-        SDL_WaitThread(rt, NULL);
+        if (rt)
+        {
+            viz_thread_stop = true;
+            SDL_WaitThread(rt, NULL);
+        }
     }
     sdl_gl_make_current();
+
+    if (global_settings.viz_last_preset != initial_saved_preset)
+        settings_save();
 
     uipod_viz_active = false;
     if (power_display_off())
@@ -642,7 +743,9 @@ void uipod_visualizer_run(void)
 
 bool uipod_visualizer_fade_to_black(void)
 {
-    uint32_t bg_rgb = (uint32_t)(global_settings.bg_color & 0xFFFFFF);
+    uint32_t bg_rgb = (uint32_t)((global_settings.viz_invert
+                                      ? global_settings.fg_color
+                                      : global_settings.bg_color) & 0xFFFFFF);
     bool was_gpu = uipod_gpu_is_active();
     backlight_set_timeout(0);
     sdl_gl_make_current();

@@ -13,10 +13,19 @@ use std::path::{Path, PathBuf};
 pub const UIPOD_PLUGIN_MAGIC: u32 = 0x5549_5050;
 
 /// Host/Plugin ABI version checked by the loader before invoking `run`.
-pub const UIPOD_PLUGIN_API_VERSION: u32 = 9;
+pub const UIPOD_PLUGIN_API_VERSION: u32 = 11;
 
 /// Exact byte size of [`PluginTrackAnalysis`] (`512` bytes).
 pub const TRACK_ANALYSIS_RECORD_BYTES: usize = 512;
+
+/// Exact byte size of [`PluginLiveTelemetry`] (`608` bytes).
+pub const LIVE_TELEMETRY_BYTES: usize = 608;
+
+/// Exact byte size of [`PluginDjDeckTelemetry`] (`264` bytes).
+pub const DJ_DECK_TELEMETRY_BYTES: usize = 264;
+
+/// Exact byte size of [`PluginDjTelemetry`] (`548` bytes).
+pub const DJ_TELEMETRY_BYTES: usize = 548;
 
 /// Symbol name exported by every `.uipod` shared library.
 pub const UIPOD_PLUGIN_ENTRY_SYMBOL: &[u8] = b"uipod_plugin_descriptor\0";
@@ -322,7 +331,7 @@ impl PluginTrackAnalysis {
     }
 }
 
-/// Lock-free 60+ FPS real-time audio & rhythm telemetry snapshot (`592` bytes exact).
+/// Lock-free 60+ FPS real-time audio & rhythm telemetry snapshot (`608` bytes exact).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PluginLiveTelemetry {
@@ -355,8 +364,256 @@ pub struct PluginLiveTelemetry {
     pub spectrum_64: [u8; 64],
     pub spectrum_peak_64: [u8; 64],
     pub waveform_256: [i8; 256],
+    /// Beat-quantized `1/16`-bar (`4` sub-steps per quarter-note beat) amplitude bars (`0..=255`).
+    pub beat_substeps_16: [u8; 16],
     pub apu: PluginApuTelemetry,
 }
+
+const _: () = assert!(core::mem::size_of::<PluginTrackAnalysis>() == TRACK_ANALYSIS_RECORD_BYTES);
+const _: () = assert!(core::mem::size_of::<PluginLiveTelemetry>() == LIVE_TELEMETRY_BYTES);
+
+/// Target deck selector for Manual Dual-Deck DJ APIs (`v11+`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DjDeckId {
+    DeckA = 0,
+    DeckB = 1,
+}
+
+impl DjDeckId {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
+        if v == 0 {
+            Self::DeckA
+        } else {
+            Self::DeckB
+        }
+    }
+
+    #[inline]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::DeckA => Self::DeckB,
+            Self::DeckB => Self::DeckA,
+        }
+    }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Cue point transport action (`v11+`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DjCueAction {
+    /// Instant `< 5 ms` anti-click cosine jump back to Cue and pause.
+    CueReturn = 0,
+    /// Instant `< 5 ms` anti-click cosine jump back to Cue and continue playing (Cue Stutter).
+    CueStutter = 1,
+    /// Stamp a new Cue point at the deck's current playhead.
+    SetCueHere = 2,
+}
+
+impl DjCueAction {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::CueStutter,
+            2 => Self::SetCueHere,
+            _ => Self::CueReturn,
+        }
+    }
+}
+
+/// Time-stretch / pitch mode per deck (`v11+`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DjTempoMode {
+    /// Pitch-locked WSOLA time stretcher.
+    #[default]
+    MasterTempo = 0,
+    /// Classic turntable Hermite resampler (pitch shifts with speed).
+    Vinyl = 1,
+}
+
+impl DjTempoMode {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
+        if v == 1 {
+            Self::Vinyl
+        } else {
+            Self::MasterTempo
+        }
+    }
+}
+
+/// Seamless RAM-buffered beat loop length (`v11+`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DjLoopLength {
+    #[default]
+    Off = 0,
+    Beats4 = 1,
+    Beats2 = 2,
+    Beat1 = 3,
+    HalfBeat = 4,
+}
+
+impl DjLoopLength {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Beats4,
+            2 => Self::Beats2,
+            3 => Self::Beat1,
+            4 => Self::HalfBeat,
+            _ => Self::Off,
+        }
+    }
+
+    #[inline]
+    pub const fn next_cycle(self) -> Self {
+        match self {
+            Self::Off => Self::Beats4,
+            Self::Beats4 => Self::Beats2,
+            Self::Beats2 => Self::Beat1,
+            Self::Beat1 => Self::HalfBeat,
+            Self::HalfBeat => Self::Off,
+        }
+    }
+
+    #[inline]
+    pub const fn beats_f32(self) -> Option<f32> {
+        match self {
+            Self::Off => None,
+            Self::Beats4 => Some(4.0),
+            Self::Beats2 => Some(2.0),
+            Self::Beat1 => Some(1.0),
+            Self::HalfBeat => Some(0.5),
+        }
+    }
+
+    #[inline]
+    pub const fn badge_label(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Beats4 => Some("LOOP 4"),
+            Self::Beats2 => Some("LOOP 2"),
+            Self::Beat1 => Some("LOOP 1"),
+            Self::HalfBeat => Some("LOOP 1/2"),
+        }
+    }
+}
+
+/// Track source selector for Quick Track Loader (`v11+`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DjTrackSource {
+    Queue = 0,
+    Favourites = 1,
+    Library = 2,
+}
+
+impl DjTrackSource {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Queue,
+            1 => Self::Favourites,
+            _ => Self::Library,
+        }
+    }
+}
+
+/// Per-deck real-time telemetry & zoomed 4-beat (`24-bar`) discrete waveform (`264` bytes exact).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PluginDjDeckTelemetry {
+    pub loaded: u8,
+    pub playing: u8,
+    pub loop_beats: u8,
+    pub sync_locked: u8,
+    pub elapsed_ms: u32,
+    pub remaining_ms: u32,
+    pub duration_ms: u32,
+    pub cue_ms: u32,
+    pub native_bpm: f32,
+    pub effective_bpm: f32,
+    pub beat_phase: f32,
+    pub bar_phase: f32,
+    pub filter_val: f32,
+    /// `6 sub-steps per beat x 4 beats` (`-2 beats .. +2 beats` centered on playhead), peak `0..=255`.
+    pub bars_peak_24: [u8; 24],
+    /// Low-frequency (`< 160 Hz`) kick weight (`0..=255`) per bar for kick vs. off-beat shading.
+    pub bars_kick_24: [u8; 24],
+    pub title: [u8; 96],
+    pub artist: [u8; 80],
+}
+
+impl Default for PluginDjDeckTelemetry {
+    fn default() -> Self {
+        Self {
+            loaded: 0,
+            playing: 0,
+            loop_beats: 0,
+            sync_locked: 0,
+            elapsed_ms: 0,
+            remaining_ms: 0,
+            duration_ms: 0,
+            cue_ms: 0,
+            native_bpm: 120.0,
+            effective_bpm: 120.0,
+            beat_phase: 0.0,
+            bar_phase: 0.0,
+            filter_val: 0.0,
+            bars_peak_24: [0; 24],
+            bars_kick_24: [0; 24],
+            title: [0; 96],
+            artist: [0; 80],
+        }
+    }
+}
+
+impl PluginDjDeckTelemetry {
+    #[inline]
+    pub fn title_str(&self) -> &str {
+        let end = self.title.iter().position(|&b| b == 0).unwrap_or(self.title.len());
+        core::str::from_utf8(&self.title[..end]).unwrap_or("")
+    }
+
+    #[inline]
+    pub fn artist_str(&self) -> &str {
+        let end = self.artist.iter().position(|&b| b == 0).unwrap_or(self.artist.len());
+        core::str::from_utf8(&self.artist[..end]).unwrap_or("")
+    }
+
+    #[inline]
+    pub const fn loop_length(&self) -> DjLoopLength {
+        DjLoopLength::from_u8(self.loop_beats)
+    }
+}
+
+/// Lock-free 60 FPS Manual Dual-Deck DJ telemetry snapshot (`548` bytes exact).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PluginDjTelemetry {
+    pub seq_generation: u32,
+    pub session_active: u8,
+    pub bass_swap_enabled: u8,
+    pub tempo_mode: u8,
+    pub reserved: u8,
+    pub crossfader: f32,
+    pub analog_lx: i16,
+    pub analog_ly: i16,
+    pub analog_rx: i16,
+    pub analog_ry: i16,
+    pub decks: [PluginDjDeckTelemetry; 2],
+}
+
+const _: () = assert!(core::mem::size_of::<PluginDjDeckTelemetry>() == DJ_DECK_TELEMETRY_BYTES);
+const _: () = assert!(core::mem::size_of::<PluginDjTelemetry>() == DJ_TELEMETRY_BYTES);
 
 impl Default for PluginLiveTelemetry {
     fn default() -> Self {
@@ -387,6 +644,7 @@ impl Default for PluginLiveTelemetry {
             spectrum_64: [0; 64],
             spectrum_peak_64: [0; 64],
             waveform_256: [0; 256],
+            beat_substeps_16: [0; 16],
             apu: PluginApuTelemetry::default(),
         }
     }
@@ -609,6 +867,33 @@ pub struct UIPodPluginApi {
         dst_h: f32,
         radius: f32,
     ),
+
+    /* ---- Manual Dual-Deck DJ Extension (v11+) ---- */
+    pub dj_session_acquire: extern "C" fn() -> bool,
+    pub dj_session_release: extern "C" fn(),
+    pub dj_deck_load: unsafe extern "C" fn(deck: u8, path: *const c_char, start_paused: bool) -> bool,
+    pub dj_deck_set_playing: extern "C" fn(deck: u8, playing: bool, quantize: bool),
+    pub dj_deck_cue: extern "C" fn(deck: u8, cue_action: u8),
+    pub dj_deck_seek_beats: extern "C" fn(deck: u8, delta_beats: i32),
+    pub dj_set_crossfader: extern "C" fn(position: f32, bass_swap_enabled: bool),
+    pub dj_deck_set_tempo:
+        extern "C" fn(deck: u8, target_bpm_ratio: f32, tempo_mode: u8, momentary_bend: f32),
+    pub dj_deck_set_sync: extern "C" fn(deck: u8, enabled: bool),
+    pub dj_deck_set_loop: extern "C" fn(deck: u8, loop_beats: u8),
+    pub dj_deck_set_filter: extern "C" fn(deck: u8, filter_value: f32),
+    pub dj_get_telemetry: unsafe extern "C" fn(out: *mut PluginDjTelemetry) -> bool,
+    pub dj_source_track_count: extern "C" fn(source_kind: u8) -> usize,
+    pub dj_source_track_at: unsafe extern "C" fn(
+        source_kind: u8,
+        index: usize,
+        path_out: *mut c_char,
+        path_cap: usize,
+        artist_out: *mut c_char,
+        artist_cap: usize,
+        title_out: *mut c_char,
+        title_cap: usize,
+        duration_ms_out: *mut u32,
+    ) -> bool,
 }
 
 /// Static plugin metadata & entry-point descriptor exported by every `.uipod` library.
@@ -1160,6 +1445,162 @@ impl<'a> HostContext<'a> {
             duration_ms: dur_ms,
         })
     }
+
+    /* ---- Manual Dual-Deck DJ API (`v11+`) ---- */
+
+    #[inline]
+    pub fn dj_session_acquire(&self) -> bool {
+        if self.api.api_version < 11 {
+            return false;
+        }
+        (self.api.dj_session_acquire)()
+    }
+
+    #[inline]
+    pub fn dj_session_release(&self) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_session_release)();
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_load(&self, deck: DjDeckId, path: &str, start_paused: bool) -> bool {
+        if self.api.api_version < 11 {
+            return false;
+        }
+        let c = sanitize_cstring(path);
+        unsafe { (self.api.dj_deck_load)(deck as u8, c.as_ptr(), start_paused) }
+    }
+
+    #[inline]
+    pub fn dj_deck_set_playing(&self, deck: DjDeckId, playing: bool, quantize: bool) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_set_playing)(deck as u8, playing, quantize);
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_cue(&self, deck: DjDeckId, action: DjCueAction) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_cue)(deck as u8, action as u8);
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_seek_beats(&self, deck: DjDeckId, delta_beats: i32) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_seek_beats)(deck as u8, delta_beats);
+        }
+    }
+
+    #[inline]
+    pub fn dj_set_crossfader(&self, position: f32, bass_swap_enabled: bool) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_set_crossfader)(position.clamp(0.0, 1.0), bass_swap_enabled);
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_set_tempo(
+        &self,
+        deck: DjDeckId,
+        target_bpm_ratio: f32,
+        mode: DjTempoMode,
+        momentary_bend: f32,
+    ) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_set_tempo)(
+                deck as u8,
+                target_bpm_ratio.clamp(0.75, 1.25),
+                mode as u8,
+                momentary_bend.clamp(-0.04, 0.04),
+            );
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_set_sync(&self, deck: DjDeckId, enabled: bool) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_set_sync)(deck as u8, enabled);
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_set_loop(&self, deck: DjDeckId, loop_beats: DjLoopLength) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_set_loop)(deck as u8, loop_beats as u8);
+        }
+    }
+
+    #[inline]
+    pub fn dj_deck_set_filter(&self, deck: DjDeckId, value: f32) {
+        if self.api.api_version >= 11 {
+            (self.api.dj_deck_set_filter)(deck as u8, value.clamp(-1.0, 1.0));
+        }
+    }
+
+    #[inline]
+    pub fn dj_telemetry(&self) -> Option<PluginDjTelemetry> {
+        if self.api.api_version < 11 {
+            return None;
+        }
+        let mut out = PluginDjTelemetry::default();
+        let ok = unsafe { (self.api.dj_get_telemetry)(&mut out) };
+        if ok {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn dj_source_track_count(&self, source: DjTrackSource) -> usize {
+        if self.api.api_version < 11 {
+            return match source {
+                DjTrackSource::Library => self.library_track_count(),
+                _ => 0,
+            };
+        }
+        (self.api.dj_source_track_count)(source as u8)
+    }
+
+    pub fn dj_source_track_at(&self, source: DjTrackSource, index: usize) -> Option<LibraryTrack> {
+        if self.api.api_version < 11 {
+            return match source {
+                DjTrackSource::Library => self.library_track_at(index),
+                _ => None,
+            };
+        }
+        let mut p_buf = [0u8; 512];
+        let mut a_buf = [0u8; 256];
+        let mut t_buf = [0u8; 256];
+        let mut dur_ms = 0u32;
+        let ok = unsafe {
+            (self.api.dj_source_track_at)(
+                source as u8,
+                index,
+                p_buf.as_mut_ptr() as *mut c_char,
+                p_buf.len(),
+                a_buf.as_mut_ptr() as *mut c_char,
+                a_buf.len(),
+                t_buf.as_mut_ptr() as *mut c_char,
+                t_buf.len(),
+                &mut dur_ms,
+            )
+        };
+        if !ok {
+            return None;
+        }
+        let p_end = p_buf.iter().position(|&b| b == 0).unwrap_or(p_buf.len());
+        let a_end = a_buf.iter().position(|&b| b == 0).unwrap_or(a_buf.len());
+        let t_end = t_buf.iter().position(|&b| b == 0).unwrap_or(t_buf.len());
+        Some(LibraryTrack {
+            path: String::from_utf8_lossy(&p_buf[..p_end]).into_owned(),
+            artist: String::from_utf8_lossy(&a_buf[..a_end]).into_owned(),
+            title: String::from_utf8_lossy(&t_buf[..t_end]).into_owned(),
+            duration_ms: dur_ms,
+        })
+    }
 }
 
 #[inline]
@@ -1278,14 +1719,18 @@ mod tests {
 
     #[test]
     fn verify_plugin_apu_telemetry_c_abi_and_triggers() {
-        assert_eq!(UIPOD_PLUGIN_API_VERSION, 9);
+        assert_eq!(UIPOD_PLUGIN_API_VERSION, 11);
         assert_eq!(size_of::<PluginChannelState>(), 12);
         assert_eq!(align_of::<PluginChannelState>(), 4);
         assert_eq!(size_of::<PluginApuTelemetry>(), 8 + 8 * 12);
         assert_eq!(size_of::<PluginTrackAnalysis>(), TRACK_ANALYSIS_RECORD_BYTES);
         assert_eq!(align_of::<PluginTrackAnalysis>(), 8);
-        assert_eq!(size_of::<PluginLiveTelemetry>(), 592);
+        assert_eq!(size_of::<PluginLiveTelemetry>(), LIVE_TELEMETRY_BYTES);
         assert_eq!(align_of::<PluginLiveTelemetry>(), 8);
+        assert_eq!(size_of::<PluginDjDeckTelemetry>(), DJ_DECK_TELEMETRY_BYTES);
+        assert_eq!(align_of::<PluginDjDeckTelemetry>(), 4);
+        assert_eq!(size_of::<PluginDjTelemetry>(), DJ_TELEMETRY_BYTES);
+        assert_eq!(align_of::<PluginDjTelemetry>(), 4);
 
         let mut tel = PluginApuTelemetry::default();
         assert!(!tel.is_available());

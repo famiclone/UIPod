@@ -37,6 +37,7 @@
 #include "system.h"
 #include "thread.h"
 
+#include "uipod_dj.h"
 #include "uipod_keyboard.h"
 #include "uipod_library.h"
 #include "uipod_page.h"
@@ -1105,6 +1106,20 @@ static const struct UIPodPluginApi s_host_api = {
     .audio_get_track_analysis= uipod_track_intel_get_analysis,
     .audio_get_live_telemetry= uipod_track_intel_get_live,
     .canvas_draw_rgba_image  = host_canvas_draw_rgba_image,
+    .dj_session_acquire      = uipod_dj_manual_session_acquire,
+    .dj_session_release      = uipod_dj_manual_session_release,
+    .dj_deck_load            = uipod_dj_manual_deck_load,
+    .dj_deck_set_playing     = uipod_dj_manual_deck_set_playing,
+    .dj_deck_cue             = uipod_dj_manual_deck_cue,
+    .dj_deck_seek_beats      = uipod_dj_manual_deck_seek_beats,
+    .dj_set_crossfader       = uipod_dj_manual_set_crossfader,
+    .dj_deck_set_tempo       = uipod_dj_manual_deck_set_tempo,
+    .dj_deck_set_sync        = uipod_dj_manual_deck_set_sync,
+    .dj_deck_set_loop        = uipod_dj_manual_deck_set_loop,
+    .dj_deck_set_filter       = uipod_dj_manual_deck_set_filter,
+    .dj_get_telemetry        = uipod_dj_manual_get_telemetry,
+    .dj_source_track_count   = uipod_dj_source_track_count,
+    .dj_source_track_at      = uipod_dj_source_track_at,
 };
 
 /* ---- Safe Execution Envelope ------------------------------------------ */
@@ -1169,6 +1184,9 @@ static bool invoke_plugin_guarded(const char *plugin_id, const char *open_path)
         rc = uipod_rs_plugins_open_viewer(real_open_path, &s_host_api,
                                           err, sizeof(err));
     }
+
+    /* Ensure any active Manual DJ session releases cleanly on plugin exit */
+    uipod_dj_manual_session_release();
 
 #ifdef HAVE_PRIORITY_SCHEDULING
     thread_set_priority(self_tid, prev_prio);

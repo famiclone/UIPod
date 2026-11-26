@@ -3712,3 +3712,17 @@
     *: "Глибокий"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_INVERT_VISUALIZER
+  desc: UIPod Invert Visualizer setting
+  user: core
+  <source>
+    *: "Invert Visualizer"
+  </source>
+  <dest>
+    *: "Інвертувати візуалізацію"
+  </dest>
+  <voice>
+    *: "Інвертувати візуалізацію"
+  </voice>
+</phrase>

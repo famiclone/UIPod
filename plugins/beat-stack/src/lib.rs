@@ -26,7 +26,6 @@ pub const GRID_COLS: usize = 12;
 pub const GRID_ROWS: usize = 7;
 const MAX_CRANES: usize = 4;
 const SYNC_OFFSETS_MS: [i32; 5] = [0, 25, 50, 100, 150];
-const DEFAULT_PCM_SR: u32 = 44_100;
 const MIN_ARM_FLASH_BEATS: f32 = 0.48;
 const MIN_ARM_FLASH_SEC: f32 = 0.15;
 
@@ -696,7 +695,7 @@ impl BeatStackGame {
     pub fn step(
         &mut self,
         clock: &mut BeatClock,
-        beat_in: BeatFrameInput<'_>,
+        beat_in: BeatFrameInput,
         inp: FrameInput,
         uk: bool,
     ) {
@@ -2686,7 +2685,6 @@ fn run_pause_menu(
 fn run_beat_stack(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> i32 {
     let prefs = SavedPrefs::load(ctx);
     let mut clock = BeatClock::new(prefs.latency_sec());
-    let mut pcm_window = [0i16; 1024 * 2];
 
     let mut game = BeatStackGame::new(prefs, ctx.ticks_ms() ^ 0x57AC_CA7E);
 
@@ -2767,50 +2765,36 @@ fn run_beat_stack(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> i32 {
             }
         }
 
-        let (n_frames, sample_rate, apu_pulse, intel_sync) = if music_playing {
+        let (apu_pulse, intel_sync) = if music_playing {
             let live_opt = ctx.audio_live_telemetry();
             let rec_opt = ctx.audio_track_analysis();
-            if let (Some(live), Some(rec)) = (live_opt, rec_opt) {
-                if live.status == 1 && live.has_analysis != 0 && live.track_key_hash == rec.key_hash
-                {
-                    let apu_hit = if live.apu.is_available() {
-                        live.apu.percussion_trigger().max(live.apu.bass_trigger() * 0.85)
-                    } else {
-                        0.0
-                    };
-                    (
-                        0usize,
-                        live.sample_rate.max(DEFAULT_PCM_SR),
-                        apu_hit,
-                        Some((
-                            rec.bpm,
-                            rec.first_beat_offset_ms,
-                            live.playhead_ms,
-                            live.kick_impulse.max(apu_hit),
-                        )),
-                    )
-                } else {
-                    let nf = ctx.audio_read_pcm(0, &mut pcm_window);
-                    let apu = ctx.audio_apu_telemetry();
-                    let apu_hit = if apu.is_available() {
-                        apu.percussion_trigger().max(apu.bass_trigger() * 0.85)
-                    } else {
-                        0.0
-                    };
-                    (nf, DEFAULT_PCM_SR, apu_hit, None)
-                }
-            } else {
-                let nf = ctx.audio_read_pcm(0, &mut pcm_window);
-                let apu = ctx.audio_apu_telemetry();
-                let apu_hit = if apu.is_available() {
-                    apu.percussion_trigger().max(apu.bass_trigger() * 0.85)
+            if let Some(live) = live_opt {
+                let apu_hit = if live.apu.is_available() {
+                    live.apu.percussion_trigger().max(live.apu.bass_trigger() * 0.85)
                 } else {
                     0.0
                 };
-                (nf, DEFAULT_PCM_SR, apu_hit, None)
+                let sync = match rec_opt {
+                    Some(rec) if live.status == 1 && live.track_key_hash == rec.key_hash => Some((
+                        rec.bpm,
+                        rec.first_beat_offset_ms,
+                        live.playhead_ms,
+                        live.kick_impulse.max(apu_hit),
+                    )),
+                    _ if live.status == 1 => Some((
+                        live.bpm,
+                        0,
+                        live.playhead_ms,
+                        live.kick_impulse.max(apu_hit),
+                    )),
+                    _ => None,
+                };
+                (apu_hit, sync)
+            } else {
+                (0.0, None)
             }
         } else {
-            (0usize, DEFAULT_PCM_SR, 0.0, None)
+            (0.0, None)
         };
 
         let mut move_dir = 0;
@@ -2832,14 +2816,11 @@ fn run_beat_stack(ctx: &mut HostContext<'_>, _file_path: Option<&Path>) -> i32 {
             toggle_hint: inp.pressed(btn::X),
         };
 
-        let pcm_slice = &pcm_window[..n_frames.min(1024) * 2];
         game.step(
             &mut clock,
             BeatFrameInput {
                 dt_sec,
                 music_playing,
-                pcm_stereo: pcm_slice,
-                sample_rate,
                 apu_pulse,
                 intel_sync,
             },
@@ -2892,12 +2873,10 @@ mod tests {
         g
     }
 
-    fn silent_beat_in(dt_sec: f32) -> BeatFrameInput<'static> {
+    fn silent_beat_in(dt_sec: f32) -> BeatFrameInput {
         BeatFrameInput {
             dt_sec,
             music_playing: false,
-            pcm_stereo: &[],
-            sample_rate: 44_100,
             apu_pulse: 0.0,
             intel_sync: None,
         }

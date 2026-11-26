@@ -39,6 +39,14 @@ pub enum PluginAction {
     SetPlaying(bool),
     NextTrack,
     PrevTrack,
+    ManualDjAcquire,
+    ManualDjLoadDeck(u8, usize),
+    ManualDjWake,
+    ManualDjExit {
+        track_idx: usize,
+        pos_ms: u32,
+        playing: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +59,7 @@ pub enum PluginId {
     Game2048,
     BrickBreaker,
     Stopwatch,
+    DjMixer,
     TextViewer,
 }
 
@@ -143,6 +152,7 @@ fn flush_plugin_splash_to_hud(ui: &mut UiEngine, splash: &mut Option<(String, f3
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct AudioSnapshot<'a> {
     pub playing: bool,
@@ -161,6 +171,7 @@ pub enum ActivePlugin {
     Game2048(Plugin2048),
     BrickBreaker(BrickBreakerPlugin),
     Stopwatch(StopwatchApp),
+    DjMixer(DjMixerWasmPlugin),
     TextViewer(TextViewerApp),
 }
 
@@ -175,6 +186,7 @@ impl ActivePlugin {
             PluginId::Game2048 => Self::Game2048(Plugin2048::new()),
             PluginId::BrickBreaker => Self::BrickBreaker(BrickBreakerPlugin::new()),
             PluginId::Stopwatch => Self::Stopwatch(StopwatchApp::new()),
+            PluginId::DjMixer => Self::DjMixer(DjMixerWasmPlugin::new(track_labels)),
             PluginId::TextViewer => Self::TextViewer(TextViewerApp::new_about(
                 uipod_ebook::ReaderPrefs::default(),
                 0,
@@ -193,6 +205,7 @@ impl ActivePlugin {
             Self::Game2048(_) => "2048".to_string(),
             Self::BrickBreaker(_) => (if uk { "Цеглинки" } else { "Brick Breaker" }).to_string(),
             Self::Stopwatch(s) => s.title(uk).to_string(),
+            Self::DjMixer(_) => (if uk { "DJ Мікшер" } else { "DJ Mixer" }).to_string(),
             Self::TextViewer(v) => v.title(uk),
         }
     }
@@ -201,6 +214,7 @@ impl ActivePlugin {
     /// (suppressing `650 ms` Hold-`B` Home exit and `B`-on-release deferral outside Pause Menu).
     pub fn captures_b_button(&self) -> bool {
         matches!(self, Self::BeatStack(g) if !g.menu_open)
+            || matches!(self, Self::DjMixer(d) if !d.menu_open && !d.loader_open)
     }
 
     pub fn update(
@@ -221,6 +235,7 @@ impl ActivePlugin {
             Self::Game2048(g) => g.update(dt, pressed, uk),
             Self::BrickBreaker(g) => g.update(dt, pressed, held, uk),
             Self::Stopwatch(a) => a.update(dt, pressed),
+            Self::DjMixer(d) => d.update(dt, pressed, held, uk),
             Self::TextViewer(v) => v.update(dt, pressed, held, uk),
         }
     }
@@ -263,6 +278,10 @@ impl ActivePlugin {
             Self::Stopwatch(a) => {
                 ui.plugin_begin(theme, theme.bg_rgb, Some(header));
                 a.render(ui, theme, uk);
+            }
+            Self::DjMixer(d) => {
+                flush_plugin_splash_to_hud(ui, &mut d.splash);
+                d.render(ui, theme, header, uk, win_w, win_h);
             }
             Self::TextViewer(v) => {
                 flush_plugin_splash_to_hud(ui, &mut v.splash);
@@ -5219,7 +5238,8 @@ impl SoundRacerGame {
                         .max(live_intel.spectrum_64[k0 + 2])
                         .max(live_intel.spectrum_64[k0 + 3]);
                     let sv = (sp as f32) * (1.0 / 255.0);
-                    self.live_bars[b] = self.live_bars[b].max(sv * 0.85);
+                    let sub_v = (live_intel.beat_substeps_16[b] as f32) * (1.0 / 255.0);
+                    self.live_bars[b] = self.live_bars[b].max((sv * 0.80 + sub_v * 0.20).min(1.0));
                 }
                 if live_intel.has_analysis != 0 {
                     self.intensity =
@@ -5754,10 +5774,6 @@ const BS_MAX_CRANES: usize = 4;
 const BS_SYNC_OFFSETS_MS: [i32; 5] = [0, 25, 50, 100, 150];
 const BS_MIN_ARM_BEATS: f32 = 0.48;
 const BS_MIN_ARM_SEC: f32 = 0.15;
-const BS_ENV_RATE_HZ: f32 = 100.0;
-const BS_BIN_SEC: f32 = 1.0 / BS_ENV_RATE_HZ;
-const BS_RING_BINS: usize = 600;
-const BS_EST_WINDOW: usize = 520;
 
 struct BsLayoutSpec {
     outer_pad_x: f32,
@@ -5992,90 +6008,33 @@ struct BsBurst {
 }
 
 struct BsBeatClock {
-    raw_beats: f64,
     comp_beats: f64,
     audio_latency_sec: f64,
     live_bpm: f32,
-    tempo_locked: bool,
-    parity_shift: u64,
-
-    hp40: f32,
-    lp140_a: f32,
-    lp140_b: f32,
-    kick_env: f32,
-    prev_kick_env: f32,
-    flux_ema: f32,
     since_onset: f32,
-
-    bin_accum_sec: f32,
-    onset_ring: [f32; BS_RING_BINS],
-    kick_ring: [f32; BS_RING_BINS],
-    ring_pos: usize,
-    ring_len: usize,
-    bins_since_est: usize,
-
-    silence_sec: f32,
-    pll_trim: f32,
-    pending_jumps: u8,
-    last_jump_cand: f32,
     initialized: bool,
 }
 
 impl BsBeatClock {
     fn new(latency_sec: f64) -> Self {
         Self {
-            raw_beats: 0.0,
             comp_beats: 0.0,
             audio_latency_sec: latency_sec.clamp(0.0, 0.30),
             live_bpm: 120.0,
-            tempo_locked: false,
-            parity_shift: 0,
-            hp40: 0.0,
-            lp140_a: 0.0,
-            lp140_b: 0.0,
-            kick_env: 0.0,
-            prev_kick_env: 0.0,
-            flux_ema: 0.02,
             since_onset: 1.0,
-            bin_accum_sec: 0.0,
-            onset_ring: [0.0; BS_RING_BINS],
-            kick_ring: [0.0; BS_RING_BINS],
-            ring_pos: 0,
-            ring_len: 0,
-            bins_since_est: 0,
-            silence_sec: 2.0,
-            pll_trim: 0.0,
-            pending_jumps: 0,
-            last_jump_cand: 120.0,
             initialized: false,
         }
     }
 
     fn reset_full(&mut self) {
-        self.raw_beats = 0.0;
         self.comp_beats = 0.0;
         self.live_bpm = 120.0;
-        self.parity_shift = 0;
-        self.silence_sec = 2.0;
         self.initialized = false;
         self.on_track_change();
     }
 
     fn on_track_change(&mut self) {
-        self.tempo_locked = false;
-        self.hp40 = 0.0;
-        self.lp140_a = 0.0;
-        self.lp140_b = 0.0;
-        self.kick_env = 0.0;
-        self.prev_kick_env = 0.0;
-        self.flux_ema = 0.02;
         self.since_onset = 1.0;
-        self.bin_accum_sec = 0.0;
-        self.ring_pos = 0;
-        self.ring_len = 0;
-        self.bins_since_est = 0;
-        self.pll_trim = 0.0;
-        self.pending_jumps = 0;
     }
 
     fn fold_bpm(mut bpm: f32) -> f32 {
@@ -6092,314 +6051,10 @@ impl BsBeatClock {
         bpm.clamp(75.0, 180.0)
     }
 
-    fn ingest_audio(&mut self, dt: f32, pcm: &[i16], sample_rate: u32, apu_pulse: f32) -> bool {
-        self.since_onset += dt;
-        let n_frames = pcm.len() / 2;
-        let sr = sample_rate.clamp(16_000, 96_000) as f32;
-        const INV_I16: f32 = 1.0 / 32768.0;
-
-        let mut full_sq = 0.0f32;
-        if n_frames > 0 {
-            let st = (n_frames / 128).max(1);
-            let mut cnt = 0usize;
-            let mut i = 0usize;
-            while i < n_frames {
-                let m = ((pcm[i * 2] as f32) + (pcm[i * 2 + 1] as f32)) * (0.5 * INV_I16);
-                full_sq += m * m;
-                cnt += 1;
-                i += st;
-            }
-            full_sq /= cnt.max(1) as f32;
-        }
-        if full_sq.sqrt() < 0.004 && apu_pulse < 0.03 {
-            self.silence_sec = (self.silence_sec + dt).min(10.0);
-        } else {
-            self.silence_sec = 0.0;
-        }
-
-        self.bin_accum_sec += dt;
-        let bins_due = (self.bin_accum_sec / BS_BIN_SEC).floor() as usize;
-        if bins_due == 0 {
-            return false;
-        }
-        let k = bins_due.min(8);
-        self.bin_accum_sec =
-            (self.bin_accum_sec - (bins_due as f32) * BS_BIN_SEC).clamp(0.0, BS_BIN_SEC);
-
-        let a_hp40 = (1.0 - (-2.0 * core::f32::consts::PI * 40.0 / sr).exp()).clamp(0.001, 0.25);
-        let a_lp140 =
-            (1.0 - (-2.0 * core::f32::consts::PI * 140.0 / sr).exp()).clamp(0.003, 0.45);
-
-        let hop_frames = ((sr * BS_BIN_SEC).round() as usize).max(32);
-        let tail_frames = (k * hop_frames).min(n_frames);
-        let start_frame = n_frames.saturating_sub(tail_frames);
-        let apu_clamped = apu_pulse.clamp(0.0, 1.0);
-
-        let mut onset = false;
-        for b in 0..k {
-            let k_rms = if tail_frames >= k && n_frames > 0 {
-                let f0 = start_frame + (b * tail_frames) / k;
-                let f1 = start_frame + ((b + 1) * tail_frames) / k;
-                let mut sq = 0.0f32;
-                let cnt = f1.saturating_sub(f0).max(1);
-                for f in f0..f1 {
-                    let m = ((pcm[f * 2] as f32) + (pcm[f * 2 + 1] as f32)) * (0.5 * INV_I16);
-                    self.hp40 += a_hp40 * (m - self.hp40);
-                    let hp = m - self.hp40;
-                    self.lp140_a += a_lp140 * (hp - self.lp140_a);
-                    self.lp140_b += a_lp140 * (self.lp140_a - self.lp140_b);
-                    sq += self.lp140_b * self.lp140_b;
-                }
-                (sq / (cnt as f32)).sqrt()
-            } else {
-                0.0
-            };
-
-            let comb_k = k_rms.max(apu_clamped * 0.25);
-            self.kick_env = self.kick_env * 0.35 + comb_k * 0.65;
-            let k_flux = (self.kick_env - self.prev_kick_env).max(0.0);
-            self.prev_kick_env = self.kick_env;
-
-            self.onset_ring[self.ring_pos] = k_flux;
-            self.kick_ring[self.ring_pos] = self.kick_env;
-            self.ring_pos = (self.ring_pos + 1) % BS_RING_BINS;
-            if self.ring_len < BS_RING_BINS {
-                self.ring_len += 1;
-            }
-            self.bins_since_est += 1;
-
-            let thr = (self.flux_ema * 1.65).max(0.006);
-            if k_flux > thr && self.since_onset >= 0.24 {
-                onset = true;
-                self.since_onset = 0.0;
-            }
-            self.flux_ema += (k_flux - self.flux_ema) * 0.08;
-        }
-
-        if self.silence_sec < 1.0 && self.ring_len >= 160 && self.bins_since_est >= 20 {
-            self.bins_since_est = 0;
-            self.estimate_tempo_and_phase();
-        }
-        onset
-    }
-
-    fn estimate_tempo_and_phase(&mut self) {
-        let w = self.ring_len.min(BS_EST_WINDOW);
-        if w < 160 {
-            return;
-        }
-        let mut onset_win = [0.0f32; BS_EST_WINDOW];
-        let mut kick_win = [0.0f32; BS_EST_WINDOW];
-        let oldest = (self.ring_pos + BS_RING_BINS - w) % BS_RING_BINS;
-        let mut sum = 0.0f32;
-        let mut max_v = 0.0f32;
-        for i in 0..w {
-            let idx = (oldest + i) % BS_RING_BINS;
-            let v = self.onset_ring[idx];
-            onset_win[i] = v;
-            kick_win[i] = self.kick_ring[idx];
-            sum += v;
-            if v > max_v {
-                max_v = v;
-            }
-        }
-        let mean = sum / (w as f32);
-        if max_v < 1e-4 || max_v / (mean + 1e-6) < 1.75 {
-            return;
-        }
-
-        let mut centered = [0.0f32; BS_EST_WINDOW];
-        let mut var_sum = 1e-12f32;
-        for i in 0..w {
-            let sm = if i > 0 && i + 1 < w {
-                0.25 * onset_win[i - 1] + 0.50 * onset_win[i] + 0.25 * onset_win[i + 1]
-            } else {
-                onset_win[i]
-            };
-            let c = sm - mean;
-            centered[i] = c;
-            var_sum += c * c;
-        }
-
-        let min_lag = 33usize;
-        let max_lag = 80usize;
-        let corr_max = (max_lag * 2 + 4).min(w - 1);
-        if min_lag >= corr_max {
-            return;
-        }
-
-        let mut acf = [0.0f32; 170];
-        let acf_top = corr_max.min(acf.len() - 1);
-        for lag in (min_lag / 2)..=acf_top {
-            let cnt = w - lag;
-            let mut dot = 0.0f32;
-            for i in 0..cnt {
-                dot += centered[i] * centered[i + lag];
-            }
-            let sc = (w as f32) / ((cnt as f32) * var_sum);
-            acf[lag] = (dot * sc).clamp(-1.0, 1.0);
-        }
-
-        let mut best_lag = 50usize;
-        let mut best_sc = f32::NEG_INFINITY;
-        for lag in min_lag..=max_lag.min(acf_top) {
-            let r1 = acf[lag].max(0.0);
-            let r2 = if lag * 2 <= acf_top {
-                acf[lag * 2].max(0.0)
-            } else {
-                r1
-            };
-            let r4 = if lag * 4 < w && lag * 4 <= acf_top {
-                acf[lag * 4].max(0.0)
-            } else {
-                r2
-            };
-            let sc = 0.58 * r1 + 0.34 * r2 + 0.08 * r4;
-            if sc > best_sc {
-                best_sc = sc;
-                best_lag = lag;
-            }
-        }
-        if best_sc < 0.08 {
-            return;
-        }
-
-        if best_lag >= 66 && best_lag / 2 >= min_lag {
-            let half = best_lag / 2;
-            let r_half = acf[half].max(acf[(half + 1).min(acf_top)]);
-            if r_half >= 0.72 * acf[best_lag].max(0.05) {
-                best_lag = if acf[(half + 1).min(acf_top)] > acf[half] {
-                    half + 1
-                } else {
-                    half
-                };
-            }
-        }
-
-        let interp_pk = |idx: usize| -> f32 {
-            if idx > 1 && idx + 1 <= acf_top {
-                let ym = acf[idx - 1];
-                let y0 = acf[idx];
-                let yp = acf[idx + 1];
-                let den = ym - 2.0 * y0 + yp;
-                if den.abs() > 1e-6 {
-                    (idx as f32) + (0.5 * (ym - yp) / den).clamp(-0.5, 0.5)
-                } else {
-                    idx as f32
-                }
-            } else {
-                idx as f32
-            }
-        };
-
-        let lag1 = interp_pk(best_lag);
-        let mut l2 = (best_lag * 2).min(acf_top);
-        if l2 > 2 && l2 + 1 <= acf_top {
-            if acf[l2 - 1] > acf[l2] && acf[l2 - 1] >= acf[l2 + 1] {
-                l2 -= 1;
-            } else if acf[l2 + 1] > acf[l2] {
-                l2 += 1;
-            }
-        }
-        let exact_lag = if acf[best_lag] < 0.12 && l2 <= acf_top && acf[l2] > 0.18 {
-            interp_pk(l2) * 0.5
-        } else if l2 <= acf_top && acf[l2] > 0.25 {
-            let l2h = interp_pk(l2) * 0.5;
-            if (lag1 - l2h).abs() < 0.85 {
-                0.40 * lag1 + 0.60 * l2h
-            } else {
-                lag1
-            }
-        } else {
-            lag1
-        };
-
-        let det_bpm = Self::fold_bpm(BS_ENV_RATE_HZ * 60.0 / exact_lag.max(20.0));
-        if !self.tempo_locked {
-            self.live_bpm = det_bpm;
-            self.tempo_locked = true;
-        } else {
-            let diff = (det_bpm - self.live_bpm).abs();
-            if diff > 5.0 {
-                if (det_bpm - self.last_jump_cand).abs() < 3.0 {
-                    self.pending_jumps = self.pending_jumps.saturating_add(1);
-                } else {
-                    self.pending_jumps = 1;
-                    self.last_jump_cand = det_bpm;
-                }
-                if self.pending_jumps >= 2 {
-                    self.live_bpm += (det_bpm - self.live_bpm) * 0.70;
-                    self.pending_jumps = 0;
-                }
-            } else {
-                self.pending_jumps = 0;
-                self.live_bpm += (det_bpm - self.live_bpm) * 0.28;
-            }
-        }
-
-        let period_bins = (BS_ENV_RATE_HZ * 60.0 / self.live_bpm).clamp(30.0, 90.0);
-        let two_beat = (period_bins * 2.0).round() as usize;
-        let newest = w - 1;
-        let mut best_age = 0usize;
-        let mut best_pe = f32::NEG_INFINITY;
-        for age in 0..two_beat.max(1) {
-            let mut sc = 0.0f32;
-            let mut k = 0usize;
-            loop {
-                let back = age + ((k as f32) * period_bins * 2.0).round() as usize;
-                if back >= w {
-                    break;
-                }
-                let idx = newest - back;
-                let mut es = onset_win[idx] + kick_win[idx] * 0.45;
-                if idx > 0 {
-                    es += 0.45 * onset_win[idx - 1];
-                }
-                if idx + 1 < w {
-                    es += 0.45 * onset_win[idx + 1];
-                }
-                let wb = back + (period_bins.round() as usize);
-                let ew = if wb < w {
-                    onset_win[newest - wb] * 0.35
-                } else {
-                    0.0
-                };
-                sc += es + ew;
-                k += 1;
-            }
-            if sc > best_pe {
-                best_pe = sc;
-                best_age = age;
-            }
-        }
-
-        let lat_bins = (self.audio_latency_sec as f32) * BS_ENV_RATE_HZ;
-        let target_2b = (((best_age as f32) - lat_bins) / period_bins).rem_euclid(2.0);
-        let cur_floor = self.comp_beats.floor().max(0.0) as u64;
-        let cur_par = ((cur_floor.wrapping_add(self.parity_shift)) & 1) as f32;
-        let cur_frac = (self.comp_beats - self.comp_beats.floor()) as f32;
-        let cur_2b = cur_par + cur_frac;
-
-        let mut q_err = target_2b.rem_euclid(1.0) - cur_frac;
-        if q_err > 0.5 {
-            q_err -= 1.0;
-        } else if q_err < -0.5 {
-            q_err += 1.0;
-        }
-        self.pll_trim = (q_err * 0.36).clamp(-0.14, 0.14);
-
-        let two_err = (target_2b - cur_2b).rem_euclid(2.0);
-        if (0.65..=1.35).contains(&two_err) {
-            self.parity_shift ^= 1;
-        }
-    }
-
     fn step(
         &mut self,
         dt: f32,
         playing: bool,
-        pcm: &[i16],
-        sample_rate: u32,
         apu_pulse: f32,
     ) -> (f32, f32, f32, bool, bool, bool, bool) {
         let dt = dt.clamp(0.0, 0.1);
@@ -6407,116 +6062,77 @@ impl BsBeatClock {
 
         if playing {
             let live_intel = uipod_track_intel::read_live_frame();
-            if live_intel.status == 1 && live_intel.has_analysis != 0 {
-                if let Some(rec) = uipod_track_intel::read_active_analysis() {
-                    if rec.key_hash == live_intel.track_key_hash {
-                        let folded = Self::fold_bpm(rec.bpm);
-                        self.live_bpm = folded;
-                        self.tempo_locked = true;
-                        self.silence_sec = 0.0;
-                        self.since_onset += dt;
-                        let raw_onset =
-                            if live_intel.kick_impulse.max(apu_pulse) >= 0.56 && self.since_onset >= 0.18
-                            {
-                                self.since_onset = 0.0;
-                                true
-                            } else {
-                                false
-                            };
-                        let trim_ms = (self.audio_latency_sec * 1000.0).clamp(0.0, 300.0);
-                        let target_b = (((live_intel.playhead_ms as f64)
-                            - trim_ms
-                            - (rec.first_beat_offset_ms as f64))
-                            * (folded as f64 / 60_000.0))
-                            .max(0.0);
-                        let nom_step = (dt as f64) * (folded as f64 / 60.0);
-                        if !self.initialized {
-                            self.comp_beats = target_b;
-                            self.raw_beats = target_b;
-                            self.parity_shift = 0;
-                        } else {
-                            let err = target_b - self.comp_beats;
-                            if err.abs() > 3.0 {
-                                let tf = target_b.rem_euclid(2.0);
-                                let cb = (self.comp_beats * 0.5).floor() * 2.0;
-                                let mut nb = cb + tf;
-                                if nb < self.comp_beats {
-                                    nb += 2.0;
-                                }
-                                self.comp_beats = nb;
-                                self.parity_shift = 0;
-                            } else {
-                                let rm = (1.0 + err * 1.8).clamp(0.84, 1.18);
-                                self.comp_beats += nom_step * rm;
-                            }
-                            self.raw_beats = self.comp_beats;
+            if live_intel.status == 1 {
+                let (ibpm, offset_ms) = uipod_track_intel::read_active_analysis()
+                    .filter(|r| live_intel.has_analysis != 0 && r.key_hash == live_intel.track_key_hash)
+                    .map(|r| (r.bpm, r.first_beat_offset_ms))
+                    .unwrap_or((live_intel.bpm, 0));
+                let folded = Self::fold_bpm(ibpm);
+                self.live_bpm = folded;
+                self.since_onset += dt;
+                let raw_onset = if live_intel.kick_impulse.max(apu_pulse) >= 0.56
+                    && self.since_onset >= 0.18
+                {
+                    self.since_onset = 0.0;
+                    true
+                } else {
+                    false
+                };
+                let trim_ms = (self.audio_latency_sec * 1000.0).clamp(0.0, 300.0);
+                let target_b = (((live_intel.playhead_ms as f64)
+                    - trim_ms
+                    - (offset_ms as f64))
+                    * (folded as f64 / 60_000.0))
+                    .max(0.0);
+                let nom_step = (dt as f64) * (folded as f64 / 60.0);
+                if !self.initialized {
+                    self.comp_beats = target_b;
+                } else {
+                    let err = target_b - self.comp_beats;
+                    if err.abs() > 3.0 {
+                        let tf = target_b.rem_euclid(2.0);
+                        let cb = (self.comp_beats * 0.5).floor() * 2.0;
+                        let mut nb = cb + tf;
+                        if nb < self.comp_beats {
+                            nb += 2.0;
                         }
-                        let (fire_beat, fire_half) = if !self.initialized {
-                            self.initialized = true;
-                            (false, false)
-                        } else {
-                            (
-                                (self.comp_beats.floor() as i64) > (prev_comp.floor() as i64),
-                                ((self.comp_beats * 2.0).floor() as i64)
-                                    > ((prev_comp * 2.0).floor() as i64),
-                            )
-                        };
-                        let bf_floor = self.comp_beats.floor().max(0.0) as u64;
-                        let beat_index = bf_floor.wrapping_add(self.parity_shift);
-                        let fire_strong = fire_beat && (beat_index & 1) == 0;
-                        let bf =
-                            ((self.comp_beats - (bf_floor as f64)) as f32).clamp(0.0, 0.999_99);
-                        let actual_step = (self.comp_beats - prev_comp).max(0.0) as f32;
-                        return (
-                            folded,
-                            bf,
-                            actual_step,
-                            fire_beat,
-                            fire_strong,
-                            fire_half,
-                            raw_onset,
-                        );
+                        self.comp_beats = nb;
+                    } else {
+                        let rm = (1.0 + err * 1.8).clamp(0.84, 1.18);
+                        self.comp_beats += nom_step * rm;
                     }
                 }
+                let (fire_beat, fire_half) = if !self.initialized {
+                    self.initialized = true;
+                    (false, false)
+                } else {
+                    (
+                        (self.comp_beats.floor() as i64) > (prev_comp.floor() as i64),
+                        ((self.comp_beats * 2.0).floor() as i64)
+                            > ((prev_comp * 2.0).floor() as i64),
+                    )
+                };
+                let beat_index = self.comp_beats.floor().max(0.0) as u64;
+                let fire_strong = fire_beat && (beat_index & 1) == 0;
+                let bf = ((self.comp_beats - (beat_index as f64)) as f32).clamp(0.0, 0.999_99);
+                let actual_step = (self.comp_beats - prev_comp).max(0.0) as f32;
+                return (
+                    folded,
+                    bf,
+                    actual_step,
+                    fire_beat,
+                    fire_strong,
+                    fire_half,
+                    raw_onset,
+                );
             }
         }
 
-        let raw_onset = if playing {
-            self.ingest_audio(dt, pcm, sample_rate, apu_pulse)
-        } else {
-            self.silence_sec = (self.silence_sec + dt).min(10.0);
-            self.pll_trim *= (1.0 - dt * 6.0).clamp(0.0, 1.0);
-            false
-        };
-
-        let fallback = !playing || self.silence_sec >= 1.8;
-        if fallback {
-            self.tempo_locked = false;
-            self.live_bpm += (120.0 - self.live_bpm) * (dt * 3.0).clamp(0.0, 1.0);
-        }
+        // Silent / paused internal 120.0 BPM fallback clock
+        self.live_bpm += (120.0 - self.live_bpm) * (dt * 3.0).clamp(0.0, 1.0);
         let bpm = self.live_bpm.clamp(75.0, 180.0);
-        self.pll_trim *= (1.0 - dt * 4.5).clamp(0.0, 1.0);
-        let rate = if fallback {
-            1.0
-        } else {
-            (1.0 + self.pll_trim).clamp(0.86, 1.14)
-        };
-        let step_b = (dt * bpm * rate / 60.0) as f64;
-        self.raw_beats += step_b;
-
-        let lat_b = if fallback {
-            0.0
-        } else {
-            self.audio_latency_sec * (bpm as f64 / 60.0)
-        };
-        let desired = (self.raw_beats - lat_b).max(0.0);
-        if !self.initialized {
-            self.comp_beats = desired;
-        } else if desired > self.comp_beats {
-            self.comp_beats = desired;
-        } else {
-            self.comp_beats += step_b * 0.15;
-        }
+        let step_b = (dt * bpm / 60.0) as f64;
+        self.comp_beats += step_b;
 
         let (fire_beat, fire_half) = if !self.initialized {
             self.initialized = true;
@@ -6528,12 +6144,11 @@ impl BsBeatClock {
             )
         };
 
-        let bf_floor = self.comp_beats.floor().max(0.0) as u64;
-        let beat_index = bf_floor.wrapping_add(self.parity_shift);
+        let beat_index = self.comp_beats.floor().max(0.0) as u64;
         let fire_strong = fire_beat && (beat_index & 1) == 0;
-        let bf = ((self.comp_beats - (bf_floor as f64)) as f32).clamp(0.0, 0.999_99);
+        let bf = ((self.comp_beats - (beat_index as f64)) as f32).clamp(0.0, 0.999_99);
         let actual_step = (self.comp_beats - prev_comp).max(0.0) as f32;
-        (bpm, bf, actual_step, fire_beat, fire_strong, fire_half, raw_onset)
+        (bpm, bf, actual_step, fire_beat, fire_strong, fire_half, false)
     }
 }
 
@@ -7428,9 +7043,9 @@ impl BeatStackPlugin {
             0.0
         };
 
+        let _ = pcm;
         let (bpm, bf, step_beats, fire_beat, fire_strong, fire_half, raw_onset) =
-            self.clock
-                .step(dt, audio.playing, pcm, audio.sample_rate.max(44_100), apu_pulse);
+            self.clock.step(dt, audio.playing, apu_pulse);
         self.effective_bpm = bpm;
         self.beat_frac = bf;
         if fire_strong {
@@ -8508,6 +8123,1062 @@ impl BeatStackPlugin {
     }
 }
 
+/* ============================================================================
+ * 10. DJ MIXER — 1:1 with `plugins/dj-mixer/src/lib.rs` + `uipod_dj::ManualDjCore`
+ * ========================================================================== */
+
+use std::sync::Mutex as StdMutex;
+use uipod_dj::ManualDjCore;
+use uipod_plugin_sdk::{DjCueAction, DjDeckId, DjTempoMode, PluginDjDeckTelemetry, PluginDjTelemetry};
+
+static WASM_MANUAL_DJ: StdMutex<Option<ManualDjCore>> = StdMutex::new(None);
+
+pub fn with_wasm_manual_dj<R>(f: impl FnOnce(&mut ManualDjCore) -> R) -> R {
+    let mut guard = WASM_MANUAL_DJ.lock().unwrap();
+    let core = guard.get_or_insert_with(|| ManualDjCore::new(48_000));
+    f(core)
+}
+
+struct DjWasmLayoutSpec {
+    margin_x: f32,
+    deck_top_y: f32,
+    deck_gap: f32,
+    deck_h: f32,
+    deck_radius: f32,
+    deck_pad_x: f32,
+    deck_focus_stroke: f32,
+    deck_idle_stroke: f32,
+    deck_header_cy_off: f32,
+    deck_loop_cy_off: f32,
+    deck_meta_cy_off: f32,
+    deck_prog_y_off: f32,
+    deck_prog_h: f32,
+    wave_y_off: f32,
+    wave_h: f32,
+    wave_bar_gap: f32,
+    wave_bar_radius: f32,
+    pills_y: f32,
+    pills_h: f32,
+    pills_gap: f32,
+    pills_radius: f32,
+    pill_sync_w: f32,
+    pill_filter_w: f32,
+    pill_bass_w: f32,
+    xfader_margin_x: f32,
+    xfader_y: f32,
+    xfader_h: f32,
+    xfader_radius: f32,
+    xfader_track_inset: f32,
+    xfader_track_h: f32,
+    xfader_cap_w: f32,
+    xfader_cap_h: f32,
+    xfader_cap_radius: f32,
+    hint_div_y: f32,
+    hint_text_cy: f32,
+    font_deck_title: f32,
+    font_loop_badge: f32,
+    font_meta: f32,
+    font_pill: f32,
+    font_xfader_ab: f32,
+    font_hint: f32,
+}
+
+impl DjWasmLayoutSpec {
+    fn compute(_sw: f32, sh: f32) -> Self {
+        let extra_h = (sh - 768.0).max(0.0);
+        let deck_h = 330.0 + extra_h * 0.48;
+        let deck_top_y = CONTENT_TOP_Y + 4.0;
+        let pills_y = deck_top_y + deck_h + 18.0 + extra_h * 0.12;
+        let xfader_y = pills_y + 62.0 + 18.0 + extra_h * 0.12;
+        let hint_div_y = sh - 64.0;
+        Self {
+            margin_x: 32.0,
+            deck_top_y,
+            deck_gap: 24.0,
+            deck_h,
+            deck_radius: 18.0,
+            deck_pad_x: 24.0,
+            deck_focus_stroke: 2.5,
+            deck_idle_stroke: 1.2,
+            deck_header_cy_off: 38.0,
+            deck_loop_cy_off: 68.0,
+            deck_meta_cy_off: 98.0,
+            deck_prog_y_off: 120.0,
+            deck_prog_h: 8.0,
+            wave_y_off: 144.0,
+            wave_h: (deck_h - 166.0).max(120.0),
+            wave_bar_gap: 3.5,
+            wave_bar_radius: 2.5,
+            pills_y,
+            pills_h: 62.0,
+            pills_gap: 20.0,
+            pills_radius: 16.0,
+            pill_sync_w: 132.0,
+            pill_filter_w: 152.0,
+            pill_bass_w: 144.0,
+            xfader_margin_x: 48.0,
+            xfader_y,
+            xfader_h: 108.0,
+            xfader_radius: 18.0,
+            xfader_track_inset: 92.0,
+            xfader_track_h: 12.0,
+            xfader_cap_w: 36.0,
+            xfader_cap_h: 82.0,
+            xfader_cap_radius: 14.0,
+            hint_div_y,
+            hint_text_cy: sh - 32.0,
+            font_deck_title: 34.0,
+            font_loop_badge: 20.0,
+            font_meta: 22.0,
+            font_pill: 21.0,
+            font_xfader_ab: 40.0,
+            font_hint: 21.0,
+        }
+    }
+}
+
+pub struct DjMixerWasmPlugin {
+    pub menu_open: bool,
+    pub menu_sel: usize,
+    pub loader_open: bool,
+    pub loader_target: DjDeckId,
+    pub loader_sel: usize,
+    pub track_pool: Vec<(String, u32)>,
+    pub deck_track_indices: [usize; 2],
+    pub acquired_sent: bool,
+    pub focused_deck: DjDeckId,
+    pub crossfader: f32,
+    pub xfade_hold_sec: f32,
+    pub clock_ms: u64,
+    pub last_left_tap_ms: u64,
+    pub last_right_tap_ms: u64,
+    pub bass_swap: bool,
+    pub tempo_mode: DjTempoMode,
+    pub single_deck_layout: bool,
+    pub deck_filters: [f32; 2],
+    pub filter_detent_until_ms: [u64; 2],
+    pub deck_ratios: [f32; 2],
+    pub cue_preview_held: [bool; 2],
+    pub cue_latched_play: [bool; 2],
+    pub last_b_tap_ms: [u64; 2],
+    pub last_tel: PluginDjTelemetry,
+    pub splash: Option<(String, f32)>,
+}
+
+impl DjMixerWasmPlugin {
+    pub fn new(track_labels: &[(String, u32)]) -> Self {
+        with_wasm_manual_dj(|c| {
+            c.reset_session();
+            c.set_crossfader(0.0, true);
+        });
+        Self {
+            menu_open: false,
+            menu_sel: 0,
+            loader_open: false,
+            loader_target: DjDeckId::DeckB,
+            loader_sel: 0,
+            track_pool: track_labels.to_vec(),
+            deck_track_indices: [0, if track_labels.len() > 1 { 1 } else { 0 }],
+            acquired_sent: false,
+            focused_deck: DjDeckId::DeckA,
+            crossfader: 0.0,
+            xfade_hold_sec: 0.0,
+            clock_ms: 0,
+            last_left_tap_ms: 0,
+            last_right_tap_ms: 0,
+            bass_swap: true,
+            tempo_mode: DjTempoMode::MasterTempo,
+            single_deck_layout: false,
+            deck_filters: [0.0, 0.0],
+            filter_detent_until_ms: [0, 0],
+            deck_ratios: [1.0, 1.0],
+            cue_preview_held: [false, false],
+            cue_latched_play: [false, false],
+            last_b_tap_ms: [0, 0],
+            last_tel: PluginDjTelemetry::default(),
+            splash: None,
+        }
+    }
+
+    pub fn promoted_exit_state(&self) -> (usize, u32, bool) {
+        let snap = with_wasm_manual_dj(|c| c.snapshot_telemetry(false));
+        let dom = if snap.crossfader <= 0.5 { 0usize } else { 1usize };
+        let chosen = if snap.decks[dom].loaded != 0 {
+            dom
+        } else {
+            1 - dom
+        };
+        (
+            self.deck_track_indices[chosen],
+            snap.decks[chosen].elapsed_ms,
+            snap.decks[chosen].playing != 0,
+        )
+    }
+
+    pub fn update(&mut self, dt: f32, pressed: u32, held: u32, uk: bool) -> PluginAction {
+        self.clock_ms = self.clock_ms.saturating_add((dt * 1000.0).round() as u64);
+        let now_ms = self.clock_ms;
+
+        if !self.acquired_sent {
+            self.acquired_sent = true;
+            return PluginAction::ManualDjAcquire;
+        }
+
+        self.last_tel = with_wasm_manual_dj(|c| c.snapshot_telemetry(true));
+
+        if self.menu_open {
+            let (cancel, act, _) = nav_menu_input(pressed, &mut self.menu_sel, 7);
+            if cancel || (pressed & btn::START) != 0 {
+                self.menu_open = false;
+                return PluginAction::Click;
+            }
+            if act {
+                match self.menu_sel {
+                    0 => {
+                        self.menu_open = false;
+                        self.loader_target = DjDeckId::DeckA;
+                        self.loader_open = true;
+                    }
+                    1 => {
+                        self.menu_open = false;
+                        self.loader_target = DjDeckId::DeckB;
+                        self.loader_open = true;
+                    }
+                    2 => {
+                        self.tempo_mode = match self.tempo_mode {
+                            DjTempoMode::MasterTempo => DjTempoMode::Vinyl,
+                            DjTempoMode::Vinyl => DjTempoMode::MasterTempo,
+                        };
+                        let r0 = self.deck_ratios[0];
+                        let r1 = self.deck_ratios[1];
+                        let tm = self.tempo_mode;
+                        with_wasm_manual_dj(|c| {
+                            c.set_deck_tempo(DjDeckId::DeckA, r0, tm, 0.0);
+                            c.set_deck_tempo(DjDeckId::DeckB, r1, tm, 0.0);
+                        });
+                    }
+                    3 => {
+                        self.bass_swap = !self.bass_swap;
+                        let xf = self.crossfader;
+                        let bs = self.bass_swap;
+                        with_wasm_manual_dj(|c| c.set_crossfader(xf, bs));
+                    }
+                    4 => {
+                        let fidx = self.focused_deck.index();
+                        self.deck_filters[fidx] = 0.0;
+                        let fd = self.focused_deck;
+                        with_wasm_manual_dj(|c| c.set_deck_filter(fd, 0.0));
+                        self.menu_open = false;
+                    }
+                    5 => {
+                        self.single_deck_layout = !self.single_deck_layout;
+                    }
+                    _ => {
+                        let (track_idx, pos_ms, playing) = self.promoted_exit_state();
+                        with_wasm_manual_dj(|c| c.reset_session());
+                        return PluginAction::ManualDjExit {
+                            track_idx,
+                            pos_ms,
+                            playing,
+                        };
+                    }
+                }
+                return PluginAction::Click;
+            }
+            return PluginAction::Continue;
+        }
+
+        if (pressed & (btn::START | btn::MENU)) != 0 {
+            self.loader_open = false;
+            self.menu_open = true;
+            self.cue_preview_held = [false, false];
+            return PluginAction::Click;
+        }
+
+        if self.loader_open {
+            if (pressed & (btn::B | btn::L2 | btn::R2)) != 0 {
+                self.loader_open = false;
+                return PluginAction::Click;
+            }
+            if (pressed & btn::SELECT) != 0 {
+                self.loader_target = self.loader_target.opposite();
+                return PluginAction::Click;
+            }
+            if !self.track_pool.is_empty() {
+                let n = self.track_pool.len();
+                if (pressed & btn::UP) != 0 {
+                    self.loader_sel = (self.loader_sel + n - 1) % n;
+                    return PluginAction::Click;
+                }
+                if (pressed & btn::DOWN) != 0 {
+                    self.loader_sel = (self.loader_sel + 1) % n;
+                    return PluginAction::Click;
+                }
+                if (pressed & btn::A) != 0 {
+                    let target = self.loader_target;
+                    let chosen_idx = self.loader_sel;
+                    self.deck_track_indices[target.index()] = chosen_idx;
+                    self.deck_filters[target.index()] = 0.0;
+                    self.deck_ratios[target.index()] = 1.0;
+                    self.focused_deck = target;
+                    self.loader_open = false;
+                    return PluginAction::ManualDjLoadDeck(target as u8, chosen_idx);
+                }
+            }
+            return PluginAction::Continue;
+        }
+
+        let focus = self.focused_deck;
+        let fidx = focus.index();
+        let dt_focus = self.last_tel.decks[fidx];
+        let mut wake_audio = false;
+
+        if (pressed & btn::SELECT) != 0 {
+            let r = self.deck_ratios[fidx];
+            let tm = self.tempo_mode;
+            with_wasm_manual_dj(|c| c.set_deck_tempo(focus, r, tm, 0.0));
+            self.focused_deck = focus.opposite();
+        }
+
+        if (pressed & (btn::L2 | btn::R2)) != 0 {
+            self.loader_target = if (pressed & btn::L2) != 0 && (pressed & btn::R2) == 0 {
+                if self.last_tel.decks[0].playing == 0 {
+                    DjDeckId::DeckA
+                } else if self.last_tel.decks[1].playing == 0 {
+                    DjDeckId::DeckB
+                } else {
+                    self.focused_deck
+                }
+            } else if self.last_tel.decks[1].playing == 0 {
+                DjDeckId::DeckB
+            } else if self.last_tel.decks[0].playing == 0 {
+                DjDeckId::DeckA
+            } else {
+                self.focused_deck
+            };
+            self.loader_open = true;
+            return PluginAction::Click;
+        }
+
+        let held_l = (held & btn::LEFT) != 0 && (held & btn::RIGHT) == 0;
+        let held_r = (held & btn::RIGHT) != 0 && (held & btn::LEFT) == 0;
+        if (pressed & btn::LEFT) != 0 && !held_r {
+            if now_ms.saturating_sub(self.last_left_tap_ms) <= 230 {
+                self.crossfader = if self.crossfader > 0.55 { 0.5 } else { 0.0 };
+                let xf = self.crossfader;
+                let bs = self.bass_swap;
+                with_wasm_manual_dj(|c| c.set_crossfader(xf, bs));
+            }
+            self.last_left_tap_ms = now_ms;
+        }
+        if (pressed & btn::RIGHT) != 0 && !held_l {
+            if now_ms.saturating_sub(self.last_right_tap_ms) <= 230 {
+                self.crossfader = if self.crossfader < 0.45 { 0.5 } else { 1.0 };
+                let xf = self.crossfader;
+                let bs = self.bass_swap;
+                with_wasm_manual_dj(|c| c.set_crossfader(xf, bs));
+            }
+            self.last_right_tap_ms = now_ms;
+        }
+        if held_l || held_r {
+            self.xfade_hold_sec = (self.xfade_hold_sec + dt).min(1.5);
+            let speed = 0.52 + 0.95 * (self.xfade_hold_sec / 0.75).min(1.0);
+            let dir = if held_r { 1.0 } else { -1.0 };
+            self.crossfader = (self.crossfader + dir * speed * dt).clamp(0.0, 1.0);
+            let xf = self.crossfader;
+            let bs = self.bass_swap;
+            with_wasm_manual_dj(|c| c.set_crossfader(xf, bs));
+        } else {
+            self.xfade_hold_sec = 0.0;
+        }
+
+        let held_up = (held & btn::UP) != 0 && (held & btn::DOWN) == 0;
+        let held_dn = (held & btn::DOWN) != 0 && (held & btn::UP) == 0;
+        if (held_up || held_dn) && now_ms >= self.filter_detent_until_ms[fidx] {
+            let dir = if held_up { 1.0 } else { -1.0 };
+            let prev = self.deck_filters[fidx];
+            let mut next = (prev + dir * 0.78 * dt).clamp(-1.0, 1.0);
+            if (prev < -0.005 && next >= -0.005) || (prev > 0.005 && next <= 0.005) {
+                next = 0.0;
+                self.filter_detent_until_ms[fidx] = now_ms + 180;
+            }
+            self.deck_filters[fidx] = next;
+            with_wasm_manual_dj(|c| c.set_deck_filter(focus, next));
+        }
+
+        if (pressed & btn::A) != 0 && dt_focus.loaded != 0 {
+            if self.cue_preview_held[fidx] {
+                self.cue_latched_play[fidx] = true;
+            } else {
+                let next_play = dt_focus.playing == 0;
+                let quant = dt_focus.sync_locked != 0;
+                with_wasm_manual_dj(|c| c.set_deck_playing(focus, next_play, quant));
+                if next_play {
+                    wake_audio = true;
+                }
+            }
+        }
+
+        if (pressed & btn::B) != 0 && dt_focus.loaded != 0 {
+            let rapid = now_ms.saturating_sub(self.last_b_tap_ms[fidx]) <= 340;
+            self.last_b_tap_ms[fidx] = now_ms;
+            if dt_focus.playing != 0 {
+                if rapid {
+                    with_wasm_manual_dj(|c| c.trigger_cue(focus, DjCueAction::CueStutter));
+                    self.cue_preview_held[fidx] = true;
+                    self.cue_latched_play[fidx] = true;
+                    wake_audio = true;
+                } else {
+                    with_wasm_manual_dj(|c| c.trigger_cue(focus, DjCueAction::CueReturn));
+                    self.cue_preview_held[fidx] = false;
+                    self.cue_latched_play[fidx] = false;
+                }
+            } else if dt_focus.elapsed_ms.abs_diff(dt_focus.cue_ms) > 35 {
+                with_wasm_manual_dj(|c| c.trigger_cue(focus, DjCueAction::SetCueHere));
+                self.splash = Some((
+                    tr(uk, "Cue Set", "Cue встановлено").to_string(),
+                    1.0,
+                ));
+            } else {
+                with_wasm_manual_dj(|c| c.trigger_cue(focus, DjCueAction::CueStutter));
+                self.cue_preview_held[fidx] = true;
+                self.cue_latched_play[fidx] = false;
+                wake_audio = true;
+            }
+        }
+        if self.cue_preview_held[fidx] && (held & btn::B) == 0 {
+            self.cue_preview_held[fidx] = false;
+            if !self.cue_latched_play[fidx] {
+                with_wasm_manual_dj(|c| c.trigger_cue(focus, DjCueAction::CueReturn));
+            }
+        }
+
+        if (pressed & btn::X) != 0 && dt_focus.loaded != 0 {
+            let next_loop = dt_focus.loop_length().next_cycle();
+            with_wasm_manual_dj(|c| c.set_deck_loop(focus, next_loop));
+        }
+
+        if (pressed & btn::Y) != 0 && dt_focus.loaded != 0 {
+            let next_sync = dt_focus.sync_locked == 0;
+            with_wasm_manual_dj(|c| c.set_deck_sync(focus, next_sync));
+            if !next_sync {
+                self.deck_ratios[fidx] = 1.0;
+            }
+        }
+
+        let mut bend = 0.0f32;
+        if dt_focus.playing != 0 {
+            if (held & btn::L1) != 0 && (held & btn::R1) == 0 {
+                bend = -0.04;
+            } else if (held & btn::R1) != 0 && (held & btn::L1) == 0 {
+                bend = 0.04;
+            }
+        } else {
+            if (pressed & btn::L1) != 0 {
+                with_wasm_manual_dj(|c| c.seek_beats(focus, -4));
+            }
+            if (pressed & btn::R1) != 0 {
+                with_wasm_manual_dj(|c| c.seek_beats(focus, 4));
+            }
+        }
+        if dt_focus.sync_locked != 0 && dt_focus.native_bpm > 20.0 {
+            self.deck_ratios[fidx] =
+                (dt_focus.effective_bpm / dt_focus.native_bpm).clamp(0.75, 1.25);
+        }
+        let r_cur = self.deck_ratios[fidx];
+        let tm_cur = self.tempo_mode;
+        with_wasm_manual_dj(|c| c.set_deck_tempo(focus, r_cur, tm_cur, bend));
+
+        self.last_tel = with_wasm_manual_dj(|c| c.snapshot_telemetry(true));
+        if wake_audio {
+            PluginAction::ManualDjWake
+        } else {
+            PluginAction::Continue
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_deck(
+        &self,
+        ui: &mut UiEngine,
+        spec: &DjWasmLayoutSpec,
+        t: ThemeColors,
+        uk: bool,
+        deck: DjDeckId,
+        dt: &PluginDjDeckTelemetry,
+        focused: bool,
+        filter_val: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    ) {
+        ui.plugin_fill_rect(x, y, w, h, spec.deck_radius, t.bg_rgb);
+        ui.plugin_stroke_rect(
+            x,
+            y,
+            w,
+            h,
+            spec.deck_radius,
+            if focused {
+                spec.deck_focus_stroke
+            } else {
+                spec.deck_idle_stroke
+            },
+            if focused { t.fg_rgb } else { t.fg1_rgb },
+        );
+
+        let inner_x = x + spec.deck_pad_x;
+        let inner_w = (w - spec.deck_pad_x * 2.0).max(60.0);
+        let right_x = inner_x + inner_w;
+        let hdr_cy = y + spec.deck_header_cy_off;
+        let deck_name = match deck {
+            DjDeckId::DeckA => "DECK A",
+            DjDeckId::DeckB => "DECK B",
+        };
+        let end_x = ui.plugin_draw_text(
+            inner_x,
+            hdr_cy,
+            deck_name,
+            spec.font_deck_title,
+            3,
+            0,
+            t.fg_rgb,
+        );
+        if dt.loaded != 0 {
+            let dot_cx = end_x + 14.0;
+            if dt.playing != 0 {
+                ui.plugin_fill_circle(dot_cx, hdr_cy, 5.5, t.fg_rgb);
+            } else {
+                ui.plugin_stroke_rect(dot_cx - 5.0, hdr_cy - 5.0, 10.0, 10.0, 5.0, 1.6, t.fg1_rgb);
+            }
+        }
+
+        let bpm_txt = if dt.loaded != 0 {
+            format!("{:.1} BPM", dt.effective_bpm)
+        } else {
+            "--.- BPM".to_string()
+        };
+        ui.plugin_draw_text(
+            right_x,
+            hdr_cy,
+            &bpm_txt,
+            spec.font_deck_title,
+            3,
+            2,
+            if dt.loaded != 0 { t.fg_rgb } else { t.fg1_rgb },
+        );
+
+        if let Some(loop_lbl) = dt.loop_length().badge_label() {
+            ui.plugin_draw_text(
+                right_x,
+                y + spec.deck_loop_cy_off,
+                loop_lbl,
+                spec.font_loop_badge,
+                2,
+                2,
+                t.fg_rgb,
+            );
+        } else if filter_val.abs() > 0.05 && !focused {
+            let flt_b = if filter_val < 0.0 {
+                format!("LPF {:.0}%", (-filter_val * 100.0).round())
+            } else {
+                format!("HPF +{:.0}%", (filter_val * 100.0).round())
+            };
+            ui.plugin_draw_text(
+                right_x,
+                y + spec.deck_loop_cy_off,
+                &flt_b,
+                spec.font_loop_badge - 2.0,
+                1,
+                2,
+                t.fg1_rgb,
+            );
+        }
+
+        let meta_cy = y + spec.deck_meta_cy_off;
+        let rem_sec = (dt.remaining_ms + 500) / 1000;
+        let rem_s = if dt.loaded != 0 {
+            format!("-{:02}:{:02}", rem_sec / 60, rem_sec % 60)
+        } else {
+            "-00:00".to_string()
+        };
+        let rem_w = ui.plugin_measure_text(&rem_s, spec.font_meta, 1);
+        ui.plugin_draw_text(
+            right_x,
+            meta_cy,
+            &rem_s,
+            spec.font_meta,
+            1,
+            2,
+            if dt.loaded != 0 { t.fg_rgb } else { t.fg1_rgb },
+        );
+
+        let raw_meta = if dt.loaded != 0 {
+            let a = dt.artist_str();
+            let ti = dt.title_str();
+            if !a.is_empty() && !ti.is_empty() {
+                format!("{a} — {ti}")
+            } else if !ti.is_empty() {
+                ti.to_string()
+            } else {
+                tr(uk, "Untitled Track", "Без назви").to_string()
+            }
+        } else {
+            tr(uk, "Press L2/R2 to Load Track", "L2/R2 — завантажити трек").to_string()
+        };
+        let max_meta_w = (inner_w - rem_w - 16.0).max(20.0);
+        let mut clipped = raw_meta.clone();
+        if ui.plugin_measure_text(&clipped, spec.font_meta, 1) > max_meta_w {
+            clipped.clear();
+            for ch in raw_meta.chars() {
+                clipped.push(ch);
+                if ui.plugin_measure_text(&format!("{clipped}…"), spec.font_meta, 1) > max_meta_w {
+                    clipped.pop();
+                    break;
+                }
+            }
+            clipped.push('…');
+        }
+        ui.plugin_draw_text(
+            inner_x,
+            meta_cy,
+            &clipped,
+            spec.font_meta,
+            1,
+            0,
+            if dt.loaded != 0 { t.fg_rgb } else { t.fg1_rgb },
+        );
+
+        let prog_y = y + spec.deck_prog_y_off;
+        let prog_h = spec.deck_prog_h;
+        let prog_r = prog_h * 0.5;
+        ui.plugin_fill_rect(inner_x, prog_y, inner_w, prog_h, prog_r, t.fg2_rgb);
+        ui.plugin_stroke_rect(inner_x, prog_y, inner_w, prog_h, prog_r, 1.0, t.fg1_rgb);
+        if dt.loaded != 0 && dt.duration_ms > 0 {
+            let frac = ((dt.elapsed_ms as f32) / (dt.duration_ms as f32)).clamp(0.0, 1.0);
+            let fw = (inner_w * frac).max(if frac > 0.002 { prog_h } else { 0.0 });
+            if fw > 0.5 {
+                ui.plugin_fill_rect(inner_x, prog_y, fw, prog_h, prog_r, t.fg_rgb);
+            }
+            let cue_x = inner_x + inner_w * ((dt.cue_ms as f32) / (dt.duration_ms as f32)).clamp(0.0, 1.0);
+            ui.plugin_draw_line(cue_x, prog_y - 3.0, cue_x, prog_y + prog_h + 3.0, 2.0, t.fg_rgb);
+        }
+
+        let wave_x = inner_x;
+        let wave_y = y + spec.wave_y_off;
+        let wave_w = inner_w;
+        let wave_h = (y + h - 22.0 - wave_y).max(spec.wave_h.min(80.0));
+        let wave_bottom = wave_y + wave_h;
+        let wave_cx = wave_x + wave_w * 0.5;
+
+        if let Some(loop_beats) = dt.loop_length().beats_f32() {
+            let box_w = (wave_w * (loop_beats.min(3.4) / 4.0)).clamp(36.0, wave_w - 24.0);
+            ui.plugin_fill_rect(
+                wave_cx - box_w * 0.5,
+                wave_y + 2.0,
+                box_w,
+                wave_h - 4.0,
+                8.0,
+                t.fg2_rgb,
+            );
+        }
+
+        ui.plugin_draw_line(wave_x, wave_y + 4.0, wave_x, wave_bottom, 1.0, t.fg1_rgb);
+        ui.plugin_draw_line(
+            wave_x + wave_w,
+            wave_y + 4.0,
+            wave_x + wave_w,
+            wave_bottom,
+            1.0,
+            t.fg1_rgb,
+        );
+
+        let phase = dt.beat_phase.clamp(0.0, 0.9999);
+        for n in -2i32..=2i32 {
+            let rel_beats = (n as f32) - phase;
+            if rel_beats > -1.98 && rel_beats < 1.98 {
+                let gx = wave_cx + (rel_beats * 0.25) * wave_w;
+                ui.plugin_draw_line(gx, wave_y + 2.0, gx, wave_bottom, 1.1, t.fg1_rgb);
+            }
+        }
+
+        let slot_w = wave_w / 24.0;
+        let bar_w = (slot_w - spec.wave_bar_gap).max(4.0);
+        let max_bar_h = wave_h - 14.0;
+        let center_sub = (phase * 6.0).floor() as i32;
+
+        for i in 0..24usize {
+            let pk = dt.bars_peak_24[i];
+            let kk = dt.bars_kick_24[i];
+            if dt.loaded == 0 || pk == 0 {
+                continue;
+            }
+            let rel_sub = (i as i32) - 12;
+            let is_beat_slot = (center_sub + rel_sub).rem_euclid(6) == 0;
+            let norm = (pk as f32) * (1.0 / 255.0);
+            let boost = if is_beat_slot && kk >= 115 { 1.12 } else { 1.0 };
+            let bar_h = (norm * max_bar_h * boost).clamp(12.0, max_bar_h);
+            let bx = wave_x + (i as f32) * slot_w + (slot_w - bar_w) * 0.5;
+            let by = wave_bottom - bar_h;
+            let col = if (is_beat_slot && kk >= 105) || (kk >= 165 && pk >= 135) {
+                t.fg_rgb
+            } else if i < 12 || pk >= 120 {
+                t.fg1_rgb
+            } else {
+                t.fg2_rgb
+            };
+            ui.plugin_fill_rect(bx, by, bar_w, bar_h, spec.wave_bar_radius, col);
+        }
+
+        ui.plugin_draw_line(wave_cx, wave_y, wave_cx, wave_bottom + 2.0, 2.5, t.fg_rgb);
+    }
+
+    pub fn render(
+        &self,
+        ui: &mut UiEngine,
+        t: ThemeColors,
+        header: &HeaderState<'_>,
+        uk: bool,
+        win_w: u32,
+        win_h: u32,
+    ) {
+        if self.menu_open {
+            let tempo_lbl = match self.tempo_mode {
+                DjTempoMode::MasterTempo => "Master Tempo",
+                DjTempoMode::Vinyl => "Vinyl",
+            };
+            let bass_lbl = if self.bass_swap {
+                tr(uk, "On", "Увімк.")
+            } else {
+                tr(uk, "Off", "Вимк.")
+            };
+            let lay_lbl = if self.single_deck_layout {
+                tr(uk, "Single-Deck CDJ", "1 Дека CDJ")
+            } else {
+                tr(uk, "Dual-Deck", "2 Деки")
+            };
+            let items = [
+                PluginMenuRow::submenu(tr(uk, "Load Track to Deck A", "Завантажити трек у Деку A")),
+                PluginMenuRow::submenu(tr(uk, "Load Track to Deck B", "Завантажити трек у Деку B")),
+                PluginMenuRow::option(tr(uk, "Tempo Mode", "Режим темпу"), tempo_lbl),
+                PluginMenuRow::option(tr(uk, "Bass Swap", "Обмін басу"), bass_lbl),
+                PluginMenuRow::action(tr(uk, "Reset Filter", "Скинути фільтр")),
+                PluginMenuRow::option(tr(uk, "Layout", "Макет"), lay_lbl),
+                PluginMenuRow::action(tr(uk, "Quit DJ Mixer", "Вийти з DJ Мікшера")),
+            ];
+            render_native_plugin_menu(
+                ui,
+                t,
+                header,
+                tr(uk, "DJ Menu", "Меню DJ"),
+                &items,
+                self.menu_sel,
+            );
+            return;
+        }
+
+        let mut hdr = *header;
+        hdr.title = tr(uk, "DJ Mixer", "DJ Мікшер");
+        let (sw, sh) = ui.plugin_begin_ex(t, t.bg_rgb, Some(&hdr), win_w, win_h, true);
+        let spec = DjWasmLayoutSpec::compute(sw, sh);
+
+        if self.single_deck_layout {
+            let fidx = self.focused_deck.index();
+            self.draw_deck(
+                ui,
+                &spec,
+                t,
+                uk,
+                self.focused_deck,
+                &self.last_tel.decks[fidx],
+                true,
+                self.deck_filters[fidx],
+                spec.margin_x,
+                spec.deck_top_y,
+                (sw - spec.margin_x * 2.0).max(320.0),
+                spec.deck_h,
+            );
+        } else {
+            let card_w = ((sw - spec.margin_x * 2.0 - spec.deck_gap).max(320.0)) * 0.5;
+            self.draw_deck(
+                ui,
+                &spec,
+                t,
+                uk,
+                DjDeckId::DeckA,
+                &self.last_tel.decks[0],
+                self.focused_deck == DjDeckId::DeckA,
+                self.deck_filters[0],
+                spec.margin_x,
+                spec.deck_top_y,
+                card_w,
+                spec.deck_h,
+            );
+            self.draw_deck(
+                ui,
+                &spec,
+                t,
+                uk,
+                DjDeckId::DeckB,
+                &self.last_tel.decks[1],
+                self.focused_deck == DjDeckId::DeckB,
+                self.deck_filters[1],
+                spec.margin_x + card_w + spec.deck_gap,
+                spec.deck_top_y,
+                card_w,
+                spec.deck_h,
+            );
+        }
+
+        // Status Pills (`SYNC`, `FILTER`, `BASS SWAP`)
+        let fidx = self.focused_deck.index();
+        let sync_on = self.last_tel.decks[fidx].sync_locked != 0;
+        let flt_v = self.deck_filters[fidx];
+        let total_pw =
+            spec.pill_sync_w + spec.pill_filter_w + spec.pill_bass_w + spec.pills_gap * 2.0;
+        let px0 = (sw - total_pw) * 0.5;
+        let py = spec.pills_y;
+        let ph = spec.pills_h;
+
+        ui.plugin_fill_rect(
+            px0,
+            py,
+            spec.pill_sync_w,
+            ph,
+            spec.pills_radius,
+            if sync_on { t.fg_rgb } else { t.fg2_rgb },
+        );
+        ui.plugin_draw_text(
+            px0 + spec.pill_sync_w * 0.5,
+            py + ph * 0.5,
+            "SYNC",
+            spec.font_pill + 1.0,
+            3,
+            1,
+            if sync_on { t.bg_rgb } else { t.fg_rgb },
+        );
+
+        let x_flt = px0 + spec.pill_sync_w + spec.pills_gap;
+        ui.plugin_fill_rect(x_flt, py, spec.pill_filter_w, ph, spec.pills_radius, t.fg2_rgb);
+        if flt_v.abs() > 0.05 {
+            ui.plugin_stroke_rect(
+                x_flt,
+                py,
+                spec.pill_filter_w,
+                ph,
+                spec.pills_radius,
+                2.0,
+                t.fg_rgb,
+            );
+        }
+        let (fl1, fl2) = if flt_v < -0.05 {
+            ("LPF".to_string(), format!("-{}%", ((-flt_v) * 100.0).round() as i32))
+        } else if flt_v > 0.05 {
+            ("HPF".to_string(), format!("+{}%", (flt_v * 100.0).round() as i32))
+        } else {
+            ("FILTER:".to_string(), "0".to_string())
+        };
+        ui.plugin_draw_text(
+            x_flt + spec.pill_filter_w * 0.5,
+            py + ph * 0.34,
+            &fl1,
+            spec.font_pill - 1.0,
+            3,
+            1,
+            t.fg_rgb,
+        );
+        ui.plugin_draw_text(
+            x_flt + spec.pill_filter_w * 0.5,
+            py + ph * 0.71,
+            &fl2,
+            spec.font_pill,
+            3,
+            1,
+            t.fg_rgb,
+        );
+
+        let x_bs = x_flt + spec.pill_filter_w + spec.pills_gap;
+        ui.plugin_fill_rect(
+            x_bs,
+            py,
+            spec.pill_bass_w,
+            ph,
+            spec.pills_radius,
+            if self.bass_swap { t.fg2_rgb } else { t.bg_rgb },
+        );
+        ui.plugin_stroke_rect(
+            x_bs,
+            py,
+            spec.pill_bass_w,
+            ph,
+            spec.pills_radius,
+            1.4,
+            if self.bass_swap { t.fg1_rgb } else { t.fg2_rgb },
+        );
+        ui.plugin_draw_text(
+            x_bs + spec.pill_bass_w * 0.5,
+            py + ph * 0.34,
+            "BASS",
+            spec.font_pill - 1.0,
+            3,
+            1,
+            if self.bass_swap { t.fg_rgb } else { t.fg1_rgb },
+        );
+        ui.plugin_draw_text(
+            x_bs + spec.pill_bass_w * 0.5,
+            py + ph * 0.71,
+            if self.bass_swap { "SWAP" } else { "OFF" },
+            spec.font_pill - 1.0,
+            3,
+            1,
+            if self.bass_swap { t.fg_rgb } else { t.fg1_rgb },
+        );
+
+        // Crossfader Card
+        let cx_x = spec.xfader_margin_x;
+        let cx_y = spec.xfader_y;
+        let cx_w = (sw - spec.xfader_margin_x * 2.0).max(200.0);
+        let cx_h = spec.xfader_h;
+        let cy = cx_y + cx_h * 0.5;
+        ui.plugin_fill_rect(cx_x, cx_y, cx_w, cx_h, spec.xfader_radius, t.bg_rgb);
+        ui.plugin_stroke_rect(cx_x, cx_y, cx_w, cx_h, spec.xfader_radius, 1.5, t.fg1_rgb);
+        ui.plugin_draw_text(cx_x + 44.0, cy, "A", spec.font_xfader_ab, 3, 1, t.fg_rgb);
+        ui.plugin_draw_text(
+            cx_x + cx_w - 44.0,
+            cy,
+            "B",
+            spec.font_xfader_ab,
+            3,
+            1,
+            t.fg_rgb,
+        );
+        let trk_x = cx_x + spec.xfader_track_inset;
+        let trk_w = (cx_w - spec.xfader_track_inset * 2.0).max(80.0);
+        ui.plugin_fill_rect(
+            trk_x,
+            cy - spec.xfader_track_h * 0.5,
+            trk_w,
+            spec.xfader_track_h,
+            spec.xfader_track_h * 0.5,
+            t.fg2_rgb,
+        );
+        let mid_x = trk_x + trk_w * 0.5;
+        ui.plugin_draw_line(mid_x, cy - 18.0, mid_x, cy + 18.0, 1.2, t.fg1_rgb);
+        let cap_x = trk_x + self.crossfader.clamp(0.0, 1.0) * (trk_w - spec.xfader_cap_w).max(1.0);
+        ui.plugin_fill_rect(
+            cap_x,
+            cy - spec.xfader_cap_h * 0.5,
+            spec.xfader_cap_w,
+            spec.xfader_cap_h,
+            spec.xfader_cap_radius,
+            t.fg_rgb,
+        );
+
+        // Hint Bar
+        ui.plugin_draw_line(
+            spec.margin_x,
+            spec.hint_div_y,
+            sw - spec.margin_x,
+            spec.hint_div_y,
+            1.0,
+            t.fg2_rgb,
+        );
+        ui.plugin_draw_text(
+            sw * 0.5,
+            spec.hint_text_cy,
+            tr(
+                uk,
+                "SEL: Deck  •  ←/→: Crossfade  •  A: Play  •  B: Cue  •  X: Loop  •  Y: Sync",
+                "SEL: Дека  •  ←/→: Кроссфейд  •  A: Грати  •  B: Cue  •  X: Луп  •  Y: Синхр",
+            ),
+            spec.font_hint,
+            2,
+            1,
+            t.fg_rgb,
+        );
+
+        // Quick Track Loader Modal
+        if self.loader_open {
+            let mw = (sw - 112.0).clamp(480.0, 912.0);
+            let mh = (sh - CONTENT_TOP_Y - 56.0).clamp(360.0, 540.0);
+            let mx = (sw - mw) * 0.5;
+            let my = CONTENT_TOP_Y + 20.0;
+            ui.plugin_fill_rect(mx + 6.0, my + 6.0, mw, mh, 20.0, t.fg2_rgb);
+            ui.plugin_fill_rect(mx, my, mw, mh, 20.0, t.bg_rgb);
+            ui.plugin_stroke_rect(mx, my, mw, mh, 20.0, 2.5, t.fg_rgb);
+
+            let dlbl = match self.loader_target {
+                DjDeckId::DeckA => "DECK A",
+                DjDeckId::DeckB => "DECK B",
+            };
+            let htxt = if uk {
+                format!("Завантажити у {dlbl} (пауза)")
+            } else {
+                format!("Load to {dlbl} (Paused)")
+            };
+            ui.plugin_draw_text(mx + 28.0, my + 36.0, &htxt, 28.0, 3, 0, t.fg_rgb);
+            ui.plugin_draw_line(mx + 20.0, my + 66.0, mx + mw - 20.0, my + 66.0, 1.2, t.fg2_rgb);
+
+            let list_y = my + 78.0;
+            let list_h = mh - 130.0;
+            let row_h = 56.0;
+            let vis = ((list_h / row_h).floor() as usize).max(1);
+            let total = self.track_pool.len();
+            if total > 0 {
+                let sel = self.loader_sel.min(total - 1);
+                let start = if total <= vis {
+                    0
+                } else if sel >= vis {
+                    (sel + 1 - vis).min(total - vis)
+                } else {
+                    0
+                };
+                let end = (start + vis).min(total);
+                let row_w = mw - 44.0;
+                for (vi, idx) in (start..end).enumerate() {
+                    let ry = list_y + (vi as f32) * row_h;
+                    let rcy = ry + row_h * 0.5;
+                    let is_sel = idx == sel;
+                    if is_sel {
+                        ui.plugin_fill_rect(mx + 22.0, ry + 3.0, row_w, row_h - 6.0, 12.0, t.fg_rgb);
+                    }
+                    ui.plugin_draw_text(
+                        mx + 38.0,
+                        rcy,
+                        &self.track_pool[idx].0,
+                        22.0,
+                        2,
+                        0,
+                        if is_sel { t.bg_rgb } else { t.fg_rgb },
+                    );
+                }
+            }
+            ui.plugin_draw_line(
+                mx + 20.0,
+                my + mh - 46.0,
+                mx + mw - 20.0,
+                my + mh - 46.0,
+                1.0,
+                t.fg2_rgb,
+            );
+            ui.plugin_draw_text(
+                mx + mw * 0.5,
+                my + mh - 23.0,
+                tr(
+                    uk,
+                    "A: Load Paused  •  SEL: Target Deck  •  B: Cancel",
+                    "A: Завантажити  •  SEL: Дека  •  B: Скасувати",
+                ),
+                19.0,
+                1,
+                1,
+                t.fg1_rgb,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod beat_stack_wasm_tests {
     use super::*;
@@ -8524,9 +9195,9 @@ mod beat_stack_wasm_tests {
 
     #[test]
     fn wasm_beat_stack_140_bpm_cranes_strong_beat_and_b_jump_parity() {
-        // 1. Verify 140 BPM lock within ±1 BPM with loud off-beat hats
+        // 1. Verify 140 BPM lock via unified `uipod-track-intel` analysis + live frame
         let sr = 48_000u32;
-        let total = (6.0 * (sr as f32)) as usize;
+        let total = (16.0 * (sr as f32)) as usize;
         let mut pcm = vec![0i16; total * 2];
         let beat_sec = 60.0 / 140.0;
         for f in 0..total {
@@ -8550,12 +9221,44 @@ mod beat_stack_wasm_tests {
             pcm[f * 2] = s;
             pcm[f * 2 + 1] = s;
         }
+        let req = uipod_track_intel::AnalyzeRequest {
+            key_hash: 0x1400_BEEF_CAFE_0001,
+            fs_path: String::new(),
+            subtrack_index: uipod_track_intel::SUBTRACK_NONE,
+            slice_start_ms: 0,
+            duration_ms: 16_000,
+            sample_rate_hint: sr,
+            title: "140 Test".to_string(),
+            artist: String::new(),
+            album: String::new(),
+            genre: String::new(),
+            tag_tbpm: None,
+            high_priority: true,
+        };
+        let rec = uipod_track_intel::analyze_pcm_s16_buffer(&pcm, sr, 0, &req);
+        uipod_track_intel::publish_active_analysis(Some(&rec));
+        let mut live_eng = uipod_track_intel::LiveTelemetryEngine::new();
+
         let mut p = BeatStackPlugin::new(99);
         let mut cur = 0.0f32;
-        while cur < 5.5 {
+        while cur < 2.0 {
             cur += 1.0 / 60.0;
             let ef = ((cur * (sr as f32)) as usize).min(total);
             let sf = ef.saturating_sub(1024);
+            let pos_ms = (cur * 1000.0) as u32;
+            let lf = live_eng.step(
+                1,
+                rec.key_hash,
+                pos_ms,
+                16_000,
+                0.0,
+                1.0 / 60.0,
+                &pcm[sf * 2..ef * 2],
+                sr,
+                None,
+                Some(&rec),
+            );
+            uipod_track_intel::publish_live_frame(&lf);
             let _ = p.update(
                 1.0 / 60.0,
                 0,
@@ -8564,16 +9267,17 @@ mod beat_stack_wasm_tests {
                 AudioSnapshot {
                     playing: true,
                     track_title: "140 Test",
-                    pos_ms: (cur * 1000.0) as u32,
-                    dur_ms: 6000,
+                    pos_ms,
+                    dur_ms: 16_000,
                     sample_rate: sr,
                 },
                 false,
             );
         }
+        uipod_track_intel::publish_active_analysis(None);
         assert!(
-            (p.effective_bpm - 140.0).abs() <= 1.0,
-            "expected 140 BPM ± 1, got {:.2}",
+            (p.effective_bpm - 140.0).abs() <= 0.5,
+            "expected 140 BPM ± 0.5, got {:.2}",
             p.effective_bpm
         );
 

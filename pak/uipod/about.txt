@@ -1,6 +1,6 @@
 # UIPod — User Manual & About
 
-Version: v0.10.1
+Version: v0.10.2
 Target: TrimUI Brick / Hammer (tg5040, NextUI) & Android Handhelds (arm64-v8a)
 Repository: github.com/famiclone/UIPod
 
@@ -14,6 +14,8 @@ UIPod is an iPod Mini-inspired offline, Navidrome, and Jellyfin media player bui
 • Hold A — Open context menu on tracks, albums, folders, or playlists; in Text Viewer opens Reader Options
 • B — Go back one screen; Cancel on floating HUD confirmation cards
 • Hold B — Return directly to the Main Menu from anywhere
+• X — Toggle Large Album Art on Now Playing; Bypass in Graphic EQ; aspect mode in Video; font size in Text Viewer
+• Y — Toggle Audio Visualizer directly from Now Playing (press Y or B inside Visualizer to return)
 • START — Play / Pause music globally (or open Pause Menu inside games)
 • MENU / Handheld Mode / Back Button — Context menu; on Main Menu opens Settings; in Text Viewer opens Reader Options
 • VOL + / VOL - — Adjust volume (40 perceptual steps on TrimUI Brick; synced with hardware STREAM_MUSIC on Android)
@@ -41,6 +43,7 @@ Open Settings -> Appearance (Display) to customize the visual experience:
 • 4-Shade Theme Presets — Authentic iPod Mini / Classic monochrome palettes plus UIPod Classic Dark.
 • Customize Theme — Enter custom HEX colors; intermediate shades (fg1, fg2) are automatically derived.
 • Monochrome Album Art — Quantizes and Bayer-dithers cover art into the 4 shades of your active theme (toggleable to full-color 24-bit RGB).
+• Invert Visualizer — Swaps background and foreground shades (Shade 0..3 -> Shade 3..0) strictly inside Audio Visualizers without affecting menus or Now Playing.
 • Screen Transitions — Choose between Slide, Cover, Fade, Pixels, Blinds, or Off.
 • Main Menu Items — Show or hide Main Menu entries (Browse is enabled first by default for full SD-card file management, alongside Library facets and Shuffle All).
 • Language — English and Ukrainian UI localization, with built-in Noto Sans CJK & Noto Serif CJK vector fallbacks for Ukrainian Cyrillic, Japanese, Chinese, and Korean text.
@@ -77,9 +80,10 @@ Open Extras -> Plugins to launch native 60 FPS GPU-accelerated Rust plugins:
   - Snake — Smooth arcade Snake with speed scaling and Classic / Wrap wall modes.
   - Brick Breaker — Arkanoid-style paddle & multi-brick arcade game.
   - 2048 — Sliding tile puzzle with automatic board state persistence.
-• Apps & Demos (exit directly with B):
-  - Stopwatch — Precision millisecond lap timer.
-  - LCD Plasma — 60 FPS 4-shade procedural demoscene shader effect.
+• Apps & Demos:
+  - DJ Mixer — Live Manual Dual-Deck DJ console (exit & options via START / MENU) with side-by-side 4-beat discrete bar waveforms, seamless playlist handoff, equal-power crossfader + 180 Hz Bass Swap (Left/Right), resonant bipolar LPF/HPF filter with center 0 detent (Up/Down), quantized Play (A), instant RAM Cue / Stutter / Set Cue (B), gapless 4/2/1/0.5 Beat Loops (X), WSOLA Master Tempo & Vinyl Beat Sync (Y), ±4% phase nudge / ±4-beat paused cue scrub (L1/R1), and L2/R2 Quick Track Loader (Queue, Library, Favourites).
+  - Stopwatch — Precision millisecond lap timer (exit with B).
+  - LCD Plasma — 60 FPS 4-shade procedural demoscene shader effect (exit with B).
 • Viewers:
   - Text Viewer (E-Book & Document Reader) — Instantly opens .epub, .fb2, .fb2.zip (UTF-8 & Windows-1251), DRM-free .mobi/.prc/.azw, .md, .txt, .lrc, .log, .cfg, .ini, .json, .cue, and .nfo files from Browse using lazy single-chapter loading and persistent SD-card book index caching (reader_cache/*.bidx) without interrupting background music playback, complete with 4-shade Bayer-dithered book covers & illustrations, interactive Footnote popup cards (short-tap A to open/cycle, Up/Down to scroll, B to dismiss), and a permanent full-width bottom progress bar (% or READ / TOTAL pages). Press solo SELECT to toggle Paginated (Left/Right) vs Infinite Scroll (Up/Down) at the exact same reading spot, MENU or Hold A for Reader Options (Chapters / Table of Contents, Reading Mode, Font switching between Geologica Sans and Noto Serif with full Ukrainian Cyrillic + CJK support, Font Size, Line Spacing, Hide UI top header toggle, Progress Label, Go to Beginning, Go to End, Exit), X to cycle font size instantly, START to play/pause music, L2/R2 for previous/next music track, and B to save reading progress and exit.
 
@@ -87,7 +91,7 @@ Custom third-party .uipod plugins can be installed by placing compiled .uipod fi
 
 ## 6. Visualizers, USB MTP & Device Power
 
-• 4-Shade Audio Visualizers — Built-in Bayer-dithered GPU presets including Cassette Deck, Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, and LCD Plasma (Settings -> Visualizers or Now Playing -> Start Visualizer), rendered strictly in your active 4-shade theme palette and synced to speaker/Bluetooth latency. Press Left/Right to skip tracks (hold to rewind/fast-forward), L2/R2 to switch visualizer presets, X to toggle 4x4/2x2 LCD pixel grain, START to play/pause, and B to exit.
+• 4-Shade Audio Visualizers — Built-in Bayer-dithered GPU presets including Cassette Deck, Analog Stereo VU Meter, Sonic Vortex, Phosphor Scope, Spectrum Matrix, and LCD Plasma (press Y on Now Playing, or open Settings -> Visualizers / Now Playing -> Start Visualizer), rendered strictly in your active 4-shade theme palette (or inverted via Invert Visualizer) and synced to speaker/Bluetooth latency. Press Left/Right to skip tracks (hold to rewind/fast-forward), L2/R2 to switch visualizer presets, MENU for quick visualizer options (Invert Visualizer, Preset, Exit), START to play/pause, and Y or B to exit.
 • USB MTP File Transfer — Plug in a USB-C cable to your computer while UIPod is running to mount /mnt/SDCARD over MTP without stopping playback.
 • Device & Battery Care (Settings -> Device) — Configure Auto Screen Off, Sleep Timer (deep suspend-to-RAM), CPU Governor (Powersave / Dynamic / Performance), and AXP2202 Battery Charge Limit (75%–95%).
 

@@ -381,7 +381,10 @@ static void play_hop(int direction)
     {
         elapsed += step * direction;
     }
-    audio_pre_ff_rewind();
+    if (audio_status() & AUDIO_STATUS_PAUSE)
+        audio_pre_ff_rewind();
+    else
+        pcmbuf_seamless_seek_splice();
     audio_ff_rewind(elapsed);
 }
 
@@ -819,6 +822,13 @@ static enum uipod_page_result wps_page_on_action(struct uipod_page *p,
                 uipod_nowplaying_toggle_alt();
                 uipod_nowplaying_draw();
                 w->update = false;
+                break;
+            case ACTION_WPS_VIZ_TOGGLE:
+                gwps_leave_wps();
+                uipod_visualizer_run();
+                if (!audio_status())
+                    { w->result = GO_TO_ROOT; return UIPOD_PAGE_DONE; }
+                w->restore = true;
                 break;
 
             /* menu key functions */

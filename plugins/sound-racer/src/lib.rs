@@ -239,7 +239,6 @@ impl TrackSlot {
             mid: (self.mid as f32) / 255.0,
             high: (self.high as f32) / 255.0,
             pan: (self.pan as f32) / 127.0,
-            bars: [0.0; 16],
         }
     }
 }
@@ -395,7 +394,7 @@ impl TrackMap {
     }
 }
 
-/// Real-time 3-band + stereo DSP snapshot extracted from S16 stereo frames.
+/// 3-band + stereo pan feature snapshot for `50 ms` highway lookahead slot recording.
 #[derive(Clone, Copy, Default)]
 struct AudioFeatures {
     rms: f32,
@@ -403,7 +402,6 @@ struct AudioFeatures {
     mid: f32,
     high: f32,
     pan: f32,
-    bars: [f32; 16],
 }
 
 fn analyze_stereo_window(samples: &[i16], n_frames: usize) -> AudioFeatures {
@@ -424,18 +422,13 @@ fn analyze_stereo_window(samples: &[i16], n_frames: usize) -> AudioFeatures {
     let mut l_abs = 0.0_f32;
     let mut r_abs = 0.0_f32;
 
-    let mut bars = [0.0_f32; 16];
-    let chunk_sz = (n / 8).max(1);
-
     for i in 0..n {
         let l = (samples[i * 2] as f32) * inv;
         let r = (samples[i * 2 + 1] as f32) * inv;
         let mono = (l + r) * 0.5;
 
-        let la = l.abs();
-        let ra = r.abs();
-        l_abs += la;
-        r_abs += ra;
+        l_abs += l.abs();
+        r_abs += r.abs();
 
         lp_slow += 0.055 * (mono - lp_slow);
         lp_fast += 0.36 * (mono - lp_fast);
@@ -448,26 +441,9 @@ fn analyze_stereo_window(samples: &[i16], n_frames: usize) -> AudioFeatures {
         low_sq += low * low;
         mid_sq += mid * mid;
         high_sq += high * high;
-
-        let seg = (i / chunk_sz).min(7);
-        let band_mix = match seg {
-            0 | 1 => low.abs() * 2.1,
-            2 | 3 => mid.abs() * 1.9,
-            4 | 5 => (mid.abs() + high.abs()) * 1.3,
-            _ => high.abs() * 1.8,
-        };
-        let l_weight = 0.7 + 0.6 * (la / (la + ra + 0.001));
-        let r_weight = 1.4 - l_weight;
-        bars[7 - seg] += band_mix * l_weight;
-        bars[8 + seg] += band_mix * r_weight;
     }
 
     let nf = n as f32;
-    let inv_chunk = 1.0 / (chunk_sz as f32);
-    for slot in &mut bars {
-        *slot = (*slot * inv_chunk).sqrt().clamp(0.0, 1.0);
-    }
-
     let tot_lr = l_abs + r_abs;
     let pan = if tot_lr > 1e-4 {
         ((r_abs - l_abs) / tot_lr).clamp(-1.0, 1.0)
@@ -481,7 +457,6 @@ fn analyze_stereo_window(samples: &[i16], n_frames: usize) -> AudioFeatures {
         mid: (mid_sq / nf).sqrt() * 1.9,
         high: (high_sq / nf).sqrt() * 1.6,
         pan,
-        bars,
     }
 }
 
@@ -1853,7 +1828,6 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
         hud.update_time(start_pos_ms, disp_dur);
     }
 
-    let mut pcm_live = [0i16; 384];
     let mut pcm_ahead = [0i16; 512];
 
     if ctx.audio_status() == 1 {
@@ -1994,7 +1968,9 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                             .max(live.spectrum_64[b0 + 1])
                             .max(live.spectrum_64[b0 + 2])
                             .max(live.spectrum_64[b0 + 3]);
-                        let src = (pk as f32) * (1.0 / 255.0);
+                        let spec_src = (pk as f32) * (1.0 / 255.0);
+                        let sub_src = (live.beat_substeps_16[i] as f32) * (1.0 / 255.0);
+                        let src = (spec_src * 0.75 + sub_src * 0.25).clamp(0.0, 1.0);
                         *dst = if src > *dst {
                             *dst * 0.35 + src * 0.65
                         } else {
@@ -2007,46 +1983,9 @@ fn run_sound_racer(ctx: &mut HostContext, _file: Option<&Path>) -> i32 {
                         (state.intensity * 0.90 + live.structural_energy * 0.10).clamp(0.05, 1.0);
                 }
             } else {
-                let apu = ctx.audio_apu_telemetry();
-                let n_live = ctx.audio_read_pcm(0, &mut pcm_live);
-                if apu.is_available() {
-                    let kick_hw = apu.percussion_trigger().max(apu.bass_trigger() * 0.85);
-                    let lf_low = if n_live >= 32 {
-                        analyze_stereo_window(&pcm_live, n_live).low * 1.35
-                    } else {
-                        0.0
-                    };
-                    state.live_kick =
-                        (state.live_kick * 0.70).max(kick_hw.max(lf_low).clamp(0.0, 1.0));
-                    let n_ch = (apu.channel_count as usize).clamp(1, 8);
-                    for (i, dst) in state.live_bars.iter_mut().enumerate() {
-                        let ch_idx = (i * n_ch) / 16;
-                        let mut src = apu.audible_volume(ch_idx);
-                        if apu.audible_onset(ch_idx) {
-                            src = (src + 0.35).min(1.0);
-                        }
-                        *dst = if src > *dst {
-                            *dst * 0.30 + src * 0.70
-                        } else {
-                            *dst * 0.80 + src * 0.20
-                        };
-                    }
-                } else if n_live >= 32 {
-                    let lf = analyze_stereo_window(&pcm_live, n_live);
-                    state.live_kick =
-                        (state.live_kick * 0.72).max((lf.low * 1.35).clamp(0.0, 1.0));
-                    for (dst, &src) in state.live_bars.iter_mut().zip(lf.bars.iter()) {
-                        *dst = if src > *dst {
-                            *dst * 0.35 + src * 0.65
-                        } else {
-                            *dst * 0.82 + src * 0.18
-                        };
-                    }
-                } else {
-                    state.live_kick *= 0.85;
-                    for dst in &mut state.live_bars {
-                        *dst *= 0.85;
-                    }
+                state.live_kick *= 0.85;
+                for dst in &mut state.live_bars {
+                    *dst *= 0.85;
                 }
             }
 

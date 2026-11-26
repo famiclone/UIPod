@@ -57,6 +57,8 @@
 #include "tape_deck_fx.h"
 #include <stdio.h>
 
+extern unsigned int pcm_alsa_output_delay_us(void);
+
 
 
 
@@ -2197,6 +2199,21 @@ static bool single_mode_do_pause(int id3_hid)
     return false;
 }
 
+/* Wait for downstream mixer + hardware ALSA/SDL/A2DP buffers to finish playing
+ * the final buffered samples before stopping or auto-pausing at EOF, aborting
+ * immediately if the user posts any command to `audio_queue`. */
+static void audio_drain_hardware_sink_tail(void)
+{
+    unsigned int dly_ms = (pcm_alsa_output_delay_us() + tape_deck_fx_delay_us()) / 1000U + 35U;
+    if (dly_ms > 650U)
+        dly_ms = 650U;
+    long deadline = current_tick + (long)((dly_ms * HZ + 999U) / 1000U);
+    while (TIME_BEFORE(current_tick, deadline) && queue_empty(&audio_queue))
+    {
+        sleep(MAX(1, HZ / 50));
+    }
+}
+
 /* Called to make an outstanding track skip the current track and to send the
    transition events */
 static void audio_finalise_track_change(void)
@@ -2234,8 +2251,10 @@ static void audio_finalise_track_change(void)
         /* Fallthrough */
     case TRACK_SKIP_AUTO_END_PLAYLIST:
     default:            /* Invalid */
+        audio_drain_hardware_sink_tail();
         filling = STATE_ENDED;
-        audio_stop_playback();
+        if (queue_empty(&audio_queue))
+            audio_stop_playback();
         return;
     }
 
@@ -2254,6 +2273,7 @@ static void audio_finalise_track_change(void)
          * so we need to recalculate it. */
         if (pause_on_track_change || single_mode_do_pause(info.id3_hid))
         {
+            audio_drain_hardware_sink_tail();
             play_status = PLAY_PAUSED;
             iap_on_play_status(play_status);
             pcmbuf_pause(true);
@@ -2291,12 +2311,32 @@ static void audio_begin_track_change(enum pcm_track_change_type type,
 
     if (track_skip_is_manual)
     {
+        /* Wake `codec_thread` on another core FIRST when the target track is ready
+         * so frame 0 decodes into `pcmbuf` concurrently while metadata/resume hooks run! */
+        struct track_info early_info;
+        bool started_early = false;
+        if (trackstat >= LOAD_TRACK_OK &&
+            track_list_current(0, &early_info) &&
+            early_info.audio_hid >= 0 &&
+            play_status != PLAY_STOPPED)
+        {
+            started_early = audio_start_codec(false);
+            if (!started_early)
+                trackstat = LOAD_TRACK_ERR_START_CODEC;
+        }
+
         /* Manual track change happens now */
         audio_finalise_track_change();
         pcmbuf_sync_position_update();
 
         if (play_status == PLAY_STOPPED)
             return; /* Stopped us */
+
+        if (started_early)
+        {
+            playing_id3_sync(&early_info, NULL, true);
+            return;
+        }
     }
 
     if (trackstat >= LOAD_TRACK_OK)
@@ -2741,6 +2781,24 @@ static void audio_on_skip(void)
 
     if (play_status == PLAY_STOPPED)
         return;
+
+    /* Zero-millisecond manual `Next` fast path when Track 2 is ALREADY decoded in
+     * `pcmbuf` (`skip_pending == TRACK_SKIP_AUTO`) and Crossfade is Off: splice a
+     * 6 ms fade-out directly into Track 2's buffered PCM without halting `codec_thread`! */
+    if (toskip == 1 &&
+        skip_pending == TRACK_SKIP_AUTO &&
+        global_settings.dj_crossfade_mode == 0 &&
+        global_settings.repeat_mode != REPEAT_ONE &&
+        global_settings.single_mode == SINGLE_MODE_OFF &&
+        !pause_on_track_change &&
+        pcmbuf_try_fast_auto_next_splice())
+    {
+        ff_rw_mode = false;
+        track_event_flags = TEF_NONE;
+        audio_pcmbuf_track_change_clear();
+        audio_finalise_track_change();
+        return;
+    }
 
     /* Force codec to abort this track */
     uipod_dj_note_skip_delta(toskip);
@@ -3354,6 +3412,8 @@ void audio_pcmbuf_position_callback(unsigned long elapsed, off_t offset,
 /* Synchronize position info to the codec's */
 void audio_pcmbuf_sync_position(void)
 {
+    if (uipod_dj_is_active())
+        return;
     audio_pcmbuf_position_callback(ci.id3->elapsed, ci.id3->offset,
                                    pcmbuf_get_position_key());
 }

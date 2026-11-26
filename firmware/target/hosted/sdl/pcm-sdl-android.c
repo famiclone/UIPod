@@ -164,6 +164,10 @@ extern void uipod_rs_intel_audio_tap_push(const int16_t *stereo_s16,
                                           uint32_t sample_rate,
                                           uint32_t output_delay_us,
                                           uint64_t now_ms);
+extern int32_t uipod_rs_manual_dj_is_active(void);
+extern size_t  uipod_rs_manual_dj_render_s16(int16_t *out_stereo_s16,
+                                             size_t frames,
+                                             uint32_t sample_rate);
 
 static void viz_pcm_push(const void *src, unsigned nframes)
 {
@@ -177,7 +181,7 @@ static void viz_pcm_push(const void *src, unsigned nframes)
     }
     viz_pcm_w = w;
 
-    unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
+    unsigned int sr = last_sample_rate ? last_sample_rate : real_sample_rate;
     if (!sr)
         sr = 44100U;
     uipod_rs_intel_audio_tap_push(s,
@@ -409,13 +413,37 @@ static bool tape_pull_one_frame(int16_t *out_l, int16_t *out_r)
     return false;
 }
 
-static void fill_period(int16_t *frames, ssize_t period_size)
+static void fill_period(int16_t *frames, ssize_t period_size, unsigned int sr)
 {
     ssize_t frames_left = period_size;
     bool new_buffer = false;
-    unsigned int sr = real_sample_rate ? real_sample_rate : last_sample_rate;
     if (!sr)
         sr = 44100U;
+
+    if (uipod_rs_manual_dj_is_active())
+    {
+        ssize_t rem = period_size;
+        int16_t *out_cursor = frames;
+        while (rem > 0)
+        {
+            ssize_t chunk = MIN(rem, (ssize_t)TAPE_SCRATCH_FRAMES);
+            uipod_rs_manual_dj_render_s16(tape_raw_in, (size_t)chunk, (uint32_t)sr);
+            const int16_t *src_blk = tape_raw_in;
+            if (tape_deck_fx_is_enabled() && !tape_deck_fx_ff_active())
+            {
+                tape_deck_fx_process_steady_block(tape_raw_in, tape_scratch,
+                                                  (int)chunk, sr);
+                src_blk = tape_scratch;
+            }
+            viz_pcm_push(src_blk, (unsigned)chunk);
+            sink_lock();
+            pcm_copy_buffer(out_cursor, src_blk, (size_t)chunk * FRAME_BYTES);
+            sink_unlock();
+            out_cursor += chunk * 2;
+            rem -= chunk;
+        }
+        return;
+    }
 
     sink_lock();
 
@@ -595,13 +623,210 @@ static void fill_period(int16_t *frames, ssize_t period_size)
     sink_unlock();
 }
 
+/* --- 16-tap Nuttall Polyphase Windowed-Sinc Stereo Resampler --------------- */
+#define RS_TAPS        16
+#define RS_PHASES      256
+#define RS_RING_FRAMES 2048U
+#define RS_RING_MASK   (RS_RING_FRAMES - 1U)
+#define RS_PULL_CHUNK  256
+
+static float s_sinc_tbl[RS_PHASES + 1][RS_TAPS];
+static struct
+{
+    float        ring_l[RS_RING_FRAMES];
+    float        ring_r[RS_RING_FRAMES];
+    int16_t      pull_buf[RS_PULL_CHUNK * 2];
+    uint32_t     w_pos;
+    uint32_t     r_pos;
+    double       frac;
+    bool         seeded;
+    uint32_t     drain_zeros_pushed;
+    unsigned int aa_sr;
+    unsigned int aa_dst_sr;
+    float        aa_b0, aa_b1, aa_b2, aa_a1, aa_a2;
+    float        aa_z1_l, aa_z2_l, aa_z1_r, aa_z2_r;
+} s_rs;
+
+static void android_rs_reset(void)
+{
+    s_rs.w_pos = 0;
+    s_rs.r_pos = 0;
+    s_rs.frac = 0.0;
+    s_rs.seeded = false;
+    s_rs.drain_zeros_pushed = 0;
+    s_rs.aa_z1_l = s_rs.aa_z2_l = 0.0f;
+    s_rs.aa_z1_r = s_rs.aa_z2_r = 0.0f;
+}
+
+static void init_android_resampler(void)
+{
+    const double pi = 3.14159265358979323846;
+    const double fc = 0.455;
+    for (int p = 0; p <= RS_PHASES; p++)
+    {
+        double frac = (double)p / (double)RS_PHASES;
+        double sum = 0.0;
+        double row[RS_TAPS];
+        for (int k = 0; k < RS_TAPS; k++)
+        {
+            double x = (double)k - (7.0 + frac);
+            double u = 0.5 + x / (double)RS_TAPS;
+            double win = 0.0;
+            if (u > 0.0 && u < 1.0)
+            {
+                win = 0.355768
+                    - 0.487396 * cos(2.0 * pi * u)
+                    + 0.144232 * cos(4.0 * pi * u)
+                    - 0.012604 * cos(6.0 * pi * u);
+            }
+            double sinc = (fabs(x) < 1e-9)
+                        ? (2.0 * fc)
+                        : (sin(2.0 * pi * fc * x) / (pi * x));
+            row[k] = sinc * win;
+            sum += row[k];
+        }
+        double inv = (fabs(sum) > 1e-12) ? (1.0 / sum) : 1.0;
+        for (int k = 0; k < RS_TAPS; k++)
+            s_sinc_tbl[p][k] = (float)(row[k] * inv);
+    }
+    android_rs_reset();
+}
+
+static void android_rs_update_aa(unsigned int src_sr, unsigned int dst_sr)
+{
+    if (s_rs.aa_sr == src_sr && s_rs.aa_dst_sr == dst_sr)
+        return;
+    s_rs.aa_sr = src_sr;
+    s_rs.aa_dst_sr = dst_sr;
+    s_rs.aa_z1_l = s_rs.aa_z2_l = 0.0f;
+    s_rs.aa_z1_r = s_rs.aa_z2_r = 0.0f;
+    if (src_sr <= dst_sr || dst_sr == 0)
+        return;
+    const double pi = 3.14159265358979323846;
+    double w0 = 2.0 * pi * (0.4375 * (double)dst_sr) / (double)src_sr;
+    double cw = cos(w0);
+    double alpha = sin(w0) / 1.4142135623730951;
+    double b0 = (1.0 - cw) * 0.5;
+    double b1 = 1.0 - cw;
+    double b2 = (1.0 - cw) * 0.5;
+    double inv_a0 = 1.0 / (1.0 + alpha);
+    s_rs.aa_b0 = (float)(b0 * inv_a0);
+    s_rs.aa_b1 = (float)(b1 * inv_a0);
+    s_rs.aa_b2 = (float)(b2 * inv_a0);
+    s_rs.aa_a1 = (float)((-2.0 * cw) * inv_a0);
+    s_rs.aa_a2 = (float)((1.0 - alpha) * inv_a0);
+}
+
+static void android_rs_push_chunk(unsigned int src_sr, unsigned int dst_sr)
+{
+    fill_period(s_rs.pull_buf, RS_PULL_CHUNK, src_sr);
+    bool use_aa = (src_sr > dst_sr);
+    if (use_aa)
+        android_rs_update_aa(src_sr, dst_sr);
+    for (int i = 0; i < RS_PULL_CHUNK; i++)
+    {
+        float sl = (float)s_rs.pull_buf[2 * i];
+        float sr = (float)s_rs.pull_buf[2 * i + 1];
+        if (use_aa)
+        {
+            float yl = s_rs.aa_b0 * sl + s_rs.aa_z1_l;
+            s_rs.aa_z1_l = s_rs.aa_b1 * sl - s_rs.aa_a1 * yl + s_rs.aa_z2_l;
+            s_rs.aa_z2_l = s_rs.aa_b2 * sl - s_rs.aa_a2 * yl;
+            sl = yl;
+
+            float yr = s_rs.aa_b0 * sr + s_rs.aa_z1_r;
+            s_rs.aa_z1_r = s_rs.aa_b1 * sr - s_rs.aa_a1 * yr + s_rs.aa_z2_r;
+            s_rs.aa_z2_r = s_rs.aa_b2 * sr - s_rs.aa_a2 * yr;
+            sr = yr;
+        }
+        uint32_t m = s_rs.w_pos & RS_RING_MASK;
+        s_rs.ring_l[m] = sl;
+        s_rs.ring_r[m] = sr;
+        s_rs.w_pos++;
+    }
+}
+
+static void copy_period_resampled(int16_t *dst_frames, unsigned int nframes)
+{
+    unsigned int dst_sr = real_sample_rate ? real_sample_rate : 48000U;
+    unsigned int src_sr = last_sample_rate ? last_sample_rate : dst_sr;
+    bool active_src = dev_playing || tape_deck_fx_ff_active() ||
+                      uipod_rs_manual_dj_is_active();
+    if (active_src)
+    {
+        s_rs.drain_zeros_pushed = 0;
+    }
+    else if (!s_rs.seeded || s_rs.drain_zeros_pushed >= (uint32_t)(RS_PULL_CHUNK * 2))
+    {
+        if (s_rs.seeded)
+            android_rs_reset();
+        memset(dst_frames, 0, (size_t)nframes * FRAME_BYTES);
+        return;
+    }
+
+    if (src_sr == dst_sr && !s_rs.seeded)
+    {
+        fill_period(dst_frames, (ssize_t)nframes, dst_sr);
+        return;
+    }
+
+    if (!s_rs.seeded)
+    {
+        android_rs_reset();
+        for (uint32_t z = 0; z < 8U; z++)
+        {
+            s_rs.ring_l[z] = 0.0f;
+            s_rs.ring_r[z] = 0.0f;
+        }
+        s_rs.w_pos = 8U;
+        s_rs.seeded = true;
+    }
+
+    const double step = (double)src_sr / (double)dst_sr;
+    for (unsigned int i = 0; i < nframes; i++)
+    {
+        while ((s_rs.w_pos - s_rs.r_pos) < (uint32_t)(RS_TAPS + 4))
+        {
+            android_rs_push_chunk(src_sr, dst_sr);
+            if (!active_src)
+                s_rs.drain_zeros_pushed += (uint32_t)RS_PULL_CHUNK;
+        }
+        float pf = (float)(s_rs.frac * (double)RS_PHASES);
+        int pi = (int)pf;
+        float mu = pf - (float)pi;
+        if (pi >= RS_PHASES)
+        {
+            pi = RS_PHASES - 1;
+            mu = 1.0f;
+        }
+        const float *c0 = s_sinc_tbl[pi];
+        const float *c1 = s_sinc_tbl[pi + 1];
+        float acc_l = 0.0f, acc_r = 0.0f;
+        uint32_t base = s_rs.r_pos;
+        for (int k = 0; k < RS_TAPS; k++)
+        {
+            float w = c0[k] + (c1[k] - c0[k]) * mu;
+            uint32_t m = (base + (uint32_t)k) & RS_RING_MASK;
+            acc_l += s_rs.ring_l[m] * w;
+            acc_r += s_rs.ring_r[m] * w;
+        }
+        if (acc_l > 32767.0f)       acc_l = 32767.0f;
+        else if (acc_l < -32768.0f) acc_l = -32768.0f;
+        if (acc_r > 32767.0f)       acc_r = 32767.0f;
+        else if (acc_r < -32768.0f) acc_r = -32768.0f;
+        dst_frames[2 * i]     = (int16_t)acc_l;
+        dst_frames[2 * i + 1] = (int16_t)acc_r;
+        s_rs.frac += step;
+        uint32_t adv = (uint32_t)s_rs.frac;
+        s_rs.r_pos += adv;
+        s_rs.frac -= (double)adv;
+    }
+}
+
 static bool open_sdl_audio(unsigned int want_sr)
 {
     if (s_dev)
-    {
-        SDL_CloseAudioDevice(s_dev);
-        s_dev = 0;
-    }
+        return true;
 
     ring_reset();
 
@@ -611,7 +836,7 @@ static bool open_sdl_audio(unsigned int want_sr)
             return false;
     }
 
-    unsigned int target_sr = want_sr ? want_sr : 44100U;
+    unsigned int target_sr = want_sr ? want_sr : 48000U;
 
     SDL_AudioSpec want, have;
     SDL_zero(want);
@@ -622,20 +847,15 @@ static bool open_sdl_audio(unsigned int want_sr)
     want.samples  = ANDROID_PERIOD_FRMS;
     want.callback = sdl_audio_callback;
 
-    /* Pass allowed_changes = 0 so SDL2 guarantees exact `want.freq` / S16 stereo
-     * to Rockbox's mixer and runs SDL2's internal resampler when Android's
-     * AAudio / OpenSLES / AudioTrack hardware opens at 48 kHz. */
     s_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (!s_dev)
         return false;
 
     real_sample_rate = (have.freq > 0) ? (unsigned int)have.freq : target_sr;
-    last_sample_rate = real_sample_rate;
+    if (!last_sample_rate)
+        last_sample_rate = real_sample_rate;
     s_hw_period_frames = (have.samples > 0) ? (unsigned int)have.samples : ANDROID_PERIOD_FRMS;
 
-    /* Always keep >= 4 hardware callback blocks (and at least 4096 frames ≈ 93 ms)
-     * pre-buffered in the SPSC ring so neither AAudio bursts nor AudioTrack
-     * `minBufferSize` pulls can ever underrun. */
     unsigned int min_target = s_hw_period_frames * 4U;
     if (min_target < 4096U)
         min_target = 4096U;
@@ -653,33 +873,31 @@ static int writer_fn(void *unused)
 
     SDL_SetThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
 
-    /* Open the output stream right away and keep it warm while UIPod is running
-     * so track starts, pauses, and Click Wheel clicks never pop or stall. */
-    open_sdl_audio(last_sample_rate ? last_sample_rate : 44100U);
+    /* Open Android AAudio/AudioTrack once at native 48 kHz and keep it open
+     * permanently — sample-rate switches resample seamlessly in `s_rs` with
+     * zero `SDL_CloseAudioDevice` / `ring_reset()` dropouts! */
+    open_sdl_audio(48000U);
 
     while (writer_run)
     {
         unsigned int want_sr = req_sample_rate;
-        if (want_sr && (!s_dev || want_sr != last_sample_rate))
+        if (want_sr)
         {
             req_sample_rate = 0;
-            if (!open_sdl_audio(want_sr))
-            {
-                SDL_Delay(100);
-                continue;
-            }
+            last_sample_rate = want_sr;
         }
 
         if (!s_dev)
         {
-            if (!open_sdl_audio(last_sample_rate ? last_sample_rate : 44100U))
+            if (!open_sdl_audio(48000U))
             {
                 SDL_Delay(200);
                 continue;
             }
         }
 
-        bool producing = dev_playing || tape_deck_fx_ff_active();
+        bool producing = dev_playing || tape_deck_fx_ff_active() ||
+                         uipod_rs_manual_dj_is_active() || s_rs.seeded;
         if (!producing)
         {
             SDL_SemWaitTimeout(writer_wake, 20);
@@ -689,15 +907,23 @@ static int writer_fn(void *unused)
         /* Burst-fill the SPSC ring up to `s_target_frames` in one wakeup,
          * matching `pcm-alsa.c` (`while (space >= period_size)`). */
         bool wrote_any = false;
-        while (writer_run && !req_sample_rate &&
-               (dev_playing || tape_deck_fx_ff_active()))
+        while (writer_run &&
+               (dev_playing || tape_deck_fx_ff_active() ||
+                uipod_rs_manual_dj_is_active() || s_rs.seeded))
         {
+            unsigned int pending_sr = req_sample_rate;
+            if (pending_sr)
+            {
+                req_sample_rate = 0;
+                last_sample_rate = pending_sr;
+            }
+
             uint32_t used = ring_used_from_writer();
             uint32_t space = ring_avail_write();
             if (used >= s_target_frames || space < ANDROID_PERIOD_FRMS)
                 break;
 
-            fill_period(period_buf, (ssize_t)ANDROID_PERIOD_FRMS);
+            copy_period_resampled(period_buf, ANDROID_PERIOD_FRMS);
             ring_push_frames(period_buf, ANDROID_PERIOD_FRMS);
             wrote_any = true;
         }
@@ -748,6 +974,7 @@ static void sink_dma_init(void)
     pthread_mutex_init(&pcm_mtx, &attr);
 
     last_sample_rate = hw_freq_sampr[HW_FREQ_DEFAULT];
+    init_android_resampler();
     init_click_waveform();
     tape_deck_fx_init();
     ring_reset();

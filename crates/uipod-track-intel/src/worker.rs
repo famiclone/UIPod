@@ -27,6 +27,7 @@ pub type StreamPcmFallbackFn = fn(out_stereo: &mut [i16]) -> (usize, u32);
 #[cfg(not(target_arch = "wasm32"))]
 struct WorkerState {
     db: TrackIntelDb,
+    ephemeral_ready: Option<TrackAnalysisRecord>,
     active_key_hash: u64,
     in_flight_hash: u64,
     queue: VecDeque<AnalyzeRequest>,
@@ -66,6 +67,7 @@ impl TrackIntelCoordinator {
         let pair = Arc::new((
             Mutex::new(WorkerState {
                 db: TrackIntelDb::new_in_memory(),
+                ephemeral_ready: None,
                 active_key_hash: 0,
                 in_flight_hash: 0,
                 queue: VecDeque::with_capacity(8),
@@ -115,6 +117,7 @@ impl TrackIntelCoordinator {
         };
 
         st.active_key_hash = req.key_hash;
+        st.ephemeral_ready = None;
         if req.key_hash == 0 {
             publish_active_analysis(None);
             return true;
@@ -157,7 +160,7 @@ impl TrackIntelCoordinator {
         cv.notify_all();
     }
 
-    /// Check whether `key_hash` is already persisted in `TrackIntelDb` (`0 ms`, non-blocking).
+    /// Check whether `key_hash` is already persisted in `TrackIntelDb` (or ephemerally resolved).
     pub fn is_ready(&self, key_hash: u64) -> bool {
         if key_hash == 0 {
             return true;
@@ -167,6 +170,11 @@ impl TrackIntelCoordinator {
             return false;
         };
         if let Some(rec) = st.db.get(key_hash) {
+            if st.active_key_hash == key_hash {
+                publish_active_analysis(Some(&rec));
+            }
+            true
+        } else if let Some(rec) = st.ephemeral_ready.filter(|r| r.key_hash == key_hash) {
             if st.active_key_hash == key_hash {
                 publish_active_analysis(Some(&rec));
             }
@@ -206,7 +214,11 @@ impl TrackIntelCoordinator {
         }
 
         while !timeout.is_zero() {
-            if let Some(rec) = st.db.get(req.key_hash) {
+            if let Some(rec) = st
+                .db
+                .get(req.key_hash)
+                .or_else(|| st.ephemeral_ready.filter(|r| r.key_hash == req.key_hash))
+            {
                 if st.active_key_hash == req.key_hash {
                     publish_active_analysis(Some(&rec));
                 }
@@ -220,13 +232,16 @@ impl TrackIntelCoordinator {
             st = guard;
         }
 
-        st.db.get(req.key_hash)
+        st.db
+            .get(req.key_hash)
+            .or_else(|| st.ephemeral_ready.filter(|r| r.key_hash == req.key_hash))
     }
 
     pub fn clear_active(&self) {
         let (mtx, _) = &*self.inner;
         if let Ok(mut st) = mtx.lock() {
             st.active_key_hash = 0;
+            st.ephemeral_ready = None;
         }
         publish_active_analysis(None);
     }
@@ -274,44 +289,79 @@ impl TrackIntelCoordinator {
             // analyzed directly from `pcmbuf` decoded RAM buffer with zero network sockets!
             if result.is_none() {
                 if let Some(cb) = fallback_fn {
-                    let mut pcm_buf = vec![0i16; 44_100 * 14 * 2];
-                    let (got_frames, sr) = cb(&mut pcm_buf);
-                    if got_frames >= (sr as usize) * 3 {
-                        pcm_buf.truncate(got_frames * 2);
-                        let mut rec = analyze_pcm_s16_buffer(&pcm_buf, sr, 0, &job);
-                        rec.analysis_flags |= analysis_flag::STREAM_BUFFERED;
-                        result = Some(rec);
+                    let is_active = mtx
+                        .lock()
+                        .map(|st| st.active_key_hash == job.key_hash && !st.shutdown)
+                        .unwrap_or(false);
+                    if is_active {
+                        let mut pcm_buf = vec![0i16; 44_100 * 14 * 2];
+                        let max_polls = if job.high_priority { 12 } else { 28 };
+                        for attempt in 0..max_polls {
+                            let still_active = mtx
+                                .lock()
+                                .map(|st| {
+                                    if st.boost_requested {
+                                        job.high_priority = true;
+                                    }
+                                    st.active_key_hash == job.key_hash && !st.shutdown
+                                })
+                                .unwrap_or(false);
+                            if !still_active {
+                                break;
+                            }
+                            let (got_frames, sr) = cb(&mut pcm_buf);
+                            let min_frames = if job.high_priority && attempt + 1 >= max_polls {
+                                (sr as usize) * 2
+                            } else if job.high_priority {
+                                (sr as usize) * 3
+                            } else {
+                                (sr as usize) * 5
+                            };
+                            if got_frames >= min_frames && sr >= 8_000 {
+                                pcm_buf.truncate(got_frames * 2);
+                                let mut rec = analyze_pcm_s16_buffer(&pcm_buf, sr, 0, &job);
+                                rec.analysis_flags |= analysis_flag::STREAM_BUFFERED;
+                                result = Some(rec);
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
                     }
                 }
             }
 
-            // Guaranteed record completion if `ensure_analyzed` is waiting on an unparsable/short file
-            let final_rec = result.unwrap_or_else(|| {
-                let mut fallback = TrackAnalysisRecord {
-                    key_hash: job.key_hash,
-                    subtrack_index: job.subtrack_index,
-                    duration_ms: job.duration_ms,
-                    sample_rate: job.sample_rate_hint.max(44_100),
-                    bpm: job
-                        .tag_tbpm
-                        .map(crate::analyzer::fold_bpm_60_200)
-                        .unwrap_or(crate::analyzer::DEFAULT_BPM),
-                    bpm_confidence: if job.tag_tbpm.is_some() { 0.50 } else { 0.10 },
-                    tag_tbpm: job.tag_tbpm.unwrap_or(0.0),
-                    ..Default::default()
-                };
-                crate::db::write_fixed_utf8(&mut fallback.title, &job.title);
-                crate::db::write_fixed_utf8(&mut fallback.artist, &job.artist);
-                crate::db::write_fixed_utf8(&mut fallback.album, &job.album);
-                crate::db::write_fixed_utf8(&mut fallback.genre, &job.genre);
-                fallback
-            });
-
             if let Ok(mut st) = mtx.lock() {
                 st.in_flight_hash = 0;
-                st.db.upsert(final_rec);
-                if st.active_key_hash == final_rec.key_hash {
-                    publish_active_analysis(Some(&final_rec));
+                if let Some(valid_rec) = result {
+                    st.ephemeral_ready = None;
+                    st.db.upsert(valid_rec);
+                    if st.active_key_hash == valid_rec.key_hash {
+                        publish_active_analysis(Some(&valid_rec));
+                    }
+                } else {
+                    // Unparsable/short stream or cancelled prefetch: publish ephemeral fallback in RAM
+                    // so `ensure_for_plugin` never hangs, WITHOUT polluting persistent `track_intel.db`!
+                    let mut fallback = TrackAnalysisRecord {
+                        key_hash: job.key_hash,
+                        subtrack_index: job.subtrack_index,
+                        duration_ms: job.duration_ms,
+                        sample_rate: job.sample_rate_hint.max(44_100),
+                        bpm: job
+                            .tag_tbpm
+                            .map(crate::analyzer::fold_bpm_60_200)
+                            .unwrap_or(crate::analyzer::DEFAULT_BPM),
+                        bpm_confidence: if job.tag_tbpm.is_some() { 0.50 } else { 0.10 },
+                        tag_tbpm: job.tag_tbpm.unwrap_or(0.0),
+                        ..Default::default()
+                    };
+                    crate::db::write_fixed_utf8(&mut fallback.title, &job.title);
+                    crate::db::write_fixed_utf8(&mut fallback.artist, &job.artist);
+                    crate::db::write_fixed_utf8(&mut fallback.album, &job.album);
+                    crate::db::write_fixed_utf8(&mut fallback.genre, &job.genre);
+                    if st.active_key_hash == fallback.key_hash {
+                        st.ephemeral_ready = Some(fallback);
+                        publish_active_analysis(Some(&fallback));
+                    }
                 }
                 cv.notify_all();
             }

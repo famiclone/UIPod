@@ -167,6 +167,7 @@ pub enum Screen {
     VisualizersMenu { sel: usize },
     VisualizerPresets { sel: usize },
     VisualizerActive,
+    VisualizerContextMenu { sel: usize },
     PowerMenu { sel: usize },
 }
 
@@ -354,6 +355,7 @@ pub struct UIPodApp {
     pub sleep_idx: usize,
     pub viz_delay_idx: usize,
     pub viz_trans_idx: usize,
+    pub viz_invert: bool,
     pub brightness_pct: u8,
     pub disp_off_idx: usize,
     pub idle_off_idx: usize,
@@ -467,6 +469,7 @@ impl UIPodApp {
             sleep_idx: 0,
             viz_delay_idx: 0,
             viz_trans_idx: 2,
+            viz_invert: false,
             brightness_pct: 80,
             disp_off_idx: 2,
             idle_off_idx: 2,
@@ -1177,6 +1180,7 @@ impl UIPodApp {
             ),
             Some(
                 Screen::NowPlaying
+                | Screen::VisualizerActive
                 | Screen::NsfChannels { .. }
                 | Screen::NsfContainer { .. }
                 | Screen::NsfSfx { .. }
@@ -1409,6 +1413,11 @@ impl UIPodApp {
                 self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
                 true
             }
+            Some(Screen::VisualizerActive) => {
+                self.emit_click();
+                self.push_screen(Screen::VisualizerContextMenu { sel: 0 }, ui);
+                true
+            }
             Some(Screen::NsfChannels { sel }) => {
                 let row = *sel;
                 if let Some(cflags) = self.active_nsf_chip_flags_for_ui() {
@@ -1476,6 +1485,18 @@ impl UIPodApp {
         self.cancel_seek_if_active();
         self.emit_click();
         self.sync_reader_persistence();
+        if let Some(ActivePlugin::DjMixer(ref d)) = self.active_plugin {
+            let (t_idx, p_ms, play) = d.promoted_exit_state();
+            crate::plugins::with_wasm_manual_dj(|c| c.reset_session());
+            self.current_track = t_idx.min(self.tracks.len().saturating_sub(1));
+            self.pos_ms = p_ms;
+            self.audio_playing = play;
+            self.play_mode = if play { PlayMode::Play } else { PlayMode::Pause };
+            self.outbound_cmds.push(format!(
+                r#"{{"type":"manualDjRelease","trackIndex":{},"posMs":{},"playing":{}}}"#,
+                self.current_track, p_ms, play
+            ));
+        }
         self.active_plugin = None;
         if matches!(self.stack.last(), Some(Screen::MainMenu { .. })) && self.stack.len() == 1 {
             return;
@@ -1732,6 +1753,7 @@ impl UIPodApp {
                     "2048" => PluginId::Game2048,
                     "brick_breaker" => PluginId::BrickBreaker,
                     "stopwatch" => PluginId::Stopwatch,
+                    "dj_mixer" => PluginId::DjMixer,
                     _ => PluginId::TextViewer,
                 };
                 let pool = self.track_quiz_pool();
@@ -2141,18 +2163,79 @@ impl UIPodApp {
                         );
                     }
                 }
+                PluginAction::ManualDjAcquire => {
+                    let cur = self.current_track.min(self.tracks.len().saturating_sub(1));
+                    let nxt = if self.tracks.len() > 1 {
+                        (cur + 1) % self.tracks.len()
+                    } else {
+                        cur
+                    };
+                    if let Some(ActivePlugin::DjMixer(ref mut d)) = self.active_plugin {
+                        d.deck_track_indices = [cur, nxt];
+                    }
+                    let playing_a = self.audio_playing || self.play_mode == PlayMode::Play;
+                    self.outbound_cmds.push(format!(
+                        r#"{{"type":"manualDjAcquire","trackA":{},"posAMs":{},"playingA":{},"trackB":{}}}"#,
+                        cur, self.pos_ms, playing_a, nxt
+                    ));
+                }
+                PluginAction::ManualDjLoadDeck(deck, idx) => {
+                    self.outbound_cmds.push(format!(
+                        r#"{{"type":"manualDjLoadDeck","deck":{},"trackIndex":{}}}"#,
+                        deck, idx
+                    ));
+                }
+                PluginAction::ManualDjWake => {
+                    self.outbound_cmds
+                        .push(r#"{"type":"manualDjWake"}"#.to_string());
+                }
+                PluginAction::ManualDjExit {
+                    track_idx,
+                    pos_ms,
+                    playing,
+                } => {
+                    self.emit_click();
+                    self.current_track = track_idx.min(self.tracks.len().saturating_sub(1));
+                    self.pos_ms = pos_ms;
+                    self.dur_ms = self
+                        .tracks
+                        .get(self.current_track)
+                        .map(|t| t.duration_ms)
+                        .unwrap_or(self.dur_ms);
+                    self.audio_playing = playing;
+                    self.has_resumable = true;
+                    self.play_mode = if playing {
+                        PlayMode::Play
+                    } else {
+                        PlayMode::Pause
+                    };
+                    self.outbound_cmds.push(format!(
+                        r#"{{"type":"manualDjRelease","trackIndex":{},"posMs":{},"playing":{}}}"#,
+                        self.current_track, pos_ms, playing
+                    ));
+                    self.active_plugin = None;
+                    self.pop_screen(ui);
+                }
                 PluginAction::Continue => {}
             }
             return;
         }
 
         if is_viz {
-            if (pressed & btn::B) != 0 {
+            if (pressed & (btn::B | btn::Y)) != 0 {
                 self.emit_click();
                 self.pop_screen(ui);
                 return;
             }
-            if (pressed & (btn::L2 | btn::LEFT)) != 0 {
+            if (pressed & btn::MENU) != 0 {
+                self.emit_click();
+                self.push_screen(Screen::VisualizerContextMenu { sel: 0 }, ui);
+                return;
+            }
+            if (pressed & btn::A) != 0 {
+                self.emit_click();
+                self.emit_toggle_play_pause();
+            } else if (pressed & (btn::L2 | btn::LEFT)) != 0 {
                 self.emit_click();
                 self.viz_preset = (self.viz_preset + VIZ_PRESETS.len() - 1) % VIZ_PRESETS.len();
                 self.viz_custom = false;
@@ -2170,10 +2253,6 @@ impl UIPodApp {
             } else if (pressed & btn::R1) != 0 {
                 let next = (self.current_track + 1) % self.tracks.len().max(1);
                 self.emit_play_track(next);
-            } else if (pressed & btn::X) != 0 {
-                self.emit_click();
-                viz.toggle_grain();
-                self.state_dirty = true;
             }
             return;
         }
@@ -2515,7 +2594,7 @@ impl UIPodApp {
             Screen::PluginCategory { cat, mut sel } => {
                 let count = match cat {
                     0 => 7, // Games: Beat Stack, Music Quiz, Sound Racer, Tetris, Snake, 2048, Brick Breaker
-                    1 => 1, // Apps: Stopwatch
+                    1 => 2, // Apps: DJ Mixer, Stopwatch
                     2 => 1, // Demos: LCD Plasma
                     _ => 1, // Viewers: Text Viewer
                 };
@@ -2540,8 +2619,13 @@ impl UIPodApp {
                             self.push_screen(Screen::PluginActive, ui);
                         }
                         1 => {
+                            let pid = if sel == 0 {
+                                PluginId::DjMixer
+                            } else {
+                                PluginId::Stopwatch
+                            };
                             self.active_plugin = Some(ActivePlugin::launch(
-                                PluginId::Stopwatch,
+                                pid,
                                 &pool,
                                 self.pos_ms,
                             ));
@@ -2868,6 +2952,12 @@ impl UIPodApp {
                     self.emit_click();
                     self.alt_now_playing = !self.alt_now_playing;
                     self.state_dirty = true;
+                } else if (pressed & btn::Y) != 0 {
+                    self.emit_click();
+                    self.viz_custom = false;
+                    viz.set_preset(self.viz_preset);
+                    self.viz_fade = 0.0;
+                    self.push_screen(Screen::VisualizerActive, ui);
                 } else if (pressed & btn::MENU) != 0 {
                     self.emit_click();
                     self.push_screen(Screen::NowPlayingContext { sel: 0 }, ui);
@@ -3055,9 +3145,9 @@ impl UIPodApp {
             }
 
             Screen::DisplayMenu { mut sel } => {
-                // Exact 6 rows from `apps/menus/power_menu.c` lines 568-571:
-                // Theme, Customize Theme, Screen Transition, Language, Monochrome album art, Main menu
-                if self.nav_list(pressed, &mut sel, 6, ui) {
+                // Exact 7 rows from `apps/menus/power_menu.c`:
+                // Theme, Customize Theme, Screen Transition, Language, Monochrome album art, Invert Visualizer, Main menu
+                if self.nav_list(pressed, &mut sel, 7, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
@@ -3103,7 +3193,12 @@ impl UIPodApp {
                             self.mono_album_art = !self.mono_album_art;
                             self.state_dirty = true;
                         }
-                        5 if !is_dir => {
+                        5 => {
+                            self.viz_invert = !self.viz_invert;
+                            viz.set_invert(self.viz_invert);
+                            self.state_dirty = true;
+                        }
+                        6 if !is_dir => {
                             self.push_screen(Screen::MainMenuSettings { sel: 0 }, ui)
                         }
                         _ => {}
@@ -4119,9 +4214,9 @@ impl UIPodApp {
             }
 
             Screen::VisualizersMenu { mut sel } => {
-                // Exact 3 rows from `apps/menus/visualizer_menu.c` lines 35-38:
-                // Visualization Presets, Start Visualizer After, Visualization Transition
-                if self.nav_list(pressed, &mut sel, 3, ui) {
+                // Exact 4 rows from `apps/menus/visualizer_menu.c`:
+                // Visualization Presets, Invert Visualizer, Start Visualizer After, Visualization Transition
+                if self.nav_list(pressed, &mut sel, 4, ui) {
                     self.set_top_sel(sel);
                 } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
                     let left = (pressed & btn::LEFT) != 0;
@@ -4135,6 +4230,11 @@ impl UIPodApp {
                             ui,
                         ),
                         1 => {
+                            self.viz_invert = !self.viz_invert;
+                            viz.set_invert(self.viz_invert);
+                            self.state_dirty = true;
+                        }
+                        2 => {
                             let n = VIZ_DELAYS.len();
                             self.viz_delay_idx = if left {
                                 (self.viz_delay_idx + n - 1) % n
@@ -4142,13 +4242,50 @@ impl UIPodApp {
                                 (self.viz_delay_idx + 1) % n
                             };
                         }
-                        2 => {
+                        3 => {
                             let n = VIZ_TRANSITIONS.len();
                             self.viz_trans_idx = if left {
                                 (self.viz_trans_idx + n - 1) % n
                             } else {
                                 (self.viz_trans_idx + 1) % n
                             };
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Screen::VisualizerContextMenu { mut sel } => {
+                // Exact 3 rows from `viz_quick_menu` in `apps/uipod_visualizer.c`:
+                // Invert Visualizer, Visualizers (Preset cycle), Exit
+                if self.nav_list(pressed, &mut sel, 3, ui) {
+                    self.set_top_sel(sel);
+                } else if (pressed & (btn::A | btn::LEFT | btn::RIGHT)) != 0 {
+                    let left = (pressed & btn::LEFT) != 0;
+                    let is_dir = (pressed & (btn::LEFT | btn::RIGHT)) != 0;
+                    self.emit_click();
+                    match sel {
+                        0 => {
+                            self.viz_invert = !self.viz_invert;
+                            viz.set_invert(self.viz_invert);
+                            self.state_dirty = true;
+                        }
+                        1 => {
+                            let n = VIZ_PRESETS.len();
+                            self.viz_preset = if left {
+                                (self.viz_preset + n - 1) % n
+                            } else {
+                                (self.viz_preset + 1) % n
+                            };
+                            self.viz_custom = false;
+                            viz.set_preset(self.viz_preset);
+                            self.state_dirty = true;
+                        }
+                        2 if !is_dir => {
+                            self.pop_screen(ui);
+                            if matches!(self.stack.last(), Some(Screen::VisualizerActive)) {
+                                self.pop_screen(ui);
+                            }
                         }
                         _ => {}
                     }
@@ -4299,6 +4436,7 @@ impl UIPodApp {
                 | Screen::LibraryFolderList { sel, .. }
                 | Screen::VisualizersMenu { sel }
                 | Screen::VisualizerPresets { sel }
+                | Screen::VisualizerContextMenu { sel }
                 | Screen::PowerMenu { sel } => *sel = new_sel,
                 _ => {}
             }
@@ -4612,15 +4750,19 @@ impl UIPodApp {
             } else {
                 0.0
             };
-            let transport_speed = if self.play_mode == PlayMode::Play {
-                if self.dsp.fx_enabled {
-                    self.dsp.speed_pct as f32 / 100.0
-                } else {
-                    1.0
+            let transport_speed = match self.play_mode {
+                PlayMode::FastForward => 6.5,
+                PlayMode::Rewind => -6.5,
+                PlayMode::Play => {
+                    if self.dsp.fx_enabled {
+                        self.dsp.speed_pct as f32 / 100.0
+                    } else {
+                        1.0
+                    }
                 }
-            } else {
-                0.0
+                _ => 0.0,
             };
+            viz.set_invert(self.viz_invert);
             unsafe {
                 viz.render_frame(
                     pcm_interleaved,
@@ -4865,11 +5007,18 @@ impl UIPodApp {
                     ),
                     1 => (
                         self.tr("Apps", "Програми"),
-                        vec![(
-                            self.tr("Stopwatch", "Секундомір").to_string(),
-                            FileIconKind::Text("PLG".into()),
-                            OwnedRight::None,
-                        )],
+                        vec![
+                            (
+                                self.tr("DJ Mixer", "DJ Мікшер").to_string(),
+                                FileIconKind::Text("PLG".into()),
+                                OwnedRight::None,
+                            ),
+                            (
+                                self.tr("Stopwatch", "Секундомір").to_string(),
+                                FileIconKind::Text("PLG".into()),
+                                OwnedRight::None,
+                            ),
+                        ],
                     ),
                     2 => (
                         self.tr("Demos", "Демо"),
@@ -5408,6 +5557,7 @@ impl UIPodApp {
                     (self.tr("Screen Transition", "Анімація переходу").to_string(), FileIconKind::None, OwnedRight::CycleValue(tr_name.to_string())),
                     (self.tr("Language", "Мова").to_string(), FileIconKind::None, OwnedRight::CycleValue(if self.uk { "Українська" } else { "English" }.to_string())),
                     (self.tr("Monochrome album art", "Монохромна обкладинка").to_string(), FileIconKind::None, OwnedRight::Toggle(self.mono_album_art)),
+                    (self.tr("Invert Visualizer", "Інвертувати візуалізацію").to_string(), FileIconKind::None, OwnedRight::Toggle(self.viz_invert)),
                     (self.tr("Main menu", "Головне меню").to_string(), FileIconKind::None, OwnedRight::Chevron),
                 ];
                 self.render_list(ui, self.tr("Display", "Вигляд"), &items, sel);
@@ -6019,8 +6169,20 @@ impl UIPodApp {
             Screen::VisualizersMenu { sel } => {
                 let items = vec![
                     (self.tr("Visualization Presets", "Пресети візуалізації").to_string(), FileIconKind::None, OwnedRight::Chevron),
+                    (self.tr("Invert Visualizer", "Інвертувати візуалізацію").to_string(), FileIconKind::None, OwnedRight::Toggle(self.viz_invert)),
                     (self.tr("Start Visualizer After", "Запуск візуалізатора").to_string(), FileIconKind::None, OwnedRight::CycleValue(VIZ_DELAYS[self.viz_delay_idx].to_string())),
                     (self.tr("Visualization Transition", "Зміна пресету").to_string(), FileIconKind::None, OwnedRight::CycleValue(VIZ_TRANSITIONS[self.viz_trans_idx].to_string())),
+                ];
+                self.render_list(ui, self.tr("Visualizers", "Візуалізатори"), &items, sel);
+            }
+
+            Screen::VisualizerContextMenu { sel } => {
+                let p = &VIZ_PRESETS[self.viz_preset % VIZ_PRESETS.len()];
+                let p_name = if self.uk { p.name_uk } else { p.name_en };
+                let items = vec![
+                    (self.tr("Invert Visualizer", "Інвертувати візуалізацію").to_string(), FileIconKind::None, OwnedRight::Toggle(self.viz_invert)),
+                    (self.tr("Visualizers", "Візуалізатори").to_string(), FileIconKind::None, OwnedRight::CycleValue(p_name.to_string())),
+                    (self.tr("Exit", "Вихід").to_string(), FileIconKind::None, OwnedRight::None),
                 ];
                 self.render_list(ui, self.tr("Visualizers", "Візуалізатори"), &items, sel);
             }
@@ -6106,7 +6268,7 @@ impl UIPodApp {
                 r##"{{"screen":"{}","playing":{},"trackIndex":{},"trackCount":{},"title":"{}","artist":"{}","##,
                 r##""themeIndex":{},"themeName":"{}","bg":"#{:06X}","fg":"#{:06X}","fg1":"#{:06X}","fg2":"#{:06X}","##,
                 r##""monoArt":{},"altLayout":{},"transition":{},"uk":{},"hold":{},"volumeStep":{},"volumeDb":{},"##,
-                r##""vizPreset":{},"vizName":"{}","vizFine":{},"vizCustom":{},"##,
+                r##""vizPreset":{},"vizName":"{}","vizFine":{},"vizInvert":{},"vizCustom":{},"##,
                 r##""eq":{},"autoeq":{},"tape":{},"wow":{},"hiss":{},"sat":{},"hf":{},"stopStart":{},"speed":{},"menuClick":{},"##,
                 r##""djMode":{},"djLength":{},"djMaxStretch":{},"djKeepGapless":{},"djQuickCut":{}}}"##
             ),
@@ -6132,6 +6294,7 @@ impl UIPodApp {
             self.viz_preset,
             escape_json(viz_name),
             viz.is_fine_grain(),
+            self.viz_invert,
             self.viz_custom,
             self.dsp.eq_enabled,
             self.dsp.autoeq_idx,

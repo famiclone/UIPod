@@ -20808,3 +20808,17 @@
     *: "Deep"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_UIPOD_INVERT_VISUALIZER
+  desc: UIPod Invert Visualizer setting
+  user: core
+  <source>
+    *: "Invert Visualizer"
+  </source>
+  <dest>
+    *: "Invert Visualizer"
+  </dest>
+  <voice>
+    *: "Invert Visualizer"
+  </voice>
+</phrase>

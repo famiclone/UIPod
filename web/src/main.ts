@@ -65,6 +65,7 @@ interface AppStateSnapshot {
   vizPreset: number;
   vizName: string;
   vizFine: boolean;
+  vizInvert: boolean;
   vizCustom: boolean;
   eq: boolean;
   autoeq: number;
@@ -158,6 +159,10 @@ async function boot(): Promise<void> {
     takeMidpointCrossed: () => uipod.dj_take_midpoint_crossed(),
     isActive: () => uipod.dj_is_active(),
     reset: () => uipod.dj_reset(),
+    manualBegin: (sampleRate) => uipod.manual_dj_begin(sampleRate),
+    manualLoadDeckS16: (deck, trackIndex, sampleRate, pcmS16, startMs, startPaused) =>
+      uipod.manual_dj_load_deck_s16(deck, trackIndex, sampleRate, pcmS16, startMs, startPaused),
+    manualRenderS16: (frames, sampleRate) => uipod.manual_dj_render_s16(frames, sampleRate),
   };
 
   // ---- Persistent Browser Track Intelligence Cache (`IndexedDB` + `localStorage` fallback) ----
@@ -398,8 +403,7 @@ async function boot(): Promise<void> {
   // Visualizer Lab elements
   const vizGrid = document.getElementById('viz-presets-grid') as HTMLElement;
   const btnLaunchViz = document.getElementById('btn-launch-viz') as HTMLButtonElement;
-  const chkVizFine = document.getElementById('chk-viz-fine') as HTMLInputElement;
-  const lblVizGrain = document.getElementById('lbl-viz-grain') as HTMLElement;
+  const chkVizInvert = document.getElementById('chk-viz-invert') as HTMLInputElement;
   const glslEditor = document.getElementById('glsl-editor') as HTMLTextAreaElement;
   const btnCompileShader = document.getElementById('btn-compile-shader') as HTMLButtonElement;
   const btnResetShader = document.getElementById('btn-reset-shader') as HTMLButtonElement;
@@ -583,9 +587,8 @@ async function boot(): Promise<void> {
     uipod.jump_to_screen('visualizer');
   });
 
-  chkVizFine.addEventListener('change', () => {
-    uipod.set_viz_fine_grain(chkVizFine.checked);
-    lblVizGrain.textContent = chkVizFine.checked ? '2×2 Fine' : '4×4 LCD';
+  chkVizInvert.addEventListener('change', () => {
+    uipod.set_viz_invert(chkVizInvert.checked);
   });
 
   btnCompileShader.addEventListener('click', () => {
@@ -1139,6 +1142,27 @@ async function boot(): Promise<void> {
         case 'seekMotor':
           audio.setSeekMotor(Number(cmd.dir ?? 0), Boolean(cmd.enabled));
           break;
+        case 'manualDjAcquire':
+          void audio.startManualDjSession(
+            Number(cmd.trackA ?? 0),
+            Number(cmd.posAMs ?? 0),
+            Boolean(cmd.playingA),
+            Number(cmd.trackB ?? 0),
+          );
+          break;
+        case 'manualDjLoadDeck':
+          void audio.loadManualDjDeck(Number(cmd.deck ?? 0), Number(cmd.trackIndex ?? 0));
+          break;
+        case 'manualDjWake':
+          audio.ensureManualDjAudioActive();
+          break;
+        case 'manualDjRelease':
+          audio.releaseManualDjSession(
+            Number(cmd.trackIndex ?? 0),
+            Number(cmd.posMs ?? 0),
+            Boolean(cmd.playing),
+          );
+          break;
         case 'volume':
           audio.setVolume(Number(cmd.norm ?? 0.8));
           break;
@@ -1257,10 +1281,17 @@ async function boot(): Promise<void> {
     selTransition.value = String(s.transition);
     themeButtons.forEach((b, i) => b.classList.toggle('active', i === s.themeIndex));
 
-    // Sync Visualizer Lab
+    // Sync Visualizer Lab & persist preset + invert in localStorage
     vizButtons.forEach((b, i) => b.classList.toggle('active', !s.vizCustom && i === s.vizPreset));
-    chkVizFine.checked = s.vizFine;
-    lblVizGrain.textContent = s.vizFine ? '2×2 Fine' : '4×4 LCD';
+    chkVizInvert.checked = s.vizInvert;
+    try {
+      localStorage.setItem(
+        'uipod_viz_prefs_v1',
+        JSON.stringify({ vizPreset: s.vizPreset, vizInvert: s.vizInvert }),
+      );
+    } catch {
+      // ignore quota/privacy errors
+    }
     if (editedPresetIdx !== s.vizPreset && !s.vizCustom) {
       editedPresetIdx = s.vizPreset;
       glslEditor.value = get_viz_preset_shader(s.vizPreset).trim();
@@ -1284,9 +1315,25 @@ async function boot(): Promise<void> {
     valSpeed.textContent = `${(s.speed / 100).toFixed(2)}×`;
   }
 
-  // Initial shader editor population
-  glslEditor.value = get_viz_preset_shader(9).trim();
-  editedPresetIdx = 9;
+  // Initial shader editor population + restore persisted Visualizer preferences from localStorage
+  let bootVizIdx = 9;
+  try {
+    const rawVizPrefs = localStorage.getItem('uipod_viz_prefs_v1');
+    if (rawVizPrefs) {
+      const parsed = JSON.parse(rawVizPrefs) as { vizPreset?: number; vizInvert?: boolean };
+      if (typeof parsed.vizPreset === 'number' && Number.isFinite(parsed.vizPreset)) {
+        bootVizIdx = Math.max(0, Math.floor(parsed.vizPreset)) % Math.max(1, vizPresets.length);
+        uipod.set_viz_preset(bootVizIdx);
+      }
+      if (typeof parsed.vizInvert === 'boolean') {
+        uipod.set_viz_invert(parsed.vizInvert);
+      }
+    }
+  } catch {
+    // ignore corrupt localStorage
+  }
+  glslEditor.value = get_viz_preset_shader(bootVizIdx).trim();
+  editedPresetIdx = bootVizIdx;
 
   // Optional URL query params for shareable deep-links (?screen=visualizer&viz=9&theme=23&lang=uk)
   const params = new URLSearchParams(window.location.search);
